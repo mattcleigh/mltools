@@ -8,7 +8,8 @@ from typing import Union
 import torch as T
 import torch.nn as nn
 
-from utils import sel_device
+from mattsutils.torch_utils import sel_device
+
 
 class MyNetBase(nn.Module):
     """A base class which is used to keep consistancy and harmony between the networks defined here

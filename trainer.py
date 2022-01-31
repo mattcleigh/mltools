@@ -13,8 +13,9 @@ import torch as T
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 
-from utils import RunningAverage, get_optim, get_sched, move_dev
-from plotting import plot_multi_loss
+from mattsutils.utils import RunningAverage
+from mattsutils.plotting import plot_multi_loss
+from mattsutils.torch_utils import get_optim, get_sched, move_dev
 
 
 class Trainer:
@@ -34,8 +35,6 @@ class Trainer:
         sched_dict: dict = None,
         vis_every: int = 10,
         chkp_every: int = 10,
-        net_config: dict = None,
-        data_config: dict = None,
     ) -> None:
         """
         args:
@@ -52,8 +51,6 @@ class Trainer:
             sched_dict:  A dict used to select and configure the scheduler
             vis_every:   Run the network's visualisation function every X epochs
             chkp_every:  Save a checkpoint of the net/opt/schd/loss every X epochs
-            netw_config: A config dict for the network to save in the network folder
-            data_config: A config dict for the data to save in the network folder
         """
         print("\nInitialising the trainer")
 
@@ -61,7 +58,7 @@ class Trainer:
         optim_dict = optim_dict or {"name": "adam", "lr": 1e-4}
         sched_dict = sched_dict or {"name": "none"}
 
-        ## Save the network and configs
+        ## Save the network
         self.network = network
 
         ## Report on the number of files/samples used
@@ -100,8 +97,6 @@ class Trainer:
         self.grad_clip = grad_clip
         self.vis_every = vis_every
         self.chkp_every = chkp_every
-        self.net_config = net_config
-        self.data_config = data_config
 
         ## Load the optimiser and scheduler
         self.optimiser = get_optim(optim_dict, self.network.parameters())
@@ -119,19 +114,6 @@ class Trainer:
         self.num_epochs = 0
         self.bad_epochs = 0
         self.best_epoch = 0
-
-        ## Create a dictionary configuraiton based on the current settings
-        self.train_config = {
-            "b_size": b_size,
-            "patience": patience,
-            "max_epochs": max_epochs,
-            "grad_clip": grad_clip,
-            "n_workers": n_workers,
-            "optim_dict": optim_dict,
-            "sched_dict": sched_dict,
-            "vis_on_save": vis_every,
-            "chkp_every": chkp_every,
-        }
 
     def run_training_loop(self) -> None:
         """The main loop which cycles epochs of train and test
@@ -185,7 +167,7 @@ class Trainer:
             sample = move_dev(sample, self.network.device)
 
             ## Pass through the network and get the loss dictionary
-            losses = self.network.get_losses(*sample)
+            losses = self.network.get_losses(sample)
 
             ## For training epochs we perform gradient descent
             if is_train:
@@ -222,45 +204,17 @@ class Trainer:
 
     def save_checkpoint(self) -> None:
         """Add folders to the network's save directory containing
-        - configs -> Yaml files containing the configs for the trainer/network/data
-        - checkpoints -> Checkpoints of network/optimiser/scheduler/loss states
         - losses -> Loss history as json and plotted as pngs
+        - checkpoints -> Checkpoints of network/optimiser/scheduler/loss states
         - visual -> Output of network's visualisation method on first valid batch
         """
 
         print("Saving...")
 
-        ## Create the configuration folder
-        config_folder = Path(self.network.full_name, "checkpoints")
-        config_folder.mkdir(parents=True, exist_ok=True)
-
-        ## Place all the configuration dictionaries
-        for c_name, dic in zip(
-            ["train", "net", "data"],
-            [self.train_config, self.net_config, self.data_config],
-        ):
-            if dic is not None:
-                with open(f"{c_name}.yaml", "w") as file:
-                    yaml.dump(self.config, file)
-
-        ## Create model folder
-        chckpnt_folder = Path(self.network.full_name, "checkpoints")
-        chckpnt_folder.mkdir(parents=True, exist_ok=True)
-
-        ## Save a checkpoint of the network/scheduler/optimiser (for reloading)
-        checkpoint = {
-            "network": self.network.state_dict(),
-            "optimiser": self.optimiser.state_dict(),
-            "losses": self.loss_hist,
-        }
-        if self.scheduler is not None:
-            checkpoint["scheduler"] = self.scheduler.state_dict()
-        T.save(checkpoint, Path(chckpnt_folder, f"checkpoint_{self.num_epochs}"))
-
-        ## For best network save the entire model, not the just dict (easier to reload)
+        ## Save best network model and dict (easier to reload) in main directory
         if self.bad_epochs == 0:
             self.network.save("best")
-            self.network.save("best", as_dict=False)
+            self.network.save("best", as_dict=True)
 
         ## Create loss folder
         loss_folder = Path(self.network.full_name, "losses")
@@ -272,8 +226,25 @@ class Trainer:
         with open(loss_file_name, "w", encoding="utf-8") as l_file:
             json.dump(self.loss_hist, l_file, indent=2)
 
+        ## For checkpointing
+        if self.chkp_every > 0 and self.num_epochs % self.chkp_every == 0:
+
+            ## Create checkpoint folder
+            chckpnt_folder = Path(self.network.full_name, "checkpoints")
+            chckpnt_folder.mkdir(parents=True, exist_ok=True)
+
+            ## Save a checkpoint of the network/scheduler/optimiser (for reloading)
+            checkpoint = {
+                "network": self.network.state_dict(),
+                "optimiser": self.optimiser.state_dict(),
+                "losses": self.loss_hist,
+            }
+            if self.scheduler is not None:
+                checkpoint["scheduler"] = self.scheduler.state_dict()
+            T.save(checkpoint, Path(chckpnt_folder, f"checkpoint_{self.num_epochs}"))
+
         ## For visualisation
-        if self.vis_on_save > 0 and self.num_epochs % self.vis_on_save == 0:
+        if self.vis_every > 0 and self.num_epochs % self.vis_every == 0:
 
             ## Set evaluation mode
             self.network.eval()
@@ -285,7 +256,7 @@ class Trainer:
 
             ## Use the first batch of the valid date as the sample
             sample = next(iter(self.valid_loader))
-            self.network.visualise(*sample, path=vis_folder, flag=str(self.num_epochs))
+            self.network.visualise(sample, path=vis_folder, flag=str(self.num_epochs))
 
     def load_checkpoint(self, flag="latest") -> None:
         """Loads the latest instance of a saved network to continue training"""
