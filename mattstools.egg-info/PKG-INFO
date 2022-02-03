@@ -1,0 +1,16 @@
+Metadata-Version: 2.1
+Name: mattstools
+Version: 0.0.1
+Summary: Some common utilities used in my DL projects
+Home-page: https://gitlab.cern.ch/mleigh/mattstools
+Author: Matthew Leigh
+Author-email: mattcleigh@gmail.com
+License: MIT
+Project-URL: Bug Tracker, https://gitlab.cern.ch/mleigh/mattstools/issues
+Platform: UNKNOWN
+Description-Content-Type: text/markdown
+
+# MattsTools
+
+A custom neural network training utilities package built on pytorch to minimise the amount of code duplication across all of my projects.
+

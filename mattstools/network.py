@@ -8,7 +8,7 @@ from typing import Union
 import torch as T
 import torch.nn as nn
 
-from mattsutils.torch_utils import sel_device
+from mattstools.torch_utils import sel_device
 
 
 class MyNetBase(nn.Module):

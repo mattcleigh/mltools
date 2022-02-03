@@ -1,4 +1,3 @@
-# MattsUtils
+# MattsTools
 
-A utilities folder that works with all of my individual projects. 
-This is to minimize the amount of duplicated code found across my work. 
+A custom neural network training utilities package built on pytorch to minimise the amount of code duplication across all of my projects.

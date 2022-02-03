@@ -14,14 +14,19 @@ import torch.optim.lr_scheduler as schd
 
 def get_act(name: str) -> nn.Module:
     """Return a pytorch activation function given a name"""
-    return {
-        "relu": nn.ReLU(),
-        "lrlu": nn.LeakyReLU(0.1),
-        "silu": nn.SiLU(),
-        "selu": nn.SELU(),
-        "sigm": nn.Sigmoid(),
-        "tanh": nn.Tanh(),
-    }[name]
+    if name == "relu":
+        return nn.ReLU()
+    if name == "lrlu":
+        return nn.LeakyReLU(0.1)
+    if name == "silu":
+        return nn.SiLU(),
+    if name == "selu":
+        return nn.SELU(),
+    if name == "sigm":
+        return nn.Sigmoid(),
+    if name == "tanh":
+        return nn.Tanh(),
+    raise ValueError("No activation function with name: ", name)
 
 
 def get_optim(optim_dict: dict, params: Iterable) -> optim.Optimizer:
@@ -76,7 +81,7 @@ def get_sched(
             opt, max_lr, total_steps=steps_per_epoch * max_epochs, **dict_copy
         )
     else:
-        raise ValueError(f"No scheduler with name {name}")
+        raise ValueError("No scheduler with name: ", name)
 
 
 def sel_device(dev: Union[str, T.device]) -> T.device:
@@ -125,15 +130,16 @@ def to_np(tensor: T.Tensor) -> np.ndarray:
 
 
 def print_gpu_info(dev=0):
-    total = T.cuda.get_device_properties(dev).total_memory / 1024 ** 3
-    reser = T.cuda.memory_reserved(dev) / 1024 ** 3
-    alloc = T.cuda.memory_allocated(dev) / 1024 ** 3
+    total = T.cuda.get_device_properties(dev).total_memory / 1024**3
+    reser = T.cuda.memory_reserved(dev) / 1024**3
+    alloc = T.cuda.memory_allocated(dev) / 1024**3
     print(f"\nTotal = {total:.2f}\nReser = {reser:.2f}\nAlloc = {alloc:.2f}")
 
 
 def count_parameters(model: nn.Module) -> int:
     """Return the number of trainable parameters in a pytorch model"""
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
 
 def reparam_trick(tensor: T.Tensor) -> Tuple[T.Tensor, T.Tensor, T.Tensor]:
     """Apply the reparam trick to split a tensor into means and devs take a sample

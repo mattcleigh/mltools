@@ -12,9 +12,9 @@ import torch as T
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 
-from mattsutils.utils import RunningAverage
-from mattsutils.plotting import plot_multi_loss
-from mattsutils.torch_utils import get_optim, get_sched, move_dev
+from mattstools.utils import RunningAverage
+from mattstools.plotting import plot_multi_loss
+from mattstools.torch_utils import get_optim, get_sched, move_dev
 
 
 class Trainer:

@@ -38,9 +38,11 @@ def standardise(data, means, stds):
     """Standardise data by using mean subraction and std division"""
     return (data - means) / (stds + 1e-8)
 
+
 def unstandardise(data, means, stds):
     """Undo a standardisation operation by multiplying by std and adding mean"""
     return data * stds + means
+
 
 def merge_dict(source: dict, update: dict) -> dict:
     """Merges two deep dictionaries recursively
