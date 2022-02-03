@@ -2,7 +2,6 @@
 Base class for training network
 """
 
-import yaml
 import json
 from pathlib import Path
 
@@ -173,7 +172,7 @@ class Trainer:
             if is_train:
 
                 ## Zero and calculate gradients using total loss (from dict)
-                self.optimiser.zero_grad()
+                self.optimiser.zero_grad(set_to_none=False)
                 losses["total"].backward()
 
                 ## Apply gradient clipping
@@ -264,21 +263,24 @@ class Trainer:
         print("Loading checkpoint...")
 
         ## Find the latest checkpoint in the folder (this could be written better)
+        checkpoint_file = "NoFilesFound"
         if flag == "latest":
             for i in range(self.max_epochs):
-                test_file = Path(self.full_name, "models", f"checkpoint_{i}")
+                test_file = Path(
+                    self.network.full_name, "checkpoints", f"checkpoint_{i}"
+                )
                 if test_file.is_file():
                     checkpoint_file = test_file
-                else:
-                    break
         else:
-            checkpoint_file = Path(self.full_name, "models", f"checkpoint_{flag}")
+            checkpoint_file = Path(
+                self.network.full_name, "checkpoints", f"checkpoint_{flag}"
+            )
 
         ## Load the and unpack checkpoint object
         checkpoint = T.load(checkpoint_file)
         self.network.load_state_dict(checkpoint["network"])
         self.optimiser.load_state_dict(checkpoint["optimiser"])
-        self.loss_hist = checkpoint["loss_hist"]
+        self.loss_hist = checkpoint["losses"]
         if self.scheduler is not None:
             self.scheduler.load_state_dict(checkpoint["scheduler"])
             checkpoint["scheduler"] = self.scheduler.state_dict()
