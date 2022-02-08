@@ -2,7 +2,7 @@
 Mix of utility functions specifically for pytorch
 """
 
-from typing import Iterable, Tuple, Union
+from typing import Iterable, Union, Tuple
 
 import numpy as np
 
@@ -10,6 +10,9 @@ import torch as T
 import torch.nn as nn
 import torch.optim as optim
 import torch.optim.lr_scheduler as schd
+from torch.utils.data import Dataset, random_split
+
+from mattstools.loss import GANLoss, KLD2NormLoss, MyBCEWithLogit
 
 
 def get_act(name: str) -> nn.Module:
@@ -19,14 +22,22 @@ def get_act(name: str) -> nn.Module:
     if name == "lrlu":
         return nn.LeakyReLU(0.1)
     if name == "silu":
-        return nn.SiLU(),
+        return (nn.SiLU(),)
     if name == "selu":
-        return nn.SELU(),
+        return (nn.SELU(),)
     if name == "sigm":
-        return nn.Sigmoid(),
+        return (nn.Sigmoid(),)
     if name == "tanh":
-        return nn.Tanh(),
+        return (nn.Tanh(),)
     raise ValueError("No activation function with name: ", name)
+
+
+def get_nrm(name: str, outp_dim: int) -> nn.Module:
+    """Return a 1D pytorch normalisation layer given a name and a output size"""
+    if name == "batch":
+        return nn.BatchNorm1d(outp_dim)
+    if name == "layer":
+        return nn.LayerNorm(outp_dim)
 
 
 def get_optim(optim_dict: dict, params: Iterable) -> optim.Optimizer:
@@ -51,6 +62,22 @@ def get_optim(optim_dict: dict, params: Iterable) -> optim.Optimizer:
         return optim.SGD(params, **dict_copy)
     else:
         raise ValueError("No optimiser with name: ", name)
+
+
+def get_loss_fn(name: str) -> nn.Module:
+    """Return a pytorch loss function given a name"""
+    if name == "none":
+        return None
+    if name == "bcewlgt":
+        return MyBCEWithLogit()
+    if name == "crssent":
+        return nn.CrossEntropyLoss()
+    if name == "kld2nrm":
+        return KLD2NormLoss()
+    if name == "ganloss":
+        return GANLoss()
+    else:
+        raise ValueError("No standard loss function with name: ", name)
 
 
 def get_sched(
@@ -82,6 +109,19 @@ def get_sched(
         )
     else:
         raise ValueError("No scheduler with name: ", name)
+
+
+def train_valid_split(dataset: Dataset, v_frac: float):
+    """Split a pytorch dataset into a training and validation set using the random_split funciton
+    args:
+        dataset: The dataset to split
+        v_frac: The validation fraction (0, 1)
+    """
+    v_size = int(v_frac * len(dataset))
+    t_size = len(dataset) - v_size
+    return random_split(
+        dataset, [t_size, v_size], generator=T.Generator().manual_seed(42)
+    )
 
 
 def sel_device(dev: Union[str, T.device]) -> T.device:
@@ -142,7 +182,9 @@ def count_parameters(model: nn.Module) -> int:
 
 
 def reparam_trick(tensor: T.Tensor) -> Tuple[T.Tensor, T.Tensor, T.Tensor]:
-    """Apply the reparam trick to split a tensor into means and devs take a sample
+    """Apply the reparameterisation trick to split a tensor into means and devs
+    - Returns a sample, the means and devs as a tuple
+    - Splitting is along the final dimension
     - Used primarily in variational autoencoders
     """
     means, lstds = T.chunk(tensor, 2, dim=-1)

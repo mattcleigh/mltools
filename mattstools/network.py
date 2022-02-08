@@ -46,6 +46,9 @@ class MyNetBase(nn.Module):
         ## A list of all the loss names, all classes need a total loss!
         self.loss_names = ["total"]
 
+        ## Create the folder to store the network
+        self.full_name.mkdir(parents=True, exist_ok=True)
+
     def loss_dict_reset(self) -> dict:
         """Reset the loss dictionary
         - Returns a dictionary with 0 values for each of the loss names
@@ -64,11 +67,23 @@ class MyNetBase(nn.Module):
         for key, val in stat_dict.items():
             self.register_buffer("preproc_" + key, val.to(self.device))
 
-    def get_losses(self, *_, path: Path, flag: str):
-        """This method should be overwritten by any inheriting network
-        - It should be used to populate the dictionary of losses
+    def fowrard(self, *_, get_loss=True) -> dict:
+        """This method should be overwritten, but ideally the forward pass should return
+        - Network outputs
+        - Dictionary of losses
+        - Dictionary of extra details
         """
-        print("This model has no get_losses method")
+        return tuple(0, {}, {})
+
+    def get_losses(self, sample: tuple) -> dict:
+        """The function called by the trainer class to perform gradient descent
+        by defualt the forward pass should have space for the sample and a get_loss
+        flag
+        - This method can be overwritten if there is a quicker way to get the loss
+            - This is the case for normalising flows
+        """
+        _, loss_dict, _ = self.forward(*sample, get_loss=True)
+        return loss_dict
 
     def visualise(self, *_):
         """This method should be overwritten by any inheriting network

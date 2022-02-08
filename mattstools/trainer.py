@@ -24,7 +24,7 @@ class Trainer:
         self,
         network,
         train_set: Dataset,
-        valid_set: Dataset,
+        valid_set: Dataset = None,
         b_size: int = 32,
         patience: int = 100,
         max_epochs: int = 100,
@@ -39,8 +39,8 @@ class Trainer:
         args:
             network:     Network with a get_losses method
             train_set:   Dataset on which to perform batched gradient descent
-            valid_set:   Dataset for validation loss and early stopping conditions
         kwargs:
+            valid_set:   Dataset for validation loss and early stopping conditions
             b_size:      Batch size to use in the minibatch gradient descent
             patience:    Early stopping patience calculated using the validation set
             max_epochs:  Maximum number of epochs to train for
@@ -61,8 +61,9 @@ class Trainer:
         self.network = network
 
         ## Report on the number of files/samples used
+        self.has_v = not (valid_set is None)
         print(f"train set: {len(train_set):7} samples")
-        if valid_set:
+        if self.has_v:
             print(f"valid set: {len(valid_set):7} samples")
         else:
             print("No validation set added")
@@ -81,7 +82,10 @@ class Trainer:
 
         ## Initialise the loaders
         self.train_loader = DataLoader(train_set, shuffle=True, **loader_kwargs)
-        self.valid_loader = DataLoader(valid_set, shuffle=False, **loader_kwargs)
+        if self.has_v:
+            self.valid_loader = DataLoader(valid_set, shuffle=False, **loader_kwargs)
+        else:
+            self.valid_loader = None
 
         ## Create a history of train and validation losses for early stopping
         self.loss_hist = {
@@ -125,7 +129,8 @@ class Trainer:
 
             ## Run the test/train cycle, update stats, and save
             self.epoch(is_train=True)
-            self.epoch(is_train=False)
+            if self.has_v:
+                self.epoch(is_train=False)
             self.count_epochs()
             self.save_checkpoint()
 
@@ -198,8 +203,9 @@ class Trainer:
     def count_epochs(self) -> None:
         """Update attributes counting number of bad and total epochs"""
         self.num_epochs = len(self.loss_hist["total"]["train"])
-        self.best_epoch = np.argmin(self.loss_hist["total"]["valid"]) + 1
-        self.bad_epochs = self.num_epochs - self.best_epoch
+        if self.has_v:
+            self.best_epoch = np.argmin(self.loss_hist["total"]["valid"]) + 1
+            self.bad_epochs = self.num_epochs - self.best_epoch
 
     def save_checkpoint(self) -> None:
         """Add folders to the network's save directory containing
@@ -253,8 +259,11 @@ class Trainer:
             vis_folder = Path(self.network.full_name, "visual")
             vis_folder.mkdir(parents=True, exist_ok=True)
 
-            ## Use the first batch of the valid date as the sample
-            sample = next(iter(self.valid_loader))
+            ## Use the first batch of the valid date as the sample if available
+            if self.has_v:
+                sample = next(iter(self.valid_loader))
+            else:
+                sample = next(iter(self.train_loader))
             self.network.visualise(sample, path=vis_folder, flag=str(self.num_epochs))
 
     def load_checkpoint(self, flag="latest") -> None:

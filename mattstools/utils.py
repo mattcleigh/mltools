@@ -2,10 +2,11 @@
 General mix of utility functions
 """
 
+import json
 import yaml
 import argparse
 from pathlib import Path
-from typing import Iterable, Tuple, Union
+from typing import Union
 
 import numpy as np
 
@@ -80,6 +81,21 @@ def merge_dict(source: dict, update: dict) -> dict:
             )
 
     return merged
+
+
+def print_dict(dic: dict, indent: int = 1) -> None:
+    """Recursively print a dictionary using json
+
+    args:
+        dic: The dictionary
+        indent: The spacing/indent to do for nested dicts
+    """
+    print(json.dumps(dic, indent=indent))
+
+
+def key_add(pref: str, dic: dict) -> dict:
+    """Adds a prefix to each key in a dictionary"""
+    return {f"{pref}{key}": val for key, val in dic.items()}
 
 
 def interweave(arr_1: np.ndarray, arr_2: np.ndarray) -> np.ndarray:

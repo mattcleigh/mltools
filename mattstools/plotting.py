@@ -2,6 +2,7 @@
 A collection of plotting scripts for standard uses
 """
 
+from typing import Union
 from pathlib import Path
 
 import numpy as np
@@ -44,7 +45,7 @@ def plot_multi_loss(path: Path, loss_hist: dict, xlabel: str = "epoch") -> None:
 
 
 def plot_multi_hists(
-    path: Path,
+    path: Union[Path, str],
     data_list: list,
     type_labels: list,
     col_labels: list,
@@ -69,6 +70,9 @@ def plot_multi_hists(
         scale: The size in inches for each subplot
         leg: If the legend should be plotted
     """
+
+    ## Make sure we are using a pathlib type variable
+    path = Path(path)
 
     ## Check the number of histograms to plot
     n_data = len(data_list)
