@@ -120,6 +120,6 @@ class MyNetBase(nn.Module):
 
         ## Use the torch save method
         if as_dict:
-            T.save(self, full_path)
-        else:
             T.save(self.state_dict(), full_path)
+        else:
+            T.save(self, full_path)

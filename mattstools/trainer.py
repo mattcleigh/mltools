@@ -2,11 +2,16 @@
 Base class for training network
 """
 
+from cProfile import label
+from cmath import exp
+from functools import partialmethod
 import json
+from multiprocessing.sharedctypes import Value
 from pathlib import Path
 
 import numpy as np
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 
 import torch as T
 import torch.nn as nn
@@ -14,7 +19,7 @@ from torch.utils.data import Dataset, DataLoader
 
 from mattstools.utils import RunningAverage
 from mattstools.plotting import plot_multi_loss
-from mattstools.torch_utils import get_optim, get_sched, move_dev
+from mattstools.torch_utils import get_optim, get_sched, move_dev, get_grad_norm
 
 
 class Trainer:
@@ -30,6 +35,7 @@ class Trainer:
         max_epochs: int = 100,
         grad_clip: float = 0.0,
         n_workers: int = 2,
+        quick_mode: bool = False,
         optim_dict: dict = None,
         sched_dict: dict = None,
         vis_every: int = 10,
@@ -46,6 +52,7 @@ class Trainer:
             max_epochs:  Maximum number of epochs to train for
             grad_clip:   Clip value for the norm of the gradients (0 will not clip)
             n_workers:   Number of parallel threads which prepare each batch
+            quick_mode:  Break the training epoch after one batch, for debugging
             optim_dict:  A dict used to select and configure the optimiser
             sched_dict:  A dict used to select and configure the scheduler
             vis_every:   Run the network's visualisation function every X epochs
@@ -107,16 +114,98 @@ class Trainer:
             sched_dict,
             self.optimiser,
             len(self.train_loader),
-            optim_dict["lr"],
-            max_epochs,
+            max_lr=optim_dict["lr"],  ## Only used for one cycle
+            max_epochs=max_epochs,  ## Only used for one cycle
         )
 
         ## Variables to keep track of stopping conditions
-        self.max_epochs = max_epochs
-        self.patience = patience
+        self.max_epochs = max_epochs  ## No early stopping with onecyle learning!
+        self.patience = patience if sched_dict["name"] != "onecycle" else np.inf
         self.num_epochs = 0
         self.bad_epochs = 0
         self.best_epoch = 0
+
+        ## For quick_mode operations
+        self.quick_mode = quick_mode
+        if self.quick_mode:
+            print("Training in quick_mode should be used for debugging purposes only!")
+
+    def explode_learning(
+        self,
+        init_lr: float = 1e-5,
+        finl_lr: float = 1,
+        n_iter: int = 200,
+        scheme: str = "exp",
+    ):
+        """This method slowly increases the learning rate so one can find the max
+        stable value to use for training.
+        - create output plots of loss recorded per batch as lr increases
+        - should not train immediately after!
+
+        kwargs:
+            init_lr: The initial learning rate at the start of the test
+            stop: The final learning rate at the end of the test (might not be reached)
+            n_iter: The number of batch passes to test
+            scheme: The lr increase scheme, either 'lin' or 'exp'
+        """
+
+        ## Turn off the scheduler and turn on quick mode silence tqdm
+        self.scheduler = None
+        self.quick_mode = True
+        tqdm.__init__ = partialmethod(tqdm.__init__, disable=True)
+
+        ## Create the list of learning rates to try
+        ## Calculate the new learning rate
+        if scheme == "lin":
+            lrs = [(finl_lr - init_lr) / n_iter * e + init_lr for e in range(n_iter)]
+        elif scheme == "exp":
+            lrs = [
+                init_lr * np.power(finl_lr / init_lr, e / n_iter) for e in range(n_iter)
+            ]
+        else:
+            raise ValueError(f"Unrecognised lr increase sheme: {scheme}")
+
+        ## Cycle through each learning rate
+        grad_norms = []
+        for i, lr in enumerate(lrs):
+            print(i / n_iter, end="\r")
+
+            ## Set the optimiser learning rate
+            for g in self.optimiser.param_groups:
+                g["lr"] = lr
+
+            ## Do one batch
+            self.epoch(is_train=True)
+
+            ## Store the norm of the gradients
+            grad_norms.append(get_grad_norm(self.network))
+
+        ## Create the folder for the plots
+        test_folder = Path(self.network.full_name, "lr_test")
+        test_folder.mkdir(parents=True, exist_ok=True)
+
+        ## Plot the gradient norm vs lr
+        plt.plot(lrs, grad_norms, label="gradient norm")
+        plt.xscale("log")
+        plt.yscale("log")
+        plt.legend()
+        plt.savefig(Path(test_folder, "gnorm_vs_lr.png"))
+        plt.close()
+
+        ## Plot the lr vs epoch
+        plt.plot(lrs, label="learning rate")
+        plt.legend()
+        plt.savefig(Path(test_folder, "loss_vs_epoch.png"))
+        plt.close()
+
+        ## Plot the loss vs lr
+        plot_multi_loss(
+            Path(test_folder, "loss_vs_lr.png"),
+            self.loss_hist,
+            xvals=lrs,
+            xlabel="learning rate",
+            logx=True,
+        )
 
     def run_training_loop(self) -> None:
         """The main loop which cycles epochs of train and test
@@ -195,6 +284,10 @@ class Trainer:
             for lnm, running in self.run_loss.items():
                 running.update(losses[lnm].item())
 
+            ## Break when using quick mode
+            if self.quick_mode:
+                break
+
         ## Use the running losses to update the total history, then reset
         for lnm, running in self.run_loss.items():
             self.loss_hist[lnm][mode].append(running.avg)
@@ -259,12 +352,15 @@ class Trainer:
             vis_folder = Path(self.network.full_name, "visual")
             vis_folder.mkdir(parents=True, exist_ok=True)
 
-            ## Use the first batch of the valid date as the sample if available
-            if self.has_v:
-                sample = next(iter(self.valid_loader))
-            else:
-                sample = next(iter(self.train_loader))
-            self.network.visualise(sample, path=vis_folder, flag=str(self.num_epochs))
+            ## The most general way I have found is to pass the dataloader itself!
+            ## This does not require much memory (passed by reference) and it means that
+            ## visualise can run over the whole dataset (performance metrics)
+            ## while still having access to labels, norm states and other dset features
+            self.network.visualise(
+                self.valid_loader if self.has_v else self.train_loader,
+                path=vis_folder,
+                flag=str(self.num_epochs),
+            )
 
     def load_checkpoint(self, flag="latest") -> None:
         """Loads the latest instance of a saved network to continue training"""

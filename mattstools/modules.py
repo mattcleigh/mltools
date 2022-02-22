@@ -1,17 +1,21 @@
+from multiprocessing.sharedctypes import Value
 from typing import Union
+from typing_extensions import Literal
+from numpy import block
 
 import torch as T
 import torch.nn as nn
+import torch.nn.functional as F
 
 from torch.autograd import Function
 
-from mattstools.torch_utils import get_act, get_nrm
+from mattstools.torch_utils import get_act, get_nrm, pass_with_mask, masked_pool
 
 
 class MLPBlock(nn.Module):
-    """A simple MLP block that makes up a dense networks
+    """A simple MLP block that makes up a dense network
 
-    Depending on the configuration it can apply:
+    Made up of several layers containing:
     - linear map
     - activation function
     - layer normalisation
@@ -23,18 +27,24 @@ class MLPBlock(nn.Module):
         self,
         inpt_dim: int,
         outp_dim: int,
+        ctxt_dim: int = 0,
+        n_layers: int = 1,
         act: str = "lrlu",
-        nrm: str = None,
+        nrm: str = "none",
         drp: float = 0,
+        do_res: bool = False,
     ) -> None:
         """
         args:
             inpt_dim: The number of features for the input layer
             outp_dim: The number of output features
         kwargs:
+            ctxt_dim: The number of contextual features to concat to the inputs
             act: A string indicating the name of the activation function
             nrm: A string indicating the name of the normalisation
             drp: The dropout probability, 0 implies no dropout
+            do_res: Add to previous output, only if dim does not change
+            n_layers: The number of transform layers in this block
         """
         ## Applies the
         super().__init__()
@@ -42,83 +52,232 @@ class MLPBlock(nn.Module):
         ## Save the input and output dimensions of the module
         self.inpt_dim = inpt_dim
         self.outp_dim = outp_dim
+        self.ctxt_dim = ctxt_dim
 
-        ## Initialise the block as a sequential module
-        block = [nn.Linear(inpt_dim, outp_dim)]
-        if act:
-            block += [get_act(act)]
-        if nrm:
-            block += [get_nrm(nrm, outp_dim)]
-        if drp:
-            block += [nn.Dropout(drp)]
-        self.block = nn.Sequential(*block)
+        ## If this layer includes an additive residual connection
+        self.do_res = do_res and (inpt_dim == outp_dim)
 
-    def forward(self, tensor: T.Tensor) -> T.Tensor:
+        ## Initialise the block layers as a module list
+        self.block = nn.ModuleList()
+        for n in range(n_layers):  ## Increases to output dim first
+            lyr_in = inpt_dim + ctxt_dim if n == 0 else outp_dim
+            self.block.append(nn.Linear(lyr_in, outp_dim))
+            if act != "none":
+                self.block.append(get_act(act))
+            if nrm != "none":
+                self.block.append(get_nrm(nrm, outp_dim))
+            if drp > 0:
+                self.block.append(nn.Dropout(drp))
+
+    def forward(self, input: T.Tensor, ctxt: T.Tensor = None) -> T.Tensor:
         """
         args:
             tensor: Pytorch tensor to pass through the network
+            ctxt: The conditioning tensor, can be ignored
         """
-        return self.block(tensor)
+
+        ## Concatenate the context information to the input of the block
+        temp = T.cat([input, ctxt], dim=-1) if self.ctxt_dim else input
+
+        ## Pass through each transform in the block
+        for layer in self.block:
+            temp = layer(temp)
+
+        ## Add the original inputs again for the residual connection
+        if self.do_res:
+            temp += input
+
+        return temp
 
 
 class DenseNetwork(nn.Module):
-    """A dense neural network made from a series of consecutive MLP blocks"""
+    """A dense neural network made from a series of consecutive MLP blocks and context
+    injection layers"""
 
     def __init__(
         self,
         inpt_dim: int,
-        outp_dim: int = None,
-        depth: int = 2,
-        width: Union[int, list] = 32,
+        outp_dim: int = 0,
+        ctxt_dim: int = 0,
+        hddn_dim: Union[int, list] = 32,
+        num_blocks: int = 2,
+        n_lyr_pbk: int = 1,
         act_h: str = "lrlu",
-        act_o: str = None,
+        act_o: str = "none",
         do_out: bool = True,
-        nrm: str = None,
+        nrm: str = "none",
         drp: float = 0,
+        do_res: bool = False,
+        ctxt_in_all: bool = True,
     ) -> None:
         """
         args:
             inpt_dim: The number of input neurons
         kwargs:
             outp_dim: The number of output neurons, if none it will take inpt or hddn
-            depth: The number of hidden layers
-            width: The number of neurons in each hidden layer (if list, overides depth)
-            act_h: The name of the activation function to apply in the hidden layers
+            ctxt_dim: The number of context features, use is determined by ctxt_type
+            hddn_dim: The width of each hidden block (if list, overides depth)
+            num_blocks: The number of hidden blocks (overwritten by hddn_dim if list)
+            n_lyr_pbk: The number of transform layers per hidden block
+            act_h: The name of the activation function to apply in the hidden blocks
             act_o: The name of the activation function to apply to the outputs
             do_out: If the network has a dedicated output block
             nrm: Type of normalisation, either layer or batch in each hidden block
             drp: Dropout probability for hidden layers (0 means no dropout)
+            do_res: Use res-connections between hidden blocks (only if same size)
+            ctxt_in_all: Include the ctxt tensor in all blocks, not just input
         """
         super().__init__()
 
-        ## We store the input, output dimensions to query them later
+        ## We store the input, hddn (list), output, and ctxt dims to query them later
         self.inpt_dim = inpt_dim
-        self.blocks = nn.ModuleList()
-
-        ## Calculate the number of neurons in each hidden layer if not defined
-        width = width if isinstance(width, list) else depth * [width]
-
-        ## Calculating the output dimension of the network
-        if do_out:
-            self.outp_dim = outp_dim or inpt_dim
+        if isinstance(hddn_dim, list):
+            self.hddn_dim = hddn_dim
         else:
-            self.outp_dim = width[-1]
+            self.hddn_dim = num_blocks * [hddn_dim]
+        self.outp_dim = outp_dim or inpt_dim if do_out else self.hddn_dim[-1]
+        self.depth = len(self.hddn_dim)
+        self.ctxt_dim = ctxt_dim
+        self.do_out = do_out
 
-        ## Input block
-        self.blocks.append(MLPBlock(inpt_dim, width[0], act_h, nrm, drp))
+        ## Necc for this module to work with the nflows package
+        self.hidden_features = self.hddn_dim[-1]
 
-        ## Hidden blocks
-        for w_1, w_2 in zip(width[:-1], width[1:]):
-            self.blocks.append(MLPBlock(w_1, w_2, act_h, nrm, drp))
+        ## Input MLP block
+        self.input_block = MLPBlock(
+            inpt_dim=self.inpt_dim,
+            outp_dim=self.hddn_dim[0],
+            ctxt_dim=self.ctxt_dim,
+            act=act_h,
+            nrm=nrm,
+            drp=drp,
+        )
 
-        ## Output block (no normalisation or dropout)
+        ## All hidden blocks as a single module list
+        self.hidden_blocks = nn.ModuleList()
+        for h_1, h_2 in zip(self.hddn_dim[:-1], self.hddn_dim[1:]):
+            self.hidden_blocks.append(
+                MLPBlock(
+                    inpt_dim=h_1,
+                    outp_dim=h_2,
+                    ctxt_dim=self.ctxt_dim if ctxt_in_all else 0,
+                    n_layers=n_lyr_pbk,
+                    act=act_h,
+                    nrm=nrm,
+                    drp=drp,
+                    do_res=do_res,
+                )
+            )
+
+        ## Output block (optional and there is no normalisation, dropout or context)
         if do_out:
-            self.blocks.append(MLPBlock(width[-1], self.outp_dim, act_o, False, 0))
+            self.output_block = MLPBlock(
+                inpt_dim=self.hddn_dim[-1], outp_dim=self.outp_dim, act=act_o
+            )
 
-    def forward(self, tensor: T.Tensor) -> T.Tensor:
-        for module in self.blocks:
-            tensor = module(tensor)
-        return tensor
+    def forward(self, inputs: T.Tensor, ctxt: T.Tensor = None) -> T.Tensor:
+
+        ## Pass through the input block
+        inputs = self.input_block(inputs, ctxt)
+
+        ## Pass through each hidden block
+        for h_block in self.hidden_blocks:  ## Context tensor will only be used if
+            inputs = h_block(inputs, ctxt)  ## block was initialised with a ctxt dim
+
+        ## Pass through the output block
+        if self.do_out:
+            inputs = self.output_block(inputs)
+
+        return inputs
+
+
+class DeepSet(nn.Module):
+    """A deep set network that can provide attention pooling"""
+
+    def __init__(
+        self,
+        inpt_dim: int,
+        outp_dim: int,
+        pool_type: str = "mean",
+        attn_mode: str = "mean",
+        feat_net_kwargs=None,
+        attn_net_kwargs=None,
+        post_net_kwargs=None,
+    ) -> None:
+        """
+        args:
+            inpt_dim: The number of input features
+            outp_dim: The number of desired output featues
+        kwargs:
+            pool_type: The type of set pooling applied, mean, sum, max or attention
+            depth: The number of hidden layers
+            feat_net_kwargs: Keyword arguments for the feature network
+            attn_net_kwargs: Keyword arguments for the attention network
+            post_net_kwargs: Keyword arguments for the post network
+            attn_heads: The number of sets of pooling weights to learn per sample
+            attn_mode: The type of attention (softmaxed or softplused)
+        """
+        super().__init__()
+
+        ## Dict default arguments
+        feat_net_kwargs = feat_net_kwargs or {}
+        attn_net_kwargs = attn_net_kwargs or {}
+        post_net_kwargs = post_net_kwargs or {}
+
+        ## For the attention network the default output must be set to 1
+        if "outp_dim" not in attn_net_kwargs:
+            attn_net_kwargs["outp_dim"] = 1
+
+        ## Save the class attributes
+        self.inpt_dim = inpt_dim
+        self.outp_dim = outp_dim
+        self.pool_type = pool_type
+        self.attn_mode = attn_mode
+
+        ## Create the feature extraction network
+        self.feat_net = DenseNetwork(self.inpt_dim, **feat_net_kwargs)
+        pooled_dim = self.feat_net.outp_dim
+
+        ## Create the attention network if pool type is set to attention
+        if self.pool_type == "attn":
+            self.attn_net = DenseNetwork(self.inpt_dim, **attn_net_kwargs)
+            pooled_dim *= self.attn_net.outp_dim  ## Dim increases with multiheaded attn
+
+        ## Create the post network to update the pooled features of the set
+        self.post_net = DenseNetwork(pooled_dim, self.outp_dim, **post_net_kwargs)
+
+    def forward(self, tensor: T.tensor, mask: T.BoolTensor):
+        """The expected shapes of the inputs are
+        - tensor: batch x set x features
+        - mask: batch x set
+        """
+
+        ## Pass the non_zero values through the feature network
+        feat_outs = pass_with_mask(tensor, self.feat_net, mask)
+
+        ## For attention calculate the weights using using -infinite padding
+        if self.pool_type == "attn":
+            attn_outs = pass_with_mask(tensor, self.attn_net, mask, padval=-T.inf)
+
+            ## Apply either a softmax for weighted mean or softplus for weighted sum
+            if self.attn_mode == "mean":
+                attn_outs = F.softmax(attn_outs, dim=-2)
+            elif self.attn_mode == "sum":
+                attn_outs = F.softplus(attn_outs, dim=-2)
+
+            ## Broadcast the attention to get the multiple poolings
+            feat_outs = (
+                (feat_outs.unsqueeze(-1) * attn_outs.unsqueeze(-2))
+                .flatten(start_dim=-2)
+                .sum(dim=-2)
+            )
+
+        ## For the other types of pooling
+        else:
+            feat_outs = masked_pool(self.pool_type, feat_outs, mask)
+
+        ## Pass the pooled information through post network and return
+        return self.post_net(feat_outs)
 
 
 class GRF(Function):
