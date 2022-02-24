@@ -177,117 +177,195 @@ def parallel_plot(
     path: str,
     df: pd.DataFrame,
     cols: list,
-    rank_attr: str,
-    cmap: str="Spectral",
-    curved: bool=True,
-    curvedextend=0.1,
-
-):
+    rank_col: str = None,
+    cmap: str = "Spectral",
+    curved: bool = True,
+    curved_extend: float = 0.1,
+    groupby_methods: list = None,
+    highlight_best: bool = False,
+    do_sort: bool = True,
+) -> None:
     """
     Create a parallel coordinates plot from pandas dataframe
     args:
         path: Location of output plot
         df: dataframe
-        cols: columns to use for axes
-        rank_attr: attribute to use for colour ranking
+        cols: columns to use for axes, final column will be used for colour ranking
     kwargs:
+        rank_col: The name of the column to use for ranking, otherwise takes last
         cmap: Colour palette to use for ranking of lines
-        curved: Spline interpolation along lines
-        curvedextend: Fraction extension in y axis, adjust to contain curvature
+        curved: Use spline interpolation along lines
+        curved_extend: Fraction extension in y axis, adjust to contain curvature
+        groupby_methods: List of aggr methods to include for each categorical column
+        highlight_best: Highlight the best row with a darker line
+        do_sort: Sort the dataframe by rank column, best configs are more visible
     """
+
+    ## Make sure that the rank column is the final column in the list
+    if rank_col is not None:
+        if rank_col in cols:
+            cols.append(cols.pop(cols.index(rank_col)))
+        else:
+            cols.append(rank_col)
+    rank_col = cols[-1]
+
+    ## Sort the dataframe by the rank column
+    if do_sort:
+        df.sort_values(by=rank_col, ascending=False, inplace=True)
 
     ## Load the colourmap
     colmap = matplotlib.cm.get_cmap(cmap)
 
-    ## Add the column to use for the ranking
-    cols = cols + [rank_attr]
+    ## Create a value matrix for the y intercept points on each column for each line
+    y_matrix = np.zeros((len(cols), len(df)))
+    x_values = np.arange(len(cols))
+    ax_info = {}  ## Dict which will contain tick labels and values for each col
+
+    ## Cycle through each column
+    for i, col in enumerate(cols):
+
+        ## Pull the column data from the dataframe
+        col_data = df[col]
+
+        ## For continuous data (more than 10 unique values)
+        if (col_data.dtype == float) & (len(np.unique(col_data)) > 10):
+
+            ## Scale the range of data to [0,1] and save to matrix
+            y_min = np.min(col_data)
+            y_max = np.max(col_data)
+            y_range = y_max - y_min
+            y_matrix[i] = (col_data - y_min) / y_range
+
+            ## Create the ticks and tick labels for the axis
+            nticks = 5  ## Good number for most cases
+            tick_labels = np.linspace(y_min, y_max, nticks, endpoint=True)
+            tick_labels = [f"{s:.2f}" for s in tick_labels]
+            tick_values = np.linspace(0, 1, nticks, endpoint=True)
+            ax_info[col] = [tick_labels, tick_values]
+
+        ## For categorical data (less than 10 unique values)
+        else:
+
+            ## Set the type for the data to categorical to pull out stats using pandas
+            col_data = col_data.astype("category")
+            cats = col_data.cat.categories
+            cat_vals = col_data.cat.codes
+
+            ## Scale to the range [0,1] (special case for data with only one cat)
+            if len(cats) == 1:
+                y_matrix[i] = 0.5
+            else:
+                y_matrix[i] = cat_vals / cat_vals.max()
+
+            ## The tick labels include average performance using groupby
+            if groupby_methods is not None:
+                groups = (
+                    df[[col, rank_col]].groupby([col]).agg(groupby_methods)[rank_col]
+                )
+
+                ## Create the tick labels by using all groupy results
+                tick_labels = [
+                    str(cat)
+                    + "".join(
+                        [
+                            f"\n{meth}={groups[meth].loc[cat]:.3f}"
+                            for meth in groupby_methods
+                        ]
+                    )
+                    for cat in list(cats)
+                ]
+
+            ## Or they simply use the cat names
+            else:
+                tick_labels = cats
+
+            ## Create the tick locations and save in dict
+            tick_values = np.unique(y_matrix[i])
+            ax_info[col] = [tick_labels, tick_values]
+
+    ## Get the index of the best row
+    best_idx = np.argmin(y_matrix[-1]) if highlight_best else -1
 
     ## Create the plot
     fig, axes = plt.subplots(
         1, len(cols) - 1, sharey=False, figsize=(3 * len(cols) + 3, 5)
     )
-    valmat = np.ndarray(shape=(len(cols), len(df)))
-    x = np.arange(0, len(cols), 1)
-    ax_info = {}
-    for i, col in enumerate(cols):
-        vals = df[col]
-        if (vals.dtype == float) & (len(np.unique(vals)) > 10):
-            minval = np.min(vals)
-            maxval = np.max(vals)
-            rangeval = maxval - minval
-            vals = np.true_divide(vals - minval, maxval - minval)
-            nticks = 5
-            tick_labels = [
-                round(minval + i * (rangeval / nticks), 4) for i in range(nticks + 1)
-            ]
-            ticks = [0 + i * (1.0 / nticks) for i in range(nticks + 1)]
-            valmat[i] = vals
-            ax_info[col] = [tick_labels, ticks]
-        else:
-            vals = vals.astype("category")
-            cats = vals.cat.categories
-            c_vals = vals.cat.codes
-            minval = 0
-            maxval = len(cats) - 1
-            if maxval == 0:
-                c_vals = 0.5
-            else:
-                c_vals = np.true_divide(c_vals - minval, maxval - minval)
-            tick_labels = cats
-            ticks = np.unique(c_vals)
-            ax_info[col] = [tick_labels, ticks]
-            valmat[i] = c_vals
 
-    extendfrac = curvedextend if curved else 0.05
-    for i, ax in enumerate(axes):
-        for idx in range(valmat.shape[-1]):
+    ## Amount by which to extend the y axis ranges above the data range
+    y_ax_ext = curved_extend if curved else 0.05
+
+    ## Cycle through each line (singe row in the original dataframe)
+    for lne in range(len(df)):
+
+        ## Calculate spline function to use across all axes
+        if curved:
+            spline_fn = make_interp_spline(
+                x_values, y_matrix[:, lne], k=3, bc_type="clamped"
+            )
+
+        ## Keyword arguments for drawing the line
+        lne_kwargs = {
+            "color": colmap(y_matrix[-1, lne]),
+            "alpha": 1 if lne == best_idx else 0.3,
+            "linewidth": 4 if lne == best_idx else None,
+        }
+
+        ## Cycle through each axis (bridges one column to the next)
+        for i, ax in enumerate(axes):
+
+            ## For splines
             if curved:
-                x_new = np.linspace(0, len(x), len(x) * 20)
-                a_BSpline = make_interp_spline(
-                    x, valmat[:, idx], k=3, bc_type="clamped"
+
+                ## Plot the spline using a more dense x space spanning the axis window
+                x_space = np.linspace(i, i + 1, 20)
+                ax.plot(
+                    x_space,
+                    spline_fn(x_space),
+                    **lne_kwargs
                 )
-                y_new = a_BSpline(x_new)
-                ax.plot(x_new, y_new, color=colmap(valmat[-1, idx]), alpha=0.3)
-            else:
-                ax.plot(x, valmat[:, idx], color=colmap(valmat[-1, idx]), alpha=0.3)
-        ax.set_ylim(0 - extendfrac, 1 + extendfrac)
-        ax.set_xlim(i, i + 1)
 
+            ## For simple line connectors
+            else:
+                ax.plot(
+                    x_values[[i, i + 1]],
+                    y_matrix[[i, i + 1], lne],
+                    **lne_kwargs,
+                )
+
+            ## Set the axis limits, y included extensions, x is limited to window
+            ax.set_ylim(0 - y_ax_ext, 1 + y_ax_ext)
+            ax.set_xlim(i, i + 1)
+
+    ## For setting the axis ticklabels
     for dim, (ax, col) in enumerate(zip(axes, cols)):
+
+        ## Reduce the x axis ticks to the start of the plot for column names
         ax.xaxis.set_major_locator(ticker.FixedLocator([dim]))
-        ax.yaxis.set_major_locator(ticker.FixedLocator(ax_info[col][1]))
-
-        ## Formatting the tick labels to make them readable
-        tick_labels = []
-        for a in ax_info[col][0]:
-            if isinstance(a, float):
-                tick_labels.append("{:.5}".format(a))
-            else:
-                tick_labels.append(a)
-
-        ax.set_yticklabels(tick_labels)
         ax.set_xticklabels([cols[dim]])
 
-    plt.subplots_adjust(wspace=0)
-    norm = matplotlib.colors.Normalize(0, 1)  # *axes[-1].get_ylim())
-    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+        ## The y axis ticks were calculated and saved in the info dict
+        ax.yaxis.set_major_locator(ticker.FixedLocator(ax_info[col][1]))
+        ax.set_yticklabels(ax_info[col][0])
+
+    ## Create the colour bar on the far right side of the plot
+    norm = matplotlib.colors.Normalize(0, 1)  ## Map data into the colour range [0, 1]
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)  ## Required for colourbar
     cbar = plt.colorbar(
         sm,
         pad=0,
-        ticks=ax_info[rank_attr][1],
-        extend="both",
+        ticks=ax_info[rank_col][1],  ## Uses ranking attribute
+        extend="both",  ## Extending to match the y extension passed 0 and 1
         extendrect=True,
-        extendfrac=extendfrac,
+        extendfrac=y_ax_ext,
     )
-    if curved:
-        cbar.ax.set_ylim(0 - curvedextend, 1 + curvedextend)
 
-    ## Change the plot labels to be the configuration, not value
-    labels = [str(row) for row in df[cols[:-3]].values.tolist()]
-    if len(labels) > 10:
-        labels = ax_info[rank_attr][0]
-    cbar.ax.set_yticklabels(labels)
-    cbar.ax.set_xlabel(rank_attr)
+    ## The colour bar also needs tick labels, x labels and y limits extended
+    cbar.ax.set_yticklabels(ax_info[rank_col][0])
+    cbar.ax.set_xlabel(rank_col)
+    if curved:
+        cbar.ax.set_ylim(0 - curved_extend, 1 + curved_extend)
+
+    ## Change the plot layout and save
     plt.tight_layout()
-    plt.subplots_adjust(wspace=0, left=0.05, right=0.85)
+    plt.subplots_adjust(wspace=0, left=0.05, right=0.95)
     plt.savefig(Path(path).with_suffix(".png"))

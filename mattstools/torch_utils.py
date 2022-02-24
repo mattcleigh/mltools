@@ -15,6 +15,13 @@ from torch.utils.data import Dataset, random_split
 from mattstools.loss import GANLoss, KLD2NormLoss, MyBCEWithLogit
 
 
+def calc_rmse(value_a: T.Tensor, value_b: T.Tensor, dim: int = 0) -> T.Tensor:
+    """Calculates the RMSE without having to go through torch's warning filled mse loss
+    method
+    """
+    return (value_a - value_b).pow(2).mean(dim=dim).sqrt()
+
+
 def get_act(name: str) -> nn.Module:
     """Return a pytorch activation function given a name"""
     if name == "relu":
@@ -292,9 +299,9 @@ def to_np(tensor: T.Tensor) -> np.ndarray:
 
 
 def print_gpu_info(dev=0):
-    total = T.cuda.get_device_properties(dev).total_memory / 1024 ** 3
-    reser = T.cuda.memory_reserved(dev) / 1024 ** 3
-    alloc = T.cuda.memory_allocated(dev) / 1024 ** 3
+    total = T.cuda.get_device_properties(dev).total_memory / 1024**3
+    reser = T.cuda.memory_reserved(dev) / 1024**3
+    alloc = T.cuda.memory_allocated(dev) / 1024**3
     print(f"\nTotal = {total:.2f}\nReser = {reser:.2f}\nAlloc = {alloc:.2f}")
 
 

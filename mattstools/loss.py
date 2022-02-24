@@ -22,10 +22,14 @@ class MyBCEWithLogit(nn.Module):
 
 class GANLoss(nn.Module):
     """Aversarial loss for use in GANs or AAEs
-    - Requires both the inputs and the model to allow for NST loss and gradient penalties
+    - Requires both the inputs and the model
+    - This is so it can regenerate samples for nonsaturating loss
+    - This is also to allow for gradient penalties
     """
 
-    def forward(self, inputs: T.Tensor, outputs: T.Tensor, labels: T.Tensor, network):
+    def forward(
+        self, inputs: T.Tensor, outputs: T.Tensor, labels: T.Tensor, network: nn.Module
+    ):
         """
         args:
             inputs: The inputs to the discriminator
