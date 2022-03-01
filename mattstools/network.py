@@ -34,6 +34,7 @@ class MyNetBase(nn.Module):
             device: The name of the device on which to load/save and store the network
         """
         super().__init__()
+        print(f"Creating network: {name}")
 
         ## Basic interfacing class attributes
         self.name = name

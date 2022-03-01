@@ -40,6 +40,8 @@ class Trainer:
         sched_dict: dict = None,
         vis_every: int = 10,
         chkp_every: int = 10,
+        resume: bool = False,
+        tqdm_quiet: bool = False,
     ) -> None:
         """
         args:
@@ -57,6 +59,9 @@ class Trainer:
             sched_dict:  A dict used to select and configure the scheduler
             vis_every:   Run the network's visualisation function every X epochs
             chkp_every:  Save a checkpoint of the net/opt/schd/loss every X epochs
+            resume:      Load the 'latest' checkpoint of the trainer object
+            tqdm_quiet:  Prevents tqdm loading bars, good for gridjobs writing to logs
+
         """
         print("\nInitialising the trainer")
 
@@ -128,7 +133,17 @@ class Trainer:
         ## For quick_mode operations
         self.quick_mode = quick_mode
         if self.quick_mode:
-            print("Training in quick_mode should be used for debugging purposes only!")
+            print(" - quickmode activated (should be only for debugging!)")
+
+        ## Turning off tqdm
+        if tqdm_quiet:
+            print(" - disabling tqdm outputs")
+            tqdm.__init__ = partialmethod(tqdm.__init__, disable=True)
+
+        ## Load the previous checkpoint
+        if resume:
+            self.load_checkpoint(flag="latest")
+            self._save_chpt_dict("before_resume") ## Make a save before continuing
 
     def explode_learning(
         self,
@@ -148,6 +163,7 @@ class Trainer:
             n_iter: The number of batch passes to test
             scheme: The lr increase scheme, either 'lin' or 'exp'
         """
+        print("\nExploding the learning rate from {init_lr} to {finl_lr}")
 
         ## Turn off the scheduler and turn on quick mode silence tqdm
         self.scheduler = None
@@ -184,18 +200,17 @@ class Trainer:
         test_folder = Path(self.network.full_name, "lr_test")
         test_folder.mkdir(parents=True, exist_ok=True)
 
-        ## Plot the gradient norm vs lr
-        plt.plot(lrs, grad_norms, label="gradient norm")
-        plt.xscale("log")
+        ## Plot the gradient norm
+        plt.plot(grad_norms, label="gradient norm")
         plt.yscale("log")
         plt.legend()
-        plt.savefig(Path(test_folder, "gnorm_vs_lr.png"))
+        plt.savefig(Path(test_folder, "gnorm_vs_epoch.png"))
         plt.close()
 
         ## Plot the lr vs epoch
         plt.plot(lrs, label="learning rate")
         plt.legend()
-        plt.savefig(Path(test_folder, "loss_vs_epoch.png"))
+        plt.savefig(Path(test_folder, "lr_vs_epoch.png"))
         plt.close()
 
         ## Plot the loss vs lr
@@ -225,11 +240,11 @@ class Trainer:
 
             ## Check if we have exceeded the patience
             if self.bad_epochs > self.patience:
-                print("Patience Exceeded: Stopping training!")
+                print(" - patience Exceeded: Stopping training!")
                 return 0
 
         ## If we have reached the maximum number of epochs
-        print("Maximum number of epochs exceeded")
+        print(" - maximum number of epochs exceeded")
         return 0
 
     def epoch(self, is_train: bool = False) -> None:
@@ -300,6 +315,29 @@ class Trainer:
             self.best_epoch = np.argmin(self.loss_hist["total"]["valid"]) + 1
             self.bad_epochs = self.num_epochs - self.best_epoch
 
+    def _save_chpt_dict(self, sv_name: str) -> None:
+        """Create a saved dict of the network/optimiser/loss/scheduler states for
+        resuming training at a later stage
+        """
+
+        ## Create checkpoint folder
+        chckpnt_folder = Path(self.network.full_name, "checkpoints")
+        chckpnt_folder.mkdir(parents=True, exist_ok=True)
+
+        ## Save a checkpoint of the network/optimiser/loss (for reloading)
+        checkpoint = {
+            "network": self.network.state_dict(),
+            "optimiser": self.optimiser.state_dict(),
+            "losses": self.loss_hist,
+        }
+
+        ## Add the scheduler if used in training
+        if self.scheduler is not None:
+            checkpoint["scheduler"] = self.scheduler.state_dict()
+
+        ## Save using pytorch's pickle method and the save name
+        T.save(checkpoint, Path(chckpnt_folder, f"checkpoint_{sv_name}"))
+
     def save_checkpoint(self) -> None:
         """Add folders to the network's save directory containing
         - losses -> Loss history as json and plotted as pngs
@@ -307,7 +345,7 @@ class Trainer:
         - visual -> Output of network's visualisation method on first valid batch
         """
 
-        print("Saving...")
+        print(" - saving...")
 
         ## Save best network model and dict (easier to reload) in main directory
         if self.bad_epochs == 0:
@@ -324,22 +362,12 @@ class Trainer:
         with open(loss_file_name, "w", encoding="utf-8") as l_file:
             json.dump(self.loss_hist, l_file, indent=2)
 
-        ## For checkpointing
+        ## Always save latest version of checkpoint
+        self._save_chpt_dict("latest")
+
+        ## For checkpointing at regular intervals
         if self.chkp_every > 0 and self.num_epochs % self.chkp_every == 0:
-
-            ## Create checkpoint folder
-            chckpnt_folder = Path(self.network.full_name, "checkpoints")
-            chckpnt_folder.mkdir(parents=True, exist_ok=True)
-
-            ## Save a checkpoint of the network/scheduler/optimiser (for reloading)
-            checkpoint = {
-                "network": self.network.state_dict(),
-                "optimiser": self.optimiser.state_dict(),
-                "losses": self.loss_hist,
-            }
-            if self.scheduler is not None:
-                checkpoint["scheduler"] = self.scheduler.state_dict()
-            T.save(checkpoint, Path(chckpnt_folder, f"checkpoint_{self.num_epochs}"))
+            self._save_chpt_dict(self.num_epochs)
 
         ## For visualisation
         if self.vis_every > 0 and self.num_epochs % self.vis_every == 0:
@@ -364,25 +392,12 @@ class Trainer:
 
     def load_checkpoint(self, flag="latest") -> None:
         """Loads the latest instance of a saved network to continue training"""
-
-        print("Loading checkpoint...")
-
-        ## Find the latest checkpoint in the folder (this could be written better)
-        checkpoint_file = "NoFilesFound"
-        if flag == "latest":
-            for i in range(self.max_epochs):
-                test_file = Path(
-                    self.network.full_name, "checkpoints", f"checkpoint_{i}"
-                )
-                if test_file.is_file():
-                    checkpoint_file = test_file
-        else:
-            checkpoint_file = Path(
-                self.network.full_name, "checkpoints", f"checkpoint_{flag}"
-            )
+        print(" - loading checkpoint...")
 
         ## Load the and unpack checkpoint object
-        checkpoint = T.load(checkpoint_file)
+        checkpoint = T.load(
+            Path(self.network.full_name, "checkpoints", f"checkpoint_{flag}")
+        )
         self.network.load_state_dict(checkpoint["network"])
         self.optimiser.load_state_dict(checkpoint["optimiser"])
         self.loss_hist = checkpoint["losses"]
@@ -392,3 +407,9 @@ class Trainer:
 
         ## Update the epoch count
         self.count_epochs()
+
+        ## Cant resume if trained enough, parameters should be changed
+        if self.bad_epochs > self.patience:
+            raise ValueError("Loaded checkpoint already exeeds specified patience!")
+        if self.num_epochs > self.max_epochs:
+            raise ValueError("Loaded checkpoint already trained up to max epochs!")

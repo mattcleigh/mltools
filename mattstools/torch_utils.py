@@ -255,14 +255,18 @@ def pass_with_mask(
 
 def sel_device(dev: Union[str, T.device]) -> T.device:
     """Returns a pytorch device given a string (or a device)
-    - includes auto option
+    - giving cuda or gpu will run a hardware check first
     """
+    ## Not from config, but when device is specified already
     if isinstance(dev, T.device):
         return dev
-    if dev == "auto":
-        return T.device("cuda" if T.cuda.is_availabel() else "cpu")
-    elif dev in ["cuda", "gpu"]:
-        dev = "cuda"
+
+    ## Tries to get gpu if available
+    if dev in ["cuda", "gpu"]:
+        print("Trying to select cuda based on available hardware")
+        dev = "cuda" if T.cuda.is_available() else "cpu"
+        print(f" - {dev} selected")
+
     return T.device(dev)
 
 

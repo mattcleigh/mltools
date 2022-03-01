@@ -72,11 +72,11 @@ def plot_multi_loss(
 
 def plot_multi_hists(
     path: Union[Path, str],
-    data_list: list,
-    type_labels: list,
-    col_labels: list,
+    data_list: Union[list, np.ndarray],
+    type_labels: Union[list, str],
+    col_labels: Union[list, str],
     normed: bool = True,
-    bins: str = "auto",
+    bins: Union[list, str] = "auto",
     logy: bool = False,
     ylim: list = None,
     hor: bool = True,
@@ -94,7 +94,7 @@ def plot_multi_hists(
         type_labels: A list of labels for each tensor in data_list
         col_labels: A list of labels for each column/histogram
         normed: If the histograms are to be a density plot
-        bins: The number of bins to use for the histograms, can use numpy's strings
+        bins: The bins to use for each axis, can use numpy's strings
         logy: If we should use the log in the y-axis
         hor: If the multiplot should be horizontal or vertical
         scale: The size in inches for each subplot
@@ -104,6 +104,16 @@ def plot_multi_hists(
 
     ## Make sure we are using a pathlib type variable
     path = Path(path)
+
+    ## Make the arguments lists for generality
+    if not isinstance(data_list, list):
+        data_list = [data_list]
+    if not isinstance(type_labels, list):
+        type_labels = [type_labels]
+    if not isinstance(col_labels, list):
+        col_labels = [col_labels]
+    if not isinstance(bins, list):
+        bins = len(data_list[0][0]) * [bins]
 
     ## Check the number of histograms to plot
     n_data = len(data_list)
@@ -126,7 +136,8 @@ def plot_multi_hists(
     for i in range(n_axis):
 
         ## Reduce bins based on number of unique datapoints
-        b = bins
+        ## If the number of datapoints is less than 10 then we assume interger types
+        b = bins[i]
         if isinstance(bins, str):
             n_unique = len(np.unique(data_list[0][:, i]))
             if n_unique < 10:
@@ -258,7 +269,7 @@ def parallel_plot(
                 y_matrix[i] = cat_vals / cat_vals.max()
 
             ## The tick labels include average performance using groupby
-            if groupby_methods is not None:
+            if groupby_methods is not None and col != rank_col:
                 groups = (
                     df[[col, rank_col]].groupby([col]).agg(groupby_methods)[rank_col]
                 )
@@ -318,11 +329,7 @@ def parallel_plot(
 
                 ## Plot the spline using a more dense x space spanning the axis window
                 x_space = np.linspace(i, i + 1, 20)
-                ax.plot(
-                    x_space,
-                    spline_fn(x_space),
-                    **lne_kwargs
-                )
+                ax.plot(x_space, spline_fn(x_space), **lne_kwargs)
 
             ## For simple line connectors
             else:
