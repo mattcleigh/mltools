@@ -23,17 +23,19 @@ class GeomlossWrapper(nn.Module):
         return loss
 
 
-# class MyBCEWithLogit(nn.Module):
-#     """A wrapper for the calculating BCE using logits in pytorch that makes the syntax
-#     consistant with pytorch's CrossEntropy loss
-#     """
+class MyBCEWithLogit(nn.Module):
+    """A wrapper for the calculating BCE using logits in pytorch that makes the syntax
+    consistant with pytorch's CrossEntropy loss
+    - Automatically squeezes out the batch dimension to ensure same shape
+    - Automatically changes targets to floats
+    """
 
-#     def __init__(self):
-#         super().__init__()
-#         self.loss_fn = nn.BCEWithLogitsLoss()
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+        self.loss_fn = nn.BCEWithLogitsLoss(*args, **kwargs)
 
-#     def forward(self, outputs, targets):
-#         return self.loss_fn(outputs.squeeze(), targets.float())
+    def forward(self, outputs, targets):
+        return self.loss_fn(outputs.squeeze(), targets.float())
 
 
 # class GANLoss(nn.Module):

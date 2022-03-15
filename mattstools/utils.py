@@ -59,7 +59,7 @@ def merge_dict(source: dict, update: dict) -> dict:
     """Merges two deep dictionaries recursively
     - Apply to small dictionaries please!
     args:
-        source: The source dict, will be updated in place
+        source: The source dict, will be copied (not modified)
         update: Will be used to overwrite and append values to the source
     """
     ## Make a copy of the source dictionary

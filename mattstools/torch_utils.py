@@ -14,7 +14,7 @@ from torch.utils.data import Dataset, random_split
 
 from geomloss import SamplesLoss
 
-from mattstools.loss import GeomlossWrapper
+from mattstools.loss import GeomlossWrapper, MyBCEWithLogit
 from mattstools.schedulers import CyclicWithWarmup
 
 def calc_rmse(value_a: T.Tensor, value_b: T.Tensor, dim: int = 0) -> T.Tensor:
@@ -97,7 +97,9 @@ def get_loss_fn(name: str) -> nn.Module:
 
     ## Classification losses
     if name == "crssent":
-        return nn.CrossEntropyLoss()
+        return nn.CrossEntropyLoss(reduction="none")
+    if name == "bcewlgt":
+        return MyBCEWithLogit(reduction="none")
 
     ## Regression losses
     if name == "huber":
@@ -187,6 +189,9 @@ def masked_pool(
     ## Or at least ensure that the axis is a positive number
     elif axis < 0:
         axis = len(tensor.shape) - axis
+
+    ## Ensure the unmasked values are set to zero
+    tensor[~mask] = 0
 
     ## Sum uses mean operation to keep values small but ignores the padding
     ## It is the same as sum / pad_length
@@ -353,3 +358,15 @@ def reparam_trick(tensor: T.Tensor) -> Tuple[T.Tensor, T.Tensor, T.Tensor]:
     means, lstds = T.chunk(tensor, 2, dim=-1)
     latents = means + T.randn_like(means) * lstds.exp()
     return latents, means, lstds
+
+def to_sparse_safe(tensor, dims):
+    return tensor if tensor.is_sparse else tensor.to_sparse(dims)
+
+def sparse_from_mask(tensor: T.tensor, mask: T.BoolTensor):
+    return T.sparse_coo_tensor(
+        T.nonzero(mask).t(),
+        tensor[mask],
+        device=tensor.device,
+        dtype=tensor.dtype,
+        requires_grad=tensor.requires_grad,
+    ).coalesce()
