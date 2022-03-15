@@ -15,5 +15,5 @@ setuptools.setup(
     project_urls={"Bug Tracker": "https://gitlab.cern.ch/mleigh/mattstools/issues"},
     license="MIT",
     packages=["mattstools"],
-    install_requires=["numpy", "torch", "tqdm", "matplotlib"],
+    install_requires=["numpy", "torch", "tqdm", "matplotlib", "sklearn"],
 )

@@ -93,9 +93,9 @@ class Trainer:
             loader_kwargs["collate_fn"] = train_set.col_fn
 
         ## Initialise the loaders
-        self.train_loader = DataLoader(train_set, shuffle=True, **loader_kwargs)
+        self.train_loader = DataLoader(train_set, **loader_kwargs)
         if self.has_v:
-            self.valid_loader = DataLoader(valid_set, shuffle=False, **loader_kwargs)
+            self.valid_loader = DataLoader(valid_set, **loader_kwargs)
         else:
             self.valid_loader = None
 
@@ -143,7 +143,7 @@ class Trainer:
         ## Load the previous checkpoint
         if resume:
             self.load_checkpoint(flag="latest")
-            self._save_chpt_dict("before_resume") ## Make a save before continuing
+            self._save_chpt_dict("before_resume")  ## Make a save before continuing
 
     def explode_learning(
         self,

@@ -139,13 +139,12 @@ def plot_multi_hists(
         ## If the number of datapoints is less than 10 then we assume interger types
         b = bins[i]
         if isinstance(bins, str):
-            n_unique = len(np.unique(data_list[0][:, i]))
+            unq = np.unique(data_list[0][:, i])[0]
+            n_unique = len(unq)
             if n_unique < 10:
-                b = np.linspace(
-                    data_list[0][:, i].min() - 0.5,
-                    data_list[0][:, i].max() + 0.5,
-                    n_unique + 1,
-                )
+                b = (n_unique[1:] -  n_unique[2:]) / 2 ## Use midpoints
+                b.append(unq.max() + (b[-1] - b[-2]) / 2) ## Add final bin
+                b.insert(0, unq.min() - (b[1] + b[0]) / 2) ## Add initial bin
 
         ## Cycle through the different data arrays
         for j in range(n_data):

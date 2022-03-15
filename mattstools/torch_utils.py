@@ -12,8 +12,10 @@ import torch.optim as optim
 import torch.optim.lr_scheduler as schd
 from torch.utils.data import Dataset, random_split
 
-from mattstools.loss import GANLoss, KLD2NormLoss, MyBCEWithLogit
+from geomloss import SamplesLoss
 
+from mattstools.loss import GeomlossWrapper
+from mattstools.schedulers import CyclicWithWarmup
 
 def calc_rmse(value_a: T.Tensor, value_b: T.Tensor, dim: int = 0) -> T.Tensor:
     """Calculates the RMSE without having to go through torch's warning filled mse loss
@@ -29,13 +31,15 @@ def get_act(name: str) -> nn.Module:
     if name == "lrlu":
         return nn.LeakyReLU(0.1)
     if name == "silu":
-        return (nn.SiLU(),)
+        return nn.SiLU()
     if name == "selu":
-        return (nn.SELU(),)
+        return nn.SELU()
     if name == "sigm":
-        return (nn.Sigmoid(),)
+        return nn.Sigmoid()
     if name == "tanh":
-        return (nn.Tanh(),)
+        return nn.Tanh()
+    if name == "softmax":
+        return nn.Softmax()
     raise ValueError("No activation function with name: ", name)
 
 
@@ -90,14 +94,21 @@ def get_loss_fn(name: str) -> nn.Module:
     """Return a pytorch loss function given a name"""
     if name == "none":
         return None
-    if name == "bcewlgt":
-        return MyBCEWithLogit()
+
+    ## Classification losses
     if name == "crssent":
         return nn.CrossEntropyLoss()
-    if name == "kld2nrm":
-        return KLD2NormLoss()
-    if name == "ganloss":
-        return GANLoss()
+
+    ## Regression losses
+    if name == "huber":
+        return nn.HuberLoss(reduction="none")
+
+    ## Distribution matching losses
+    if name == "engmmd":
+        return GeomlossWrapper(SamplesLoss("energy"))
+    if name == "sinkhorn":
+        return GeomlossWrapper(SamplesLoss("sinkhorn", p=1, blur=0.01))
+
     else:
         raise ValueError("No standard loss function with name: ", name)
 
@@ -110,7 +121,7 @@ def get_sched(
         sched_dict: A dictionary of kwargs used to select and configure the schedular
         opt: The optimiser to apply the learning rate to
         steps_per_epoch: The number of minibatches in a single epoch
-    kwargs: (only for one shot learning!)
+    kwargs: (only for OneCyle learning!)
         max_lr: The maximum learning rate for the one shot
         max_epochs: The maximum number of epochs to train for
     """
@@ -125,19 +136,28 @@ def get_sched(
     else:
         epochs_per_cycle = 1
 
+    ## Use the same div_factor for cyclic with warmup
+    if name == "cyclicwithwarmup":
+        if "div_factor" not in dict_copy:
+            dict_copy["div_factor"] = 1e4
+
     if name in ["", "none", "None"]:
         return None
     elif name == "cosann":
         return schd.CosineAnnealingLR(
-            opt, epochs_per_cycle * steps_per_epoch, **dict_copy
+            opt, steps_per_epoch * epochs_per_cycle, **dict_copy
         )
     elif name == "cosannwr":
         return schd.CosineAnnealingWarmRestarts(
-            opt, epochs_per_cycle * steps_per_epoch, **dict_copy
+            opt, steps_per_epoch * epochs_per_cycle, **dict_copy
         )
     elif name == "onecycle":
         return schd.OneCycleLR(
             opt, max_lr, total_steps=steps_per_epoch * max_epochs, **dict_copy
+        )
+    elif name == "cyclicwithwarmup":
+        return CyclicWithWarmup(
+            opt, max_lr, total_steps=steps_per_epoch * epochs_per_cycle, **dict_copy
         )
     else:
         raise ValueError("No scheduler with name: ", name)

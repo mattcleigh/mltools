@@ -66,7 +66,7 @@ class MyNetBase(nn.Module):
         - Can be accesed as attributes with prefix = 'preproc_'
         """
         for key, val in stat_dict.items():
-            self.register_buffer("preproc_" + key, val.to(self.device))
+            self.register_buffer(key, val.to(self.device))
 
     def fowrard(self, *_, get_loss=True) -> dict:
         """This method should be overwritten, but ideally the forward pass should return

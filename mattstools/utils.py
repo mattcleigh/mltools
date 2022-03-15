@@ -152,6 +152,10 @@ def interweave(arr_1: np.ndarray, arr_2: np.ndarray) -> np.ndarray:
     return arr_comb
 
 
+def chunk_given_size(a, size):
+    return np.split(a, np.arange(size, len(a), size))
+
+
 def str2bool(mystring: str) -> bool:
     """Convert a string object into a boolean"""
     if isinstance(mystring, bool):
