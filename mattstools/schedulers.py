@@ -26,7 +26,7 @@ class CyclicWithWarmup(OneCycleLR):
             )
 
         lrs = []
-        step_num = self.last_epoch % self.total_steps ## Only changed line!!!
+        step_num = self.last_epoch % self.total_steps  ## Only changed line!!!
 
         for group in self.optimizer.param_groups:
             start_step = 0

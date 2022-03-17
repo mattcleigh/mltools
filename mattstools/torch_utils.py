@@ -17,6 +17,7 @@ from geomloss import SamplesLoss
 from mattstools.loss import GeomlossWrapper, MyBCEWithLogit
 from mattstools.schedulers import CyclicWithWarmup
 
+
 def calc_rmse(value_a: T.Tensor, value_b: T.Tensor, dim: int = 0) -> T.Tensor:
     """Calculates the RMSE without having to go through torch's warning filled mse loss
     method
@@ -44,7 +45,9 @@ def get_act(name: str) -> nn.Module:
 
 
 def empty_0dim_like(tensor: T.Tensor) -> T.Tensor:
-    """Returns an empty tensor BUT with its final dimension reduced to 0"""
+    """Returns an empty tensor with similar size as the input but with its final
+    dimension reduced to 0
+    """
 
     ## Get all but the final dimension
     all_but_last = tensor.shape[:-1]
@@ -109,7 +112,7 @@ def get_loss_fn(name: str) -> nn.Module:
     if name == "engmmd":
         return GeomlossWrapper(SamplesLoss("energy"))
     if name == "sinkhorn":
-        return GeomlossWrapper(SamplesLoss("sinkhorn", p=1, blur=0.01))
+        return GeomlossWrapper(SamplesLoss("sinkhorn", p=2, blur=0.01))
 
     else:
         raise ValueError("No standard loss function with name: ", name)
@@ -190,41 +193,17 @@ def masked_pool(
     elif axis < 0:
         axis = len(tensor.shape) - axis
 
-    ## Ensure the unmasked values are set to zero
-    tensor[~mask] = 0
-
-    ## Sum uses mean operation to keep values small but ignores the padding
-    ## It is the same as sum / pad_length
+    if pool_type == "max":
+        tensor[~mask] = -T.inf
+        return tensor.max(dim=axis)
     if pool_type == "sum":
-        return tensor.mean(dim=axis)
-
-    ## Mean pooling takes into account the mask
+        tensor[~mask] = 0
+        return tensor.sum(dim=axis)
     if pool_type == "mean":
+        tensor[~mask] = 0
         return tensor.sum(dim=axis) / (mask.sum(dim=axis, keepdim=True) + 1e-8)
 
     raise ValueError(f"Unknown pooling type: {pool_type}")
-
-
-def repeat_cat(src: T.Tensor, context: List[T.Tensor], mask: T.BoolTensor):
-    """Returns a source tensor combined with a list of contextual information which is repeated
-    over every dimension except the first
-    - Only acts on dim=-1
-    """
-
-    ## First combine the context information together
-    context = smart_cat(context, dim=-1)
-
-    ## If it is non emtpy then we combine repeat across the batch dimension
-    if T.numel(context):
-        context = T.repeat_interleave(
-            context,
-            mask.sum(
-                dim=list(range(1, len(mask.shape)))
-            ),  ## Sum over all dims exept batch
-        )
-
-    ## Return the combined information
-    return smart_cat([src, context], dim=-1)
 
 
 def smart_cat(inputs: Iterable, dim=-1):
@@ -241,8 +220,46 @@ def smart_cat(inputs: Iterable, dim=-1):
     return T.cat(inputs, dim=dim)
 
 
+def ctxt_from_mask(context: Union[list, T.Tensor], mask: T.BoolTensor) -> T.Tensor:
+    """Concatenates and returns conditional information expanded and then sampled
+    using a mask. The returned tensor is compressed but repeated the appropriate number
+    of times for each sample. Method uses pytorch's expand function so is light on
+    memory usage.
+
+    Primarily used for repeating conditional information for deep sets or
+    graph networks.
+
+    For example, given a deep set with feature tensor [batch, nodes, features],
+    a mask tensor [batch, nodes], and context information for each sample in the batch
+    [batch, c_features], then this will repeat the context information the appropriate
+    number of times such that new context tensor will align perfectly with tensor[mask].
+
+    Context and mask must have the same batch dimension
+
+    args:
+        context: A tensor or a list of tensors containing the sample context info
+        mask: A mask which determines the size and sampling of the context
+    """
+
+    ## Get the expanded veiw sizes
+    b_size = len(mask)
+    new_dims = (len(mask.shape) - 1) * [1]
+    veiw_size = (b_size, *new_dims, -1)  ## Must be: (b, 1, ..., 1, features)
+    ex_size = (*mask.shape, -1)
+
+    ## If there is only one context tensor
+    if not isinstance(context, list):
+        return context.view(veiw_size).expand(ex_size)[mask]
+
+    ## For multiple context tensors
+    all_context = []
+    for ctxt in context:
+        all_context.append(ctxt.view(veiw_size).expand(ex_size)[mask])
+    return smart_cat(all_context)
+
+
 def pass_with_mask(
-    data: T.Tensor,
+    inputs: T.Tensor,
     module: nn.Module,
     mask: T.BoolTensor,
     context: List[T.Tensor] = None,
@@ -259,21 +276,33 @@ def pass_with_mask(
         padval: A value to pad the outputs with
     """
 
+    ## Get the output dimension from the passed module
+    if hasattr(module, "outp_dim"):
+        outp_dim = module.outp_dim
+    elif hasattr(module, "out_features"):
+        outp_dim = module.out_features
+    else:
+        raise ValueError("Dont know how to infer the output dimension from the model")
+
     ## Create an output of the correct shape on the right device using the padval
+
     outputs = T.full(
-        (*data.shape[:-1], module.outp_dim),
+        (*inputs.shape[:-1], outp_dim),
         padval,
-        device=data.device,
-        dtype=data.dtype,
+        device=inputs.device,
+        dtype=inputs.dtype,
     )
 
     ## Pass only the masked elements through the network and use mask to place in out
-    outputs[mask] = module(data[mask])
+    if context is None:
+        outputs[mask] = module(inputs[mask])
 
-    ## Add the contextual information (repeat according to sample multiplicity)
-    ## TODO fix this
-    # if context is not None:
-    #    data = repeat_cat(data, context, mask)
+    ## My networks can take in conditional information, pytorch's can not
+    else:
+        outputs[mask] = module(
+            inputs[mask],
+            ctxt = ctxt_from_mask(context, mask)
+        )
 
     return outputs
 
@@ -359,14 +388,78 @@ def reparam_trick(tensor: T.Tensor) -> Tuple[T.Tensor, T.Tensor, T.Tensor]:
     latents = means + T.randn_like(means) * lstds.exp()
     return latents, means, lstds
 
-def to_sparse_safe(tensor, dims):
-    return tensor if tensor.is_sparse else tensor.to_sparse(dims)
 
-def sparse_from_mask(tensor: T.tensor, mask: T.BoolTensor):
+def apply_residual(rsdl_type: str, res: T.Tensor, outp: T.Tensor) -> T.Tensor:
+    """Apply a residual connection by either adding or concatenating"""
+    if rsdl_type == "cat":
+        return smart_cat([res, outp], dim=-1)
+    if rsdl_type == "add":
+        return outp + res
+    raise ValueError(f"Unknown residual type: {rsdl_type}")
+
+
+@T.jit.script
+def falling_sigmoid(x):
+    return T.sigmoid(-x - 3)
+
+
+def aggr_via_sparse(cmprsed: T.Tensor, mask: T.BoolTensor, reduction: str, dim: int):
+    """Aggregate a compressed tensor by first blowing up to a sparse representation
+
+    The tensor is blown up to full size such that: full[mask] = cmprsed
+
+    Supports sum, mean, and softmax
+    - mean is not supported by torch.sparse, so we use sum and the mask
+    - softmax does not reduce the size of the tensor, but applies softmax along dim
+
+    args:
+        cmprsed: The nonzero elements of the compressed tensor
+        mask: A mask showing where the nonzero elements should go
+        reduction: A string indicating the type of reduction
+        dim: Which dimension to apply the reduction
+    """
+
+    ## Create a sparse representation of the tensor
+    sparse_rep = sparse_from_mask(cmprsed, mask, is_compressed=True)
+
+    ## Apply the reduction
+    if reduction == "sum":
+        return T.sparse.sum(sparse_rep, dim).values()
+    if reduction == "mean":
+        reduced = T.sparse.sum(sparse_rep, dim)
+        mask_sum = mask.sum(dim)
+        mask_sum = mask_sum.unsqueeze(-1).expand(reduced.shape)[mask_sum>0]
+        return reduced.values() / mask_sum
+    if reduction == "softmax":
+        return T.sparse.softmax(sparse_rep, dim).coalesce().values()
+    else:
+        raise ValueError(f"Unknown sparse reduction method: {reduction}")
+
+
+def sparse_from_mask(input: T.Tensor, mask: T.BoolTensor, is_compressed: bool = False):
+    """Create a pytorch sparse matrix given a tensor and a mask.
+    - Shape is infered from the mask, meaning the final dim will be dense
+    """
     return T.sparse_coo_tensor(
         T.nonzero(mask).t(),
-        tensor[mask],
-        device=tensor.device,
-        dtype=tensor.dtype,
-        requires_grad=tensor.requires_grad,
+        input if is_compressed else input[mask],
+        device=input.device,
+        dtype=input.dtype,
+        requires_grad=input.requires_grad,
     ).coalesce()
+
+def decompress(cmprsed: T.Tensor, mask: T.BoolTensor):
+    """Take a compressed input and use the mask to blow it to its original shape
+    such that full[mask] = cmprsed
+    """
+    ## We first create the zero padded tensor of the right size then replace
+    full = T.zeros(
+        (*mask.shape, cmprsed.shape[-1]),
+        dtype=cmprsed.dtype,
+        device=cmprsed.device,
+    )
+
+    ## Place the nonpadded samples into the full shape
+    full[mask] = cmprsed
+
+    return full

@@ -92,12 +92,16 @@ class Trainer:
         if hasattr(train_set, "col_fn"):
             loader_kwargs["collate_fn"] = train_set.col_fn
 
-        ## Initialise the loaders
-        self.train_loader = DataLoader(train_set, **loader_kwargs)
+        ## Initialise the validaiton loader
         if self.has_v:
             self.valid_loader = DataLoader(valid_set, **loader_kwargs)
         else:
             self.valid_loader = None
+
+        ## Initialise the train loader with shuffle option for mappable datasets
+        if isinstance(train_set, Dataset):
+            loader_kwargs["shuffle"] = True
+        self.train_loader = DataLoader(train_set, **loader_kwargs)
 
         ## Create a history of train and validation losses for early stopping
         self.loss_hist = {
@@ -119,8 +123,8 @@ class Trainer:
             sched_dict,
             self.optimiser,
             len(self.train_loader),
-            max_lr=optim_dict["lr"],  ## Only used for one cycle
-            max_epochs=max_epochs,  ## Only used for one cycle
+            max_lr=optim_dict["lr"],  ## Only used for onecycle
+            max_epochs=max_epochs,  ## Only used for onecycle
         )
 
         ## Variables to keep track of stopping conditions

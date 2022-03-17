@@ -12,6 +12,7 @@ class GeomlossWrapper(nn.Module):
     gradients after a forward pass, thereby causing the gradients to explode during
     evaluation
     """
+
     def __init__(self, loss_fn):
         super().__init__()
         self.loss_fn = loss_fn
@@ -37,6 +38,33 @@ class MyBCEWithLogit(nn.Module):
     def forward(self, outputs, targets):
         return self.loss_fn(outputs.squeeze(), targets.float())
 
+
+def masked_dist_loss(
+    loss_fn: nn.Module,
+    pc_a: T.Tensor,
+    pc_a_mask: T.BoolTensor,
+    pc_b: T.Tensor,
+    pc_b_mask: T.BoolTensor,
+) -> T.Tensor:
+    """Calculates the distribution loss between two masked pointclouds
+    - This is done by using the masks as weights (compatible with the geomloss package)
+
+    args:
+        loss_fn: The loss function to apply, must have a forward method
+        pc_a: The first point cloud
+        pc_a_mask: The mask of the first point cloud
+        pc_b: The second point cloud
+        pc_b_mask: The mask of the second point cloud
+    """
+
+    ## Calculate the weights by normalising the mask for each sample
+    a_weights = pc_a_mask.float() / pc_a_mask.sum(dim=-1, keepdim=True)
+    b_weights = pc_b_mask.float() / pc_b_mask.sum(dim=-1, keepdim=True)
+
+    ## Calculate the loss using these weights
+    loss = loss_fn(a_weights, pc_a, b_weights, pc_b).mean()
+
+    return loss
 
 # class GANLoss(nn.Module):
 #     """Aversarial loss for use in GANs or AAEs
@@ -126,36 +154,4 @@ class MyBCEWithLogit(nn.Module):
 #     return 0.5 * T.mean(means * means + (2 * log_stds).exp() - 2 * log_stds - 1)
 
 
-# def masked_dist_loss(
-#     loss_fn: nn.Module,
-#     pc_a: T.Tensor,
-#     pc_a_mask: T.BoolTensor,
-#     pc_b: T.Tensor,
-#     pc_b_mask: T.BoolTensor,
-# ) -> T.Tensor:
-#     """Calculates the distribution loss between two masked pointclouds
-#     - This is done by using the masks as weights and thus is compatible with the geomloss package
 
-#     args:
-#         loss_fn: The loss function to apply, must have a forward method taking same arguments
-#         pc_a: The first point cloud
-#         pc_a_mask: The mask of the first point cloud
-#         pc_b: The second point cloud
-#         pc_b_mask: The mask of the second point cloud
-#     """
-
-#     ## The pytorch geomloss package always renables gradient tracking
-#     ## So we check current status before using geomloss
-#     grad_status = T.is_grad_enabled()
-
-#     ## Calculate the weights by normalising the mask for each sample
-#     a_weights = pc_a_mask.float() / pc_a_mask.sum(dim=-1, keepdim=True)
-#     b_weights = pc_b_mask.float() / pc_b_mask.sum(dim=-1, keepdim=True)
-
-#     ## Calculate the loss using these weights
-#     loss = loss_fn(a_weights, pc_a, b_weights, pc_b).mean()
-
-#     ## Reset the gradient tracking to the previous status
-#     T.set_grad_enabled(grad_status)
-
-#     return loss

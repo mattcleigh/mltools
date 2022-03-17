@@ -108,7 +108,7 @@ class DenseNetwork(nn.Module):
         nrm: str = "none",
         drp: float = 0,
         do_res: bool = False,
-        ctxt_in_all: bool = True,
+        ctxt_in_all: bool = False,
     ) -> None:
         """
         args:
@@ -199,7 +199,7 @@ class DeepSet(nn.Module):
         inpt_dim: int,
         outp_dim: int,
         pool_type: str = "mean",
-        attn_mode: str = "mean",
+        attn_type: str = "mean",
         feat_net_kwargs=None,
         attn_net_kwargs=None,
         post_net_kwargs=None,
@@ -210,12 +210,10 @@ class DeepSet(nn.Module):
             outp_dim: The number of desired output featues
         kwargs:
             pool_type: The type of set pooling applied, mean, sum, max or attention
-            depth: The number of hidden layers
+            attn_type: The type of attention, mean, sum, raw
             feat_net_kwargs: Keyword arguments for the feature network
             attn_net_kwargs: Keyword arguments for the attention network
             post_net_kwargs: Keyword arguments for the post network
-            attn_heads: The number of sets of pooling weights to learn per sample
-            attn_mode: The type of attention (softmaxed or softplused)
         """
         super().__init__()
 
@@ -232,7 +230,7 @@ class DeepSet(nn.Module):
         self.inpt_dim = inpt_dim
         self.outp_dim = outp_dim
         self.pool_type = pool_type
-        self.attn_mode = attn_mode
+        self.attn_mode = attn_type
 
         ## Create the feature extraction network
         self.feat_net = DenseNetwork(self.inpt_dim, **feat_net_kwargs)
@@ -257,15 +255,19 @@ class DeepSet(nn.Module):
 
         ## For attention calculate the weights using using -infinite padding
         if self.pool_type == "attn":
-            attn_outs = pass_with_mask(tensor, self.attn_net, mask, padval=-T.inf)
+            attn_outs = pass_with_mask(
+                tensor,
+                self.attn_net,
+                mask,
+                padval= 0 if self.attn_type == "raw" else -T.inf,)
 
             ## Apply either a softmax for weighted mean or softplus for weighted sum
-            if self.attn_mode == "mean":
+            if self.attn_type == "mean":
                 attn_outs = F.softmax(attn_outs, dim=-2)
-            elif self.attn_mode == "sum":
+            elif self.attn_type == "sum":
                 attn_outs = F.softplus(attn_outs, dim=-2)
 
-            ## Broadcast the attention to get the multiple poolings
+            ## Broadcast the attention to get the multiple poolings and sum
             feat_outs = (
                 (feat_outs.unsqueeze(-1) * attn_outs.unsqueeze(-2))
                 .flatten(start_dim=-2)

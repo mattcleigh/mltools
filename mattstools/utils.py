@@ -201,7 +201,7 @@ def save_yaml_files(
     ## If the input is not a list then one file is saved
     if isinstance(file_names, (str, Path)):
         with open(f"{path}/{file_names}.yaml", "w") as f:
-            yaml.dump(dic, f)
+            yaml.dump(dic, f, sort_keys=False)
 
     ## Make the folder
     Path(path).mkdir(parents=True, exist_ok=True)
@@ -209,7 +209,7 @@ def save_yaml_files(
     ## Save each file using yaml
     for f_nm, dic in zip(file_names, dicts):
         with open(f"{path}/{f_nm}.yaml", "w") as f:
-            yaml.dump(dic, f)
+            yaml.dump(dic, f, sort_keys=False)
 
 
 def get_scaler(name: str):
