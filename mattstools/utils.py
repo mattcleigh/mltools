@@ -8,7 +8,7 @@ import json
 import yaml
 import argparse
 from pathlib import Path
-from typing import Any, Union
+from typing import Any, Union, Tuple
 import numpy as np
 
 from pickle import load, dump
@@ -19,6 +19,112 @@ from sklearn.preprocessing import (
     PowerTransformer,
     QuantileTransformer,
 )
+
+
+def get_standard_configs(
+    def_train: str = "config/data.yaml",
+    def_netw: str = "config/netw.yaml",
+    def_data: str = "config/train.yaml",
+) -> Tuple[dict, dict, dict]:
+    """Loads, modifies, and returns three configuration dictionaries using command
+    line arguments for a basic training setup
+    - For configuring the dataset, network and training scheme
+    - One can set the names of the config files to load
+    - One can then modify the returned dictionaries using additional arguments
+
+    Any extra arguments can be manually added in each project
+    args:
+        def_train: Path to default train config file
+        def_netw: Path to default netw config file
+        def_data: Path to default data config file
+    """
+    parser = argparse.ArgumentParser()
+
+    ## Config files
+    parser.add_argument(
+        "--data_config",
+        type=str,
+        default=def_train,
+        help="Path to config file to use as a template for data preperation",
+    )
+    parser.add_argument(
+        "--netw_config",
+        type=str,
+        default=def_netw,
+        help="Path to config file to use as a template for network construction",
+    )
+    parser.add_argument(
+        "--train_config",
+        type=str,
+        default=def_data,
+        help="Path to config file to use as a template for training scheme",
+    )
+
+    ## Network base kwargs
+    parser.add_argument(
+        "--name", type=str, help="The name to use for saving the network"
+    )
+    parser.add_argument(
+        "--save_dir", type=str, help="The directory to use for saving the network"
+    )
+
+    ## Learning scheme
+    parser.add_argument(
+        "--lr", type=float, help="Learning rate given to optimiser (max for cyclic)"
+    )
+    parser.add_argument(
+        "--sched_name", type=float, help="Name of the learning rate scheduler"
+    )
+    parser.add_argument(
+        "--b_size", type=int, help="Number of samples per training batch"
+    )
+    parser.add_argument(
+        "--n_workers", type=int, help="Number of parellel threads to load the batches"
+    )
+    parser.add_argument(
+        "--resume",
+        type=str2bool,
+        help="Resume the latest training checkpoint",
+        nargs="?",
+        const=True,
+        default=False,
+    )
+    parser.add_argument(
+        "--tqdm_quiet",
+        type=str2bool,
+        help="Silences the tqdm output for logging",
+        nargs="?",
+        const=True,
+        default=False,
+    )
+
+    ## Load the arguments
+    args, _ = parser.parse_known_args()
+
+    ## Load previous configs if resuming, otherwise keep defaults
+    if args.resume:
+        args.data_conf = Path(args.save_dir, args.name, "config/data.yaml")
+        args.net_conf = Path(args.save_dir, args.name, "config/netw.yaml")
+        args.train_conf = Path(args.save_dir, args.name, "config/train.yaml")
+
+    ## Load the config dictionaries
+    data_conf, net_conf, train_conf = load_yaml_files(
+        [args.data_config, args.netw_config, args.train_config]
+    )
+
+    ## Some arguments are identified by the exact keys in each dict
+    args_into_conf(args, train_conf, "b_size")
+    args_into_conf(args, train_conf, "n_workers")
+    args_into_conf(args, train_conf, "resume")
+    args_into_conf(args, train_conf, "tqdm_quiet")
+
+    ## Other arguments need more manual placement in the configuration dicts
+    args_into_conf(args, net_conf, "name", "base_kwargs/name")
+    args_into_conf(args, net_conf, "save_dir", "base_kwargs/save_dir")
+    args_into_conf(args, train_conf, "sched_name", "sched_dict/name")
+    args_into_conf(args, train_conf, "lr", "optim_dict/lr")
+
+    return data_conf, net_conf, train_conf
 
 
 class RunningAverage:
@@ -114,7 +220,7 @@ def set_in_dict(data_dict: dict, key_list: list, value: Any):
     get_from_dict(data_dict, key_list[:-1])[key_list[-1]] = value
 
 
-def key_add(pref: str, dic: dict) -> dict:
+def key_prefix(pref: str, dic: dict) -> dict:
     """Adds a prefix to each key in a dictionary"""
     return {f"{pref}{key}": val for key, val in dic.items()}
 

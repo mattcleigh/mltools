@@ -89,6 +89,15 @@ class MLPBlock(nn.Module):
 
         return temp
 
+    def __repr__(self):
+        string = str(self.inpt_dim)
+        if self.ctxt_dim:
+            string += f"({self.ctxt_dim})"
+        string += "->"
+        string += "->".join([str(b).split("(")[0] for b in self.block])
+        string += "->" + str(self.outp_dim)
+        return string
+
 
 class DenseNetwork(nn.Module):
     """A dense neural network made from a series of consecutive MLP blocks and context
@@ -136,7 +145,7 @@ class DenseNetwork(nn.Module):
         else:
             self.hddn_dim = num_blocks * [hddn_dim]
         self.outp_dim = outp_dim or inpt_dim if do_out else self.hddn_dim[-1]
-        self.depth = len(self.hddn_dim)
+        self.num_blocks = len(self.hddn_dim)
         self.ctxt_dim = ctxt_dim
         self.do_out = do_out
 
@@ -154,20 +163,22 @@ class DenseNetwork(nn.Module):
         )
 
         ## All hidden blocks as a single module list
-        self.hidden_blocks = nn.ModuleList()
-        for h_1, h_2 in zip(self.hddn_dim[:-1], self.hddn_dim[1:]):
-            self.hidden_blocks.append(
-                MLPBlock(
-                    inpt_dim=h_1,
-                    outp_dim=h_2,
-                    ctxt_dim=self.ctxt_dim if ctxt_in_all else 0,
-                    n_layers=n_lyr_pbk,
-                    act=act_h,
-                    nrm=nrm,
-                    drp=drp,
-                    do_res=do_res,
+        self.hidden_blocks = []
+        if self.num_blocks > 1:
+            self.hidden_blocks = nn.ModuleList()
+            for h_1, h_2 in zip(self.hddn_dim[:-1], self.hddn_dim[1:]):
+                self.hidden_blocks.append(
+                    MLPBlock(
+                        inpt_dim=h_1,
+                        outp_dim=h_2,
+                        ctxt_dim=self.ctxt_dim if ctxt_in_all else 0,
+                        n_layers=n_lyr_pbk,
+                        act=act_h,
+                        nrm=nrm,
+                        drp=drp,
+                        do_res=do_res,
+                    )
                 )
-            )
 
         ## Output block (optional and there is no normalisation, dropout or context)
         if do_out:
@@ -259,7 +270,8 @@ class DeepSet(nn.Module):
                 tensor,
                 self.attn_net,
                 mask,
-                padval= 0 if self.attn_type == "raw" else -T.inf,)
+                padval=0 if self.attn_type == "raw" else -T.inf,
+            )
 
             ## Apply either a softmax for weighted mean or softplus for weighted sum
             if self.attn_type == "mean":

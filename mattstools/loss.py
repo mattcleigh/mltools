@@ -7,6 +7,28 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+class VAELoss(nn.Module):
+    """The Kullback-Leibler divergence to unit normal loss used for VAEs
+    """
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, means: T.Tensor, log_stds: T.Tensor) -> T.Tensor:
+        """
+        args:
+            means: The set of mean values
+            log_stds: The natural logarithm (base e) of the standard deviations
+        returns:
+            loss per sample (no batch reduction)
+        """
+        return kld_to_norm(means, log_stds)
+
+
+def kld_to_norm(means: T.Tensor, log_stds: T.Tensor) -> T.Tensor:
+    """Calculate the KL-divergence to a unit normal distribution"""
+    return 0.5 * T.mean(means * means + (2 * log_stds).exp() - 2 * log_stds - 1)
+
+
 class GeomlossWrapper(nn.Module):
     """This is a wrapper class for the geomloss package which by default renables all
     gradients after a forward pass, thereby causing the gradients to explode during
@@ -65,6 +87,7 @@ def masked_dist_loss(
     loss = loss_fn(a_weights, pc_a, b_weights, pc_b).mean()
 
     return loss
+
 
 # class GANLoss(nn.Module):
 #     """Aversarial loss for use in GANs or AAEs
@@ -133,25 +156,3 @@ def masked_dist_loss(
 
 #         ## Add the two metrics together (no batch reduction)
 #         return T.sum(min1, dim=-1) + T.sum(min2, dim=-1)
-
-
-# class KLD2NormLoss(nn.Module):
-#     """The Kullback-Leibler divergence to unit normal loss useful for VAEs"""
-
-#     def forward(self, means: T.Tensor, log_stds: T.Tensor) -> T.Tensor:
-#         """
-#         args:
-#             means:  The set of mean values
-#             log_stds:  The natural logarithm (base e) of the standard deviations
-#         returns:
-#             loss per sample (no batch reduction)
-#         """
-#         return kld_to_norm(means, log_stds)
-
-
-# def kld_to_norm(means: T.Tensor, log_stds: T.Tensor) -> T.Tensor:
-#     """Calculate the KL-divergence to a unit normal distribution"""
-#     return 0.5 * T.mean(means * means + (2 * log_stds).exp() - 2 * log_stds - 1)
-
-
-

@@ -35,7 +35,7 @@ class Trainer:
         max_epochs: int = 100,
         grad_clip: float = 0.0,
         n_workers: int = 2,
-        quick_mode: bool = False,
+        quick_mode: int = 0,
         optim_dict: dict = None,
         sched_dict: dict = None,
         vis_every: int = 10,
@@ -54,7 +54,7 @@ class Trainer:
             max_epochs:  Maximum number of epochs to train for
             grad_clip:   Clip value for the norm of the gradients (0 will not clip)
             n_workers:   Number of parallel threads which prepare each batch
-            quick_mode:  Break the training epoch after one batch, for debugging
+            quick_mode:  Break the training epoch after X many batches, for debugging
             optim_dict:  A dict used to select and configure the optimiser
             sched_dict:  A dict used to select and configure the scheduler
             vis_every:   Run the network's visualisation function every X epochs
@@ -171,7 +171,7 @@ class Trainer:
 
         ## Turn off the scheduler and turn on quick mode silence tqdm
         self.scheduler = None
-        self.quick_mode = True
+        self.quick_mode = 1
         tqdm.__init__ = partialmethod(tqdm.__init__, disable=True)
 
         ## Create the list of learning rates to try
@@ -273,7 +273,7 @@ class Trainer:
             T.set_grad_enabled(False)
 
         ## Cycle through the batches provided by the selected loader
-        for sample in tqdm(loader, desc=mode, ncols=80):
+        for batch_idx, sample in enumerate(tqdm(loader, desc=mode, ncols=80)):
 
             ## Move the sample to the network device
             sample = move_dev(sample, self.network.device)
@@ -304,7 +304,7 @@ class Trainer:
                 running.update(losses[lnm].item())
 
             ## Break when using quick mode
-            if self.quick_mode:
+            if batch_idx >= self.quick_mode:
                 break
 
         ## Use the running losses to update the total history, then reset

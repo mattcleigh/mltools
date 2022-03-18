@@ -14,7 +14,7 @@ from torch.utils.data import Dataset, random_split
 
 from geomloss import SamplesLoss
 
-from mattstools.loss import GeomlossWrapper, MyBCEWithLogit
+from mattstools.loss import GeomlossWrapper, MyBCEWithLogit, VAELoss
 from mattstools.schedulers import CyclicWithWarmup
 
 
@@ -99,9 +99,9 @@ def get_loss_fn(name: str) -> nn.Module:
         return None
 
     ## Classification losses
-    if name == "crssent":
+    if name == "crossentropy":
         return nn.CrossEntropyLoss(reduction="none")
-    if name == "bcewlgt":
+    if name == "bcewithlogit":
         return MyBCEWithLogit(reduction="none")
 
     ## Regression losses
@@ -109,13 +109,17 @@ def get_loss_fn(name: str) -> nn.Module:
         return nn.HuberLoss(reduction="none")
 
     ## Distribution matching losses
-    if name == "engmmd":
+    if name == "energymmd":
         return GeomlossWrapper(SamplesLoss("energy"))
     if name == "sinkhorn":
         return GeomlossWrapper(SamplesLoss("sinkhorn", p=2, blur=0.01))
 
+    ## Encoding losses
+    if name == "vaeloss":
+        return VAELoss()
+
     else:
-        raise ValueError("No standard loss function with name: ", name)
+        raise ValueError(f"No standard loss function with name: {name}")
 
 
 def get_sched(
@@ -165,7 +169,7 @@ def get_sched(
             opt, max_lr, total_steps=steps_per_epoch * epochs_per_cycle, **dict_copy
         )
     else:
-        raise ValueError("No scheduler with name: ", name)
+        raise ValueError(f"No scheduler with name: {name}")
 
 
 def train_valid_split(dataset: Dataset, v_frac: float):
@@ -299,10 +303,7 @@ def pass_with_mask(
 
     ## My networks can take in conditional information, pytorch's can not
     else:
-        outputs[mask] = module(
-            inputs[mask],
-            ctxt = ctxt_from_mask(context, mask)
-        )
+        outputs[mask] = module(inputs[mask], ctxt=ctxt_from_mask(context, mask))
 
     return outputs
 
@@ -428,7 +429,7 @@ def aggr_via_sparse(cmprsed: T.Tensor, mask: T.BoolTensor, reduction: str, dim: 
     if reduction == "mean":
         reduced = T.sparse.sum(sparse_rep, dim)
         mask_sum = mask.sum(dim)
-        mask_sum = mask_sum.unsqueeze(-1).expand(reduced.shape)[mask_sum>0]
+        mask_sum = mask_sum.unsqueeze(-1).expand(reduced.shape)[mask_sum > 0]
         return reduced.values() / mask_sum
     if reduction == "softmax":
         return T.sparse.softmax(sparse_rep, dim).coalesce().values()
@@ -447,6 +448,7 @@ def sparse_from_mask(input: T.Tensor, mask: T.BoolTensor, is_compressed: bool = 
         dtype=input.dtype,
         requires_grad=input.requires_grad,
     ).coalesce()
+
 
 def decompress(cmprsed: T.Tensor, mask: T.BoolTensor):
     """Take a compressed input and use the mask to blow it to its original shape

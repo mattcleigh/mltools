@@ -9,6 +9,7 @@ import torch as T
 import torch.nn as nn
 
 from mattstools.torch_utils import sel_device
+from mattstools.utils import save_yaml_files
 
 
 class MyNetBase(nn.Module):
@@ -24,6 +25,7 @@ class MyNetBase(nn.Module):
         inpt_dim: Union[int, list],
         outp_dim: Union[int, list],
         device: str = "cpu",
+        mkdir: bool = True,
     ) -> None:
         """
         kwargs:
@@ -32,6 +34,7 @@ class MyNetBase(nn.Module):
             inpt_dim: The dimension of the input data
             outp_dim: The dimension of the output data
             device: The name of the device on which to load/save and store the network
+            mkdir: If a directory for holding the model should be made
         """
         super().__init__()
         print(f"Creating network: {name}")
@@ -48,7 +51,8 @@ class MyNetBase(nn.Module):
         self.loss_names = ["total"]
 
         ## Create the folder to store the network
-        self.full_name.mkdir(parents=True, exist_ok=True)
+        if mkdir:
+            self.full_name.mkdir(parents=True, exist_ok=True)
 
     def loss_dict_reset(self) -> dict:
         """Reset the loss dictionary
@@ -86,7 +90,7 @@ class MyNetBase(nn.Module):
         _, loss_dict, _ = self.forward(*sample, get_loss=True)
         return loss_dict
 
-    def visualise(self, *_):
+    def visualise(self, *_, **__):
         """This method should be overwritten by any inheriting network
         - It is used to save certain plots using a batch of samples
         """
@@ -124,3 +128,13 @@ class MyNetBase(nn.Module):
             T.save(self.state_dict(), full_path)
         else:
             T.save(self, full_path)
+
+    def save_configs(self, data_conf, net_conf, train_conf):
+        """Save the three config files that were used to build the network,
+        supply the data and train the model
+        """
+        save_yaml_files(
+            self.full_name / "config",
+            ["data", "netw", "train"],
+            [data_conf, net_conf, train_conf],
+        )
