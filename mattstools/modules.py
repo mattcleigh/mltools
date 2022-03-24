@@ -241,7 +241,7 @@ class DeepSet(nn.Module):
         self.inpt_dim = inpt_dim
         self.outp_dim = outp_dim
         self.pool_type = pool_type
-        self.attn_mode = attn_type
+        self.attn_type = attn_type
 
         ## Create the feature extraction network
         self.feat_net = DenseNetwork(self.inpt_dim, **feat_net_kwargs)
@@ -255,14 +255,15 @@ class DeepSet(nn.Module):
         ## Create the post network to update the pooled features of the set
         self.post_net = DenseNetwork(pooled_dim, self.outp_dim, **post_net_kwargs)
 
-    def forward(self, tensor: T.tensor, mask: T.BoolTensor):
+    def forward(self, tensor: T.tensor, mask: T.BoolTensor, ctxt: Union[T.Tensor, list] = None):
         """The expected shapes of the inputs are
-        - tensor: batch x set x features
-        - mask: batch x set
+        - tensor: batch x setsize x features
+        - mask: batch x setsize
+        - ctxt: batch x features
         """
 
         ## Pass the non_zero values through the feature network
-        feat_outs = pass_with_mask(tensor, self.feat_net, mask)
+        feat_outs = pass_with_mask(tensor, self.feat_net, mask, context=ctxt)
 
         ## For attention calculate the weights using using -infinite padding
         if self.pool_type == "attn":
@@ -270,6 +271,7 @@ class DeepSet(nn.Module):
                 tensor,
                 self.attn_net,
                 mask,
+                context=ctxt,
                 padval=0 if self.attn_type == "raw" else -T.inf,
             )
 
@@ -277,7 +279,7 @@ class DeepSet(nn.Module):
             if self.attn_type == "mean":
                 attn_outs = F.softmax(attn_outs, dim=-2)
             elif self.attn_type == "sum":
-                attn_outs = F.softplus(attn_outs, dim=-2)
+                attn_outs = F.softplus(attn_outs)
 
             ## Broadcast the attention to get the multiple poolings and sum
             feat_outs = (

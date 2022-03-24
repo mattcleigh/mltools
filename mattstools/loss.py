@@ -6,6 +6,7 @@ import torch as T
 import torch.nn as nn
 import torch.nn.functional as F
 
+from mattstools.distances import masked_dist_matrix
 
 class VAELoss(nn.Module):
     """The Kullback-Leibler divergence to unit normal loss used for VAEs
@@ -89,6 +90,36 @@ def masked_dist_loss(
     return loss
 
 
+class ChampferLoss(nn.Module):
+    """The champfer loss function for use on batched and weighted pointclouds"""
+
+    def forward(self, o_weights, outputs, t_weights, targets):
+        """Constructor method for ChampferLoss
+        args:
+            o_weights: The output point cloud weights
+            outputs: The output point cloud features
+            t_weights: The target point cloud weights
+            targets: The target point cloud features
+        returns:
+            loss per sample (no batch reduction)
+        """
+
+        ## Calculate the distance matrix (squared) between the outputs and targets
+        dist = masked_dist_matrix(
+            tensor_a=outputs,
+            mask_a=o_weights > 0,
+            tensor_b=targets,
+            mask_b=t_weights > 0,
+            pad_val=1e6, ## Dont use inf as we can't zero that out
+        )[0]
+
+        ## Get the sum of the minimum along each axis, square, and scale by the weights
+        min1 = T.min(dist, dim=-1)[0] ** 2 * (o_weights) ## Zeros out the padded
+        min2 = T.min(dist, dim=-2)[0] ** 2 * (t_weights)
+
+        ## Add the two metrics together (no batch reduction)
+        return T.sum(min1, dim=-1) + T.sum(min2, dim=-1)
+
 # class GANLoss(nn.Module):
 #     """Aversarial loss for use in GANs or AAEs
 #     - Requires both the inputs and the model
@@ -126,33 +157,3 @@ def masked_dist_loss(
 #         return disc_loss + gen_loss
 
 
-# class ChampferLoss(nn.Module):
-#     """The champfer loss function for use on batched and weighted pointclouds"""
-
-#     def forward(self, o_weights, outputs, t_weights, targets):
-#         """Constructor method for ChampferLoss
-#         args:
-#             o_weights:  The output point cloud weights
-#             outputs:    The output point cloud features
-#             t_weights:  The target point cloud weights
-#             targets:    The target point cloud features
-#         returns:
-#             loss per sample (no batch reduction)
-#         """
-
-#         ## Calculate the distance matrix (squared) between the outputs and targets
-#         # dist = myGR.masked_dist_matrix(
-#         #     tensor_a=outputs,
-#         #     mask_a=o_weights > 0,
-#         #     tensor_b=targets,
-#         #     mask_b=t_weights > 0,
-#         #     pad_val=1e6,
-#         # )
-#         dist = 0  ## TODO Fix this
-
-#         ## Get the sum of the minimum along each axis, square, and scale by the weights
-#         min1 = T.min(dist, dim=-1)[0] ** 2 * (o_weights)
-#         min2 = T.min(dist, dim=-2)[0] ** 2 * (t_weights)
-
-#         ## Add the two metrics together (no batch reduction)
-#         return T.sum(min1, dim=-1) + T.sum(min2, dim=-1)

@@ -14,8 +14,34 @@ from torch.utils.data import Dataset, random_split
 
 from geomloss import SamplesLoss
 
-from mattstools.loss import GeomlossWrapper, MyBCEWithLogit, VAELoss
+from mattstools.loss import GeomlossWrapper, MyBCEWithLogit, VAELoss, ChampferLoss
 from mattstools.schedulers import CyclicWithWarmup
+
+
+class RunningAverage:
+    """A class which tracks the sum and data count so can calculate
+    the running average on demand
+    - Uses a tensor for the sum so not to require copying back to cpu which breaks
+    GPU asynchronousity
+    """
+
+    def __init__(self, dev = "cpu"):
+        self.sum = T.tensor(0, dtype = T.float32, device=sel_device(dev))
+        self.count = 0
+
+    def reset(self):
+        """Resets all statistics"""
+        self.__init__()
+
+    def update(self, val: float, quant: int = 1) -> None:
+        """Updates the running average with a new batched average"""
+        self.sum += val * quant
+        self.count += quant
+
+    @property
+    def avg(self) -> float:
+        """Return the current average"""
+        return (self.sum / self.count).item()
 
 
 def calc_rmse(value_a: T.Tensor, value_b: T.Tensor, dim: int = 0) -> T.Tensor:
@@ -113,6 +139,10 @@ def get_loss_fn(name: str) -> nn.Module:
         return GeomlossWrapper(SamplesLoss("energy"))
     if name == "sinkhorn":
         return GeomlossWrapper(SamplesLoss("sinkhorn", p=2, blur=0.01))
+    if name == "sinkhorn1":
+        return GeomlossWrapper(SamplesLoss("sinkhorn", p=1, blur=0.01))
+    if name == "champfer":
+        return ChampferLoss()
 
     ## Encoding losses
     if name == "vaeloss":
@@ -289,7 +319,6 @@ def pass_with_mask(
         raise ValueError("Dont know how to infer the output dimension from the model")
 
     ## Create an output of the correct shape on the right device using the padval
-
     outputs = T.full(
         (*inputs.shape[:-1], outp_dim),
         padval,

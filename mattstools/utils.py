@@ -38,6 +38,8 @@ def get_standard_configs(
         def_netw: Path to default netw config file
         def_data: Path to default data config file
     """
+    print("Loading config files")
+
     parser = argparse.ArgumentParser()
 
     ## Config files
@@ -112,11 +114,19 @@ def get_standard_configs(
         [args.data_config, args.netw_config, args.train_config]
     )
 
+    ## Remove all yaml anchors
+    print("- Removing yaml anchors")
+    data_conf = remove_keys_starting_with(data_conf, "__")
+    net_conf = remove_keys_starting_with(net_conf, "__")
+    train_conf = remove_keys_starting_with(train_conf, "__")
+
     ## Some arguments are identified by the exact keys in each dict
     args_into_conf(args, train_conf, "b_size")
     args_into_conf(args, train_conf, "n_workers")
-    args_into_conf(args, train_conf, "resume")
-    args_into_conf(args, train_conf, "tqdm_quiet")
+    if args.resume:
+        args_into_conf(args, train_conf, "resume")
+    if args.tqdm_quiet:
+        args_into_conf(args, train_conf, "tqdm_quiet")
 
     ## Other arguments need more manual placement in the configuration dicts
     args_into_conf(args, net_conf, "name", "base_kwargs/name")
@@ -125,30 +135,6 @@ def get_standard_configs(
     args_into_conf(args, train_conf, "lr", "optim_dict/lr")
 
     return data_conf, net_conf, train_conf
-
-
-class RunningAverage:
-    """A class which tracks the sum and data count so can calculate
-    the running average on demand
-    """
-
-    def __init__(self):
-        self.sum = 0
-        self.count = 0
-
-    def reset(self):
-        """Resets all statistics"""
-        self.__init__()
-
-    def update(self, val: float, quant: int = 1) -> None:
-        """Updates the running average with a new batched average"""
-        self.sum += val * quant
-        self.count += quant
-
-    @property
-    def avg(self) -> float:
-        """Return the current average"""
-        return self.sum / self.count
 
 
 def standardise(data, means, stds):
@@ -225,21 +211,27 @@ def key_prefix(pref: str, dic: dict) -> dict:
     return {f"{pref}{key}": val for key, val in dic.items()}
 
 
-def key_change(dict, old_key, new_key, new_value=None):
+def key_change(dic: dict, old_key: str, new_key: str, new_value=None)->None:
     """Changes the key used in a dictionary inplace only if it exists"""
 
     ## If the original key is not present, nothing changes
-    if old_key not in dict:
+    if old_key not in dic:
         return
 
-    ## Use the old value and pop, really just a jey change
+    ## Use the old value and pop. Essentially a rename
     if new_value is None:
-        dict[new_key] = dict.pop(old_key)
+        dic[new_key] = dic.pop(old_key)
 
-    ## Both a key change AND value change! Essentially a replacement
+    ## Both a key change AND value change. Essentially a replacement
     else:
-        dict[new_key] = new_value
-        del dict[old_key]
+        dic[new_key] = new_value
+        del dic[old_key]
+
+def remove_keys_starting_with(dic: dict, match: str)->dict:
+    """Removes all keys from the dictionary if they start with
+    - Returns a copy of the dictionary
+    """
+    return {key:val for key, val in dic.items() if key[:len(match)] != match}
 
 
 def interweave(arr_1: np.ndarray, arr_2: np.ndarray) -> np.ndarray:
@@ -285,14 +277,14 @@ def load_yaml_files(files: Union[list, tuple, str]) -> tuple:
     ## If the input is not a list then it returns a dict
     if isinstance(files, (str, Path)):
         with open(files, encoding="utf-8") as f:
-            return yaml.full_load(f)
+            return yaml.safe_load(f)
 
     opened = []
 
     ## Load each file using yaml
     for fnm in files:
         with open(fnm, encoding="utf-8") as f:
-            opened.append(yaml.full_load(f))
+            opened.append(yaml.safe_load(f))
 
     return tuple(opened)
 

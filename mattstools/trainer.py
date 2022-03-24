@@ -15,11 +15,10 @@ import matplotlib.pyplot as plt
 
 import torch as T
 import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, IterableDataset
 
-from mattstools.utils import RunningAverage
 from mattstools.plotting import plot_multi_loss
-from mattstools.torch_utils import get_optim, get_sched, move_dev, get_grad_norm
+from mattstools.torch_utils import RunningAverage, get_optim, get_sched, move_dev, get_grad_norm
 
 
 class Trainer:
@@ -98,8 +97,8 @@ class Trainer:
         else:
             self.valid_loader = None
 
-        ## Initialise the train loader with shuffle option for mappable datasets
-        if isinstance(train_set, Dataset):
+        ## Initialise the train loader whithout suffle option for mappable datasets
+        if not isinstance(train_set, IterableDataset):
             loader_kwargs["shuffle"] = True
         self.train_loader = DataLoader(train_set, **loader_kwargs)
 
@@ -110,7 +109,7 @@ class Trainer:
         }
 
         ## A running average tracker for each loss during an epoch
-        self.run_loss = {lsnm: RunningAverage() for lsnm in self.network.loss_names}
+        self.run_loss = {lsnm: RunningAverage(dev=self.network.device) for lsnm in self.network.loss_names}
 
         ## Gradient clipping settings and saving settings
         self.grad_clip = grad_clip
@@ -304,7 +303,7 @@ class Trainer:
                 running.update(losses[lnm].item())
 
             ## Break when using quick mode
-            if batch_idx >= self.quick_mode:
+            if self.quick_mode > 0 and batch_idx >= self.quick_mode:
                 break
 
         ## Use the running losses to update the total history, then reset

@@ -67,7 +67,6 @@ class MyNetBase(nn.Module):
     def set_preproc(self, stat_dict):
         """Save a dictionary of data processing tensors as buffers on the network
         - Ensures they will be saved/loaded alongside the network
-        - Can be accesed as attributes with prefix = 'preproc_'
         """
         for key, val in stat_dict.items():
             self.register_buffer(key, val.to(self.device))
