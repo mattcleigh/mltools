@@ -13,6 +13,8 @@ import matplotlib.ticker as ticker
 
 from scipy.interpolate import make_interp_spline
 
+from mattstools.utils import mid_points, undo_mid
+
 
 def plot_multi_loss(
     path: Path,
@@ -83,8 +85,10 @@ def plot_multi_hists(
     scale: int = 4,
     leg: bool = True,
     incl_zeros: bool = True,
+    already_hists: bool = False,
 ):
     """Plot multiple histograms given a list of 2D tensors/arrays
+    - Performs the histogramming here
     - Each column the arrays will be a seperate axis
     - Matching columns in each array will be superimposed on the same axis
 
@@ -100,6 +104,7 @@ def plot_multi_hists(
         scale: The size in inches for each subplot
         leg: If the legend should be plotted
         incl_zeros: If zero values should be included in the histograms or ignored
+        already_hists: If the data is already histogrammed and doesnt need to be binned
     """
 
     ## Make sure we are using a pathlib type variable
@@ -135,23 +140,30 @@ def plot_multi_hists(
     ## Cycle through each axis
     for i in range(n_axis):
 
+        b = bins[i]
+
         ## Reduce bins based on number of unique datapoints
         ## If the number of datapoints is less than 10 then we assume interger types
-        b = bins[i]
-        if isinstance(bins, str):
-            n_unique = len(np.unique(data_list[0][:, i]))
-            if n_unique < 10:
-                b = np.linspace(
-                    data_list[0][:, i].min() - 0.5,
-                    data_list[0][:, i].max() + 0.5,
-                    n_unique + 1,
-                )
+        if not already_hists:
+            if isinstance(bins[i], str):
+                n_unique = len(np.unique(data_list[0][:, i]))
+                if n_unique < 10:
+                    b = np.linspace(
+                        data_list[0][:, i].min() - 0.5,
+                        data_list[0][:, i].max() + 0.5,
+                        n_unique + 1,
+                    )
 
         ## Cycle through the different data arrays
         for j in range(n_data):
 
+            ## Read the binned data from the array
+            if already_hists:
+                histo = data_list[j][:, i]
+
             ## Calculate histogram of the column and remember the bins
-            histo, b = np.histogram(data_list[j][:, i], b, density=normed)
+            else:
+                histo, b = np.histogram(data_list[j][:, i], b, density=normed)
 
             ## Plot the histogram as a step graph
             axes[i].step(b, [0] + histo.tolist(), label=type_labels[j])
@@ -184,12 +196,69 @@ def plot_multi_hists(
     plt.close(fig)
 
 
+def plot_and_save_hists(
+    path: str,
+    hist_list: list,
+    labels: list,
+    ax_labels: list,
+    bins: np.ndarray,
+    do_csv: bool = False,
+    stack: bool = False,
+    is_mid: bool = False,
+) -> None:
+    """Plot a list of hitograms on the same axis and save the results to a csv file
+    args:
+        path: The path to the output file, will get png and csv suffix
+        hist_list: A list of histograms to plot
+        labels: List of labels for each histogram
+        ax_labels: Name of the x and y axis
+        bins: Binning used to create the histograms
+        do_csv: If the histograms should also be saved as csv files
+        stack: If the histograms are stacked or overlayed
+        is_mid: If the bins provided are already the midpoints
+    """
+
+    ## Make the arguments lists for generality
+    if not isinstance(hist_list, list):
+        hist_list = [hist_list]
+
+    ## Get the midpoints of the bins
+    mid_bins = bins if is_mid else mid_points(bins)
+    bins = undo_mid(mid_bins) if is_mid else bins
+
+    ## Save the histograms to text
+    if do_csv:
+        df = pd.DataFrame(
+            np.vstack([mid_bins] + hist_list).T, columns=["bins"] + labels
+        )
+        df.to_csv(path.with_suffix(".csv"), index=False)
+
+    ## Create the plot of the histograms
+    fig, ax = plt.subplots()
+    base = np.zeros_like(hist_list[0])
+    for i, h in enumerate(hist_list):
+        if stack:
+            ax.fill_between(mid_bins, base, base + h, label=labels[i])
+            base += h
+        else:
+            ax.step(bins, [0] + h.tolist(), label=labels[i])
+
+    ## Add the axis labels, set limits and save
+    ax.set_xlabel(ax_labels[0])
+    ax.set_ylabel(ax_labels[1])
+    ax.set_xlim(bins[0], bins[-1])
+    ax.set_ylim(bottom=0)
+    ax.legend()
+    fig.savefig(path.with_suffix(".png"))
+    plt.close(fig)
+
+
 def parallel_plot(
     path: str,
     df: pd.DataFrame,
     cols: list,
     rank_col: str = None,
-    cmap: str = "Spectral",
+    cmap: str = "viridis",
     curved: bool = True,
     curved_extend: float = 0.1,
     groupby_methods: list = None,
@@ -374,5 +443,5 @@ def parallel_plot(
 
     ## Change the plot layout and save
     plt.tight_layout()
-    plt.subplots_adjust(wspace=0, left=0.05, right=0.95)
-    plt.savefig(Path(path).with_suffix(".png"))
+    plt.subplots_adjust(wspace=0, right=0.95)
+    plt.savefig(Path(path + "_" + rank_col).with_suffix(".png"))

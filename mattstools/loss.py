@@ -141,3 +141,23 @@ def masked_dist_loss(
     T.set_grad_enabled(grad_status)
 
     return loss
+
+
+class GeomWrapper(nn.Module):
+    """A wrapper for the geomloss package which stops reactivating gradients"""
+
+    def __init__(self, geom_loss):
+        super().__init__()
+        self.geom_loss = geom_loss
+
+    def forward(self, *args, **kwargs):
+
+        ## Save current gradient settings
+        has_grad = T.is_grad_enabled()
+
+        loss = self.geom_loss(*args, **kwargs)
+
+        ## Revert the gradient tracking to the previous setting
+        T.set_grad_enabled(has_grad)
+
+        return loss

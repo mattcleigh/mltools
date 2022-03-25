@@ -5,6 +5,7 @@ Mix of utility functions specifically for pytorch
 from typing import Iterable, List, Union, Tuple
 
 import numpy as np
+import geomloss as gl
 
 import torch as T
 import torch.nn as nn
@@ -12,7 +13,33 @@ import torch.optim as optim
 import torch.optim.lr_scheduler as schd
 from torch.utils.data import Dataset, random_split
 
-from mattstools.loss import GANLoss, KLD2NormLoss, MyBCEWithLogit
+from mattstools.loss import GANLoss, KLD2NormLoss, MyBCEWithLogit, GeomWrapper
+
+
+class RunningAverage:
+    """A class which tracks the sum and data count so can calculate
+    the running average on demand. Uses pytorch tensors to minimise halting gpu
+    thread
+    """
+
+    def __init__(self, dev: T.device):
+        self.sum = T.tensor(0.0, device=dev)
+        self.count = 0
+
+    def reset(self):
+        """Resets the running sum and count"""
+        self.sum *= 0
+        self.count *= 0
+
+    def update(self, val: float, quant: int = 1) -> None:
+        """Updates the running average with a new batched average"""
+        self.sum += val * quant
+        self.count += quant
+
+    @property
+    def avg(self) -> float:
+        """Return the current average"""
+        return self.sum / self.count
 
 
 def calc_rmse(value_a: T.Tensor, value_b: T.Tensor, dim: int = 0) -> T.Tensor:
@@ -29,13 +56,13 @@ def get_act(name: str) -> nn.Module:
     if name == "lrlu":
         return nn.LeakyReLU(0.1)
     if name == "silu":
-        return (nn.SiLU(),)
+        return nn.SiLU()
     if name == "selu":
-        return (nn.SELU(),)
+        return nn.SELU()
     if name == "sigm":
-        return (nn.Sigmoid(),)
+        return nn.Sigmoid()
     if name == "tanh":
-        return (nn.Tanh(),)
+        return nn.Tanh()
     raise ValueError("No activation function with name: ", name)
 
 
@@ -90,14 +117,35 @@ def get_loss_fn(name: str) -> nn.Module:
     """Return a pytorch loss function given a name"""
     if name == "none":
         return None
-    if name == "bcewlgt":
+
+    ## Regression losses
+    elif name == "l1loss":
+        return nn.L1Loss(reduction="none")
+    elif name == "l2loss":
+        return nn.MSELoss(reduction="none")
+    elif name == "huber":
+        return nn.HuberLoss(reduction="none")
+
+    ## Distribution matching losses
+    elif name == "engmmd":
+        return GeomWrapper(gl.SamplesLoss("energy"))
+    elif name == "snkhrn1":
+        return GeomWrapper(gl.SamplesLoss("sinkhorn", p=1, blur=0.01))
+    elif name == "snkhrn2":
+        return GeomWrapper(gl.SamplesLoss("sinkhorn", p=2, blur=0.01))
+
+    ## Classification losses
+    elif name == "bcewlgt":
         return MyBCEWithLogit()
-    if name == "crssent":
+    elif name == "crssent":
         return nn.CrossEntropyLoss()
-    if name == "kld2nrm":
+
+    ## Generative modeling losses
+    elif name == "kld2nrm":
         return KLD2NormLoss()
-    if name == "ganloss":
+    elif name == "ganloss":
         return GANLoss()
+
     else:
         raise ValueError("No standard loss function with name: ", name)
 
@@ -159,21 +207,33 @@ def train_valid_split(dataset: Dataset, v_frac: float):
 def masked_pool(
     pool_type: str, tensor: T.Tensor, mask: T.BoolTensor, axis: int = None
 ) -> T.Tensor:
-    """Apply pooling to a tensor based on a string argument using its mask"""
+    """Apply a pooling operation to masked elements of a tensor
+    args:
+        pool_type: Which pooling operation to use, currently supports sum and mean
+        tensor: The input tensor to pool over
+        mask: The mask to show which values should be included in the pool
+
+    kwargs:
+        axis: The axis to pool over, gets automatically from shape of mask
+
+    """
 
     ## Automatically get the pooling dimension from the shape of the mask
     if axis is None:
         axis = len(mask.shape) - 1
+
     ## Or at least ensure that the axis is a positive number
     elif axis < 0:
         axis = len(tensor.shape) - axis
 
-    ## Sum uses mean operation to keep values small but ignores the padding
-    ## It is the same as sum / pad_length
-    if pool_type == "sum":
-        return tensor.mean(dim=axis)
+    ## Ensure we are using zero padding (could be -Inf)
+    tensor[~mask] = 0
 
-    ## Mean pooling takes into account the mask
+    ## Summing uses basic sum
+    if pool_type == "sum":
+        return tensor.sum(dim=axis)
+
+    ## Mean pooling does the sum then divides by sum of mask
     if pool_type == "mean":
         return tensor.sum(dim=axis) / (mask.sum(dim=axis, keepdim=True) + 1e-8)
 
@@ -181,8 +241,8 @@ def masked_pool(
 
 
 def repeat_cat(src: T.Tensor, context: List[T.Tensor], mask: T.BoolTensor):
-    """Returns a source tensor combined with a list of contextual information which is repeated
-    over every dimension except the first
+    """Returns a source tensor combined with a list of contextual information which
+    is repeated over every dimension except the first
     - Only acts on dim=-1
     """
 
@@ -242,7 +302,7 @@ def pass_with_mask(
         dtype=data.dtype,
     )
 
-    ## Pass only the masked elements through the network and use mask to place in out
+    ## Pass only the masked elements through the network and use mask to place
     outputs[mask] = module(data[mask])
 
     ## Add the contextual information (repeat according to sample multiplicity)

@@ -34,7 +34,7 @@ class MyNetBase(nn.Module):
             device: The name of the device on which to load/save and store the network
         """
         super().__init__()
-        print(f"Creating network: {name}")
+        print(f"\nCreating network: {name}")
 
         ## Basic interfacing class attributes
         self.name = name
@@ -63,10 +63,9 @@ class MyNetBase(nn.Module):
     def set_preproc(self, stat_dict):
         """Save a dictionary of data processing tensors as buffers on the network
         - Ensures they will be saved/loaded alongside the network
-        - Can be accesed as attributes with prefix = 'preproc_'
         """
         for key, val in stat_dict.items():
-            self.register_buffer("preproc_" + key, val.to(self.device))
+            self.register_buffer(key, val.to(self.device))
 
     def fowrard(self, *_, get_loss=True) -> dict:
         """This method should be overwritten, but ideally the forward pass should return

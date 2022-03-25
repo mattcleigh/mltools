@@ -21,6 +21,8 @@ class MLPBlock(nn.Module):
     - layer normalisation
     - dropout
 
+    Only the input of the block is concatentated with context information
+    For residual blocks, the input is added to the output of the final layer
     """
 
     def __init__(
@@ -59,8 +61,12 @@ class MLPBlock(nn.Module):
 
         ## Initialise the block layers as a module list
         self.block = nn.ModuleList()
-        for n in range(n_layers):  ## Increases to output dim first
+        for n in range(n_layers):
+
+            ## Increase the input dimension of the first layer to include context
             lyr_in = inpt_dim + ctxt_dim if n == 0 else outp_dim
+
+            ## Linear transform, activation, normalisation, dropout
             self.block.append(nn.Linear(lyr_in, outp_dim))
             if act != "none":
                 self.block.append(get_act(act))
@@ -197,9 +203,8 @@ class DeepSet(nn.Module):
     def __init__(
         self,
         inpt_dim: int,
-        outp_dim: int,
         pool_type: str = "mean",
-        attn_mode: str = "mean",
+        attn_type: str = "mean",
         feat_net_kwargs=None,
         attn_net_kwargs=None,
         post_net_kwargs=None,
@@ -209,13 +214,11 @@ class DeepSet(nn.Module):
             inpt_dim: The number of input features
             outp_dim: The number of desired output featues
         kwargs:
-            pool_type: The type of set pooling applied, mean, sum, max or attention
-            depth: The number of hidden layers
+            pool_type: The type of set pooling applied: mean, sum, or attn
+            attn_type: The type of attention: mean or sum
             feat_net_kwargs: Keyword arguments for the feature network
             attn_net_kwargs: Keyword arguments for the attention network
             post_net_kwargs: Keyword arguments for the post network
-            attn_heads: The number of sets of pooling weights to learn per sample
-            attn_mode: The type of attention (softmaxed or softplused)
         """
         super().__init__()
 
@@ -225,26 +228,31 @@ class DeepSet(nn.Module):
         post_net_kwargs = post_net_kwargs or {}
 
         ## For the attention network the default output must be set to 1
+        ## The dense network default output is the same as the input
         if "outp_dim" not in attn_net_kwargs:
             attn_net_kwargs["outp_dim"] = 1
 
         ## Save the class attributes
         self.inpt_dim = inpt_dim
-        self.outp_dim = outp_dim
+        self.outp_dim = post_net_kwargs["outp_dim"]  ## Must be present!
         self.pool_type = pool_type
-        self.attn_mode = attn_mode
+        self.attn_type = attn_type
 
         ## Create the feature extraction network
         self.feat_net = DenseNetwork(self.inpt_dim, **feat_net_kwargs)
         pooled_dim = self.feat_net.outp_dim
 
-        ## Create the attention network if pool type is set to attention
+        ## For an attention deepset
         if self.pool_type == "attn":
+
+            ## Create the attention network
             self.attn_net = DenseNetwork(self.inpt_dim, **attn_net_kwargs)
-            pooled_dim *= self.attn_net.outp_dim  ## Dim increases with multiheaded attn
+
+            ## Pooled dimension increases with multiheaded attention
+            pooled_dim *= self.attn_net.outp_dim
 
         ## Create the post network to update the pooled features of the set
-        self.post_net = DenseNetwork(pooled_dim, self.outp_dim, **post_net_kwargs)
+        self.post_net = DenseNetwork(pooled_dim, **post_net_kwargs)
 
     def forward(self, tensor: T.tensor, mask: T.BoolTensor):
         """The expected shapes of the inputs are
@@ -255,15 +263,19 @@ class DeepSet(nn.Module):
         ## Pass the non_zero values through the feature network
         feat_outs = pass_with_mask(tensor, self.feat_net, mask)
 
-        ## For attention calculate the weights using using -infinite padding
+        ## For attention
         if self.pool_type == "attn":
+
+            ## Calculate the weights using using -infinite padding
             attn_outs = pass_with_mask(tensor, self.attn_net, mask, padval=-T.inf)
 
-            ## Apply either a softmax for weighted mean or softplus for weighted sum
-            if self.attn_mode == "mean":
-                attn_outs = F.softmax(attn_outs, dim=-2)
-            elif self.attn_mode == "sum":
-                attn_outs = F.softplus(attn_outs, dim=-2)
+            ## Remove the padding and normalise using the appropriate function
+            if self.attn_type == "mean":
+                attn_outs = F.softmax(attn_outs, dim=-2)  ## Weighted mean
+            if self.attn_type == "sum":
+                attn_outs = F.softplus(attn_outs)  ## Weighted sum
+            if self.attn_type == "raw":
+                attn_outs = T.nan_to_num(attn_outs, neginf=0)  ## Change -inf padding
 
             ## Broadcast the attention to get the multiple poolings
             feat_outs = (
@@ -272,7 +284,7 @@ class DeepSet(nn.Module):
                 .sum(dim=-2)
             )
 
-        ## For the other types of pooling
+        ## For the other types of pooling use the masked pool method
         else:
             feat_outs = masked_pool(self.pool_type, feat_outs, mask)
 

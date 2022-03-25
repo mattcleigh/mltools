@@ -21,30 +21,6 @@ from sklearn.preprocessing import (
 )
 
 
-class RunningAverage:
-    """A class which tracks the sum and data count so can calculate
-    the running average on demand
-    """
-
-    def __init__(self):
-        self.sum = 0
-        self.count = 0
-
-    def reset(self):
-        """Resets all statistics"""
-        self.__init__()
-
-    def update(self, val: float, quant: int = 1) -> None:
-        """Updates the running average with a new batched average"""
-        self.sum += val * quant
-        self.count += quant
-
-    @property
-    def avg(self) -> float:
-        """Return the current average"""
-        return self.sum / self.count
-
-
 def standardise(data, means, stds):
     """Standardise data by using mean subraction and std division"""
     return (data - means) / (stds + 1e-8)
@@ -152,6 +128,31 @@ def interweave(arr_1: np.ndarray, arr_2: np.ndarray) -> np.ndarray:
     return arr_comb
 
 
+def sum_other_axes(array: np.ndarray, axis: int) -> np.ndarray:
+    """Applies numpy sum to all axes except one in an array"""
+    axes_for_sum = [i for i in range(len(array.shape))]
+    axes_for_sum.pop(axis)
+    return array.sum(axis=tuple(axes_for_sum))
+
+
+def mid_points(array: np.ndarray) -> np.ndarray:
+    """Return the midpoints of an array, one smaller"""
+    return (array[1:] + array[:-1]) / 2
+
+
+def undo_mid(array: np.ndarray) -> np.ndarray:
+    """Undo the midpoints, trying to get the bin boundaries"""
+    array = np.array(array)  ## Have to include this because of pandas
+    half_bw = (array[1] - array[0]) / 2  ## Assumes constant bin widths
+    array = np.insert(array + half_bw, 0, array[0] - half_bw)
+    return array
+
+
+def chunk_given_size(array: np.ndarray, size: int) -> np.ndarray:
+    """Split an array using a given size, last one will be smaller"""
+    return np.split(array, np.arange(size, len(array), size))
+
+
 def str2bool(mystring: str) -> bool:
     """Convert a string object into a boolean"""
     if isinstance(mystring, bool):
@@ -197,7 +198,7 @@ def save_yaml_files(
     ## If the input is not a list then one file is saved
     if isinstance(file_names, (str, Path)):
         with open(f"{path}/{file_names}.yaml", "w") as f:
-            yaml.dump(dic, f)
+            yaml.dump(dic, f, sort_keys=False)
 
     ## Make the folder
     Path(path).mkdir(parents=True, exist_ok=True)
@@ -205,7 +206,7 @@ def save_yaml_files(
     ## Save each file using yaml
     for f_nm, dic in zip(file_names, dicts):
         with open(f"{path}/{f_nm}.yaml", "w") as f:
-            yaml.dump(dic, f)
+            yaml.dump(dic, f, sort_keys=False)
 
 
 def get_scaler(name: str):

@@ -2,12 +2,10 @@
 Base class for training network
 """
 
-from cProfile import label
-from cmath import exp
-from functools import partialmethod
 import json
-from multiprocessing.sharedctypes import Value
 from pathlib import Path
+from typing import Union
+from functools import partialmethod
 
 import numpy as np
 from tqdm import tqdm
@@ -15,11 +13,16 @@ import matplotlib.pyplot as plt
 
 import torch as T
 import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import IterableDataset, Dataset, DataLoader
 
-from mattstools.utils import RunningAverage
 from mattstools.plotting import plot_multi_loss
-from mattstools.torch_utils import get_optim, get_sched, move_dev, get_grad_norm
+from mattstools.torch_utils import (
+    RunningAverage,
+    get_optim,
+    get_sched,
+    move_dev,
+    get_grad_norm,
+)
 
 
 class Trainer:
@@ -28,8 +31,8 @@ class Trainer:
     def __init__(
         self,
         network,
-        train_set: Dataset,
-        valid_set: Dataset = None,
+        train_set: Union[Dataset, IterableDataset],
+        valid_set: Union[Dataset, IterableDataset] = None,
         b_size: int = 32,
         patience: int = 100,
         max_epochs: int = 100,
@@ -87,15 +90,22 @@ class Trainer:
             "drop_last": True,
             "pin_memory": True,
         }
+        tload_kwargs = loader_kwargs.copy()
+        vload_kwargs = loader_kwargs.copy()
+
+        ## For mapable datasets we can shuffle
+        if isinstance(train_set, Dataset):
+            tload_kwargs["shuffle"] = True
+            tload_kwargs["shuffle"] = False
 
         ## Add a custom collate function to the kwargs if present
         if hasattr(train_set, "col_fn"):
             loader_kwargs["collate_fn"] = train_set.col_fn
 
-        ## Initialise the loaders
-        self.train_loader = DataLoader(train_set, shuffle=True, **loader_kwargs)
+        ## Initialise the loaders, dont shuffle for iterable datasets
+        self.train_loader = DataLoader(train_set, **loader_kwargs)
         if self.has_v:
-            self.valid_loader = DataLoader(valid_set, shuffle=False, **loader_kwargs)
+            self.valid_loader = DataLoader(valid_set, **vload_kwargs)
         else:
             self.valid_loader = None
 
@@ -106,7 +116,9 @@ class Trainer:
         }
 
         ## A running average tracker for each loss during an epoch
-        self.run_loss = {lsnm: RunningAverage() for lsnm in self.network.loss_names}
+        self.run_loss = {
+            lsnm: RunningAverage(network.device) for lsnm in self.network.loss_names
+        }
 
         ## Gradient clipping settings and saving settings
         self.grad_clip = grad_clip
@@ -143,7 +155,7 @@ class Trainer:
         ## Load the previous checkpoint
         if resume:
             self.load_checkpoint(flag="latest")
-            self._save_chpt_dict("before_resume") ## Make a save before continuing
+            self._save_chpt_dict("before_resume")  ## Make a save before continuing
 
     def explode_learning(
         self,
@@ -297,7 +309,7 @@ class Trainer:
 
             ## Update the each of the running losses using the dictionary
             for lnm, running in self.run_loss.items():
-                running.update(losses[lnm].item())
+                running.update(losses[lnm].detach())
 
             ## Break when using quick mode
             if self.quick_mode:
@@ -305,7 +317,7 @@ class Trainer:
 
         ## Use the running losses to update the total history, then reset
         for lnm, running in self.run_loss.items():
-            self.loss_hist[lnm][mode].append(running.avg)
+            self.loss_hist[lnm][mode].append(running.avg.item())
             running.reset()
 
     def count_epochs(self) -> None:
@@ -350,7 +362,7 @@ class Trainer:
         ## Save best network model and dict (easier to reload) in main directory
         if self.bad_epochs == 0:
             self.network.save("best")
-            self.network.save("best", as_dict=True)
+            # self.network.save("best", as_dict=True) ## Takes too long for large models
 
         ## Create loss folder
         loss_folder = Path(self.network.full_name, "losses")
