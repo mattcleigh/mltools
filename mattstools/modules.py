@@ -221,20 +221,20 @@ class DeepSet(nn.Module):
         post_net_kwargs=None,
     ) -> None:
         """
-        args:
-            inpt_dim: The number of input features
-            outp_dim: The number of desired output featues
-        kwargs:
-<<<<<<< HEAD
-            pool_type: The type of set pooling applied: mean, sum, or attn
-            attn_type: The type of attention: mean or sum
-=======
-            pool_type: The type of set pooling applied, mean, sum, max or attention
-            attn_type: The type of attention, mean, sum, raw
->>>>>>> yggBranch
-            feat_net_kwargs: Keyword arguments for the feature network
-            attn_net_kwargs: Keyword arguments for the attention network
-            post_net_kwargs: Keyword arguments for the post network
+                args:
+                    inpt_dim: The number of input features
+                    outp_dim: The number of desired output featues
+                kwargs:
+        <<<<<<< HEAD
+                    pool_type: The type of set pooling applied: mean, sum, or attn
+                    attn_type: The type of attention: mean or sum
+        =======
+                    pool_type: The type of set pooling applied, mean, sum, max or attention
+                    attn_type: The type of attention, mean, sum, raw
+        >>>>>>> yggBranch
+                    feat_net_kwargs: Keyword arguments for the feature network
+                    attn_net_kwargs: Keyword arguments for the attention network
+                    post_net_kwargs: Keyword arguments for the post network
         """
         super().__init__()
 
@@ -270,7 +270,9 @@ class DeepSet(nn.Module):
         ## Create the post network to update the pooled features of the set
         self.post_net = DenseNetwork(pooled_dim, **post_net_kwargs)
 
-    def forward(self, tensor: T.tensor, mask: T.BoolTensor, ctxt: Union[T.Tensor, list] = None):
+    def forward(
+        self, tensor: T.tensor, mask: T.BoolTensor, ctxt: Union[T.Tensor, list] = None
+    ):
         """The expected shapes of the inputs are
         - tensor: batch x setsize x features
         - mask: batch x setsize

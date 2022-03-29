@@ -26,7 +26,7 @@ class RunningAverage:
     GPU asynchronousity
     """
 
-    def __init__(self, dev = "cpu"):
+    def __init__(self, dev="cpu"):
         self.sum = T.tensor(0.0, device=sel_device(dev), requires_grad=False)
         self.count = 0
 
@@ -399,9 +399,9 @@ def to_np(tensor: T.Tensor) -> np.ndarray:
 
 
 def print_gpu_info(dev=0):
-    total = T.cuda.get_device_properties(dev).total_memory / 1024**3
-    reser = T.cuda.memory_reserved(dev) / 1024**3
-    alloc = T.cuda.memory_allocated(dev) / 1024**3
+    total = T.cuda.get_device_properties(dev).total_memory / 1024 ** 3
+    reser = T.cuda.memory_reserved(dev) / 1024 ** 3
+    alloc = T.cuda.memory_allocated(dev) / 1024 ** 3
     print(f"\nTotal = {total:.2f}\nReser = {reser:.2f}\nAlloc = {alloc:.2f}")
 
 

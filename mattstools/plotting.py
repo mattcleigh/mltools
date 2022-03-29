@@ -146,26 +146,14 @@ def plot_multi_hists(
 
         ## Reduce bins based on number of unique datapoints
         ## If the number of datapoints is less than 10 then we assume interger types
-<<<<<<< HEAD
-        if not already_hists:
-            if isinstance(bins[i], str):
-                n_unique = len(np.unique(data_list[0][:, i]))
-                if n_unique < 10:
-                    b = np.linspace(
-                        data_list[0][:, i].min() - 0.5,
-                        data_list[0][:, i].max() + 0.5,
-                        n_unique + 1,
-                    )
-=======
         b = bins[i]
-        if isinstance(bins, str):
+        if isinstance(bins, str) and not already_hists:
             unq = np.unique(data_list[0][:, i])[0]
             n_unique = len(unq)
             if n_unique < 10:
                 b = (n_unique[1:] - n_unique[2:]) / 2  ## Use midpoints
                 b.append(unq.max() + (b[-1] - b[-2]) / 2)  ## Add final bin
                 b.insert(0, unq.min() - (b[1] + b[0]) / 2)  ## Add initial bin
->>>>>>> yggBranch
 
         ## Cycle through the different data arrays
         for j in range(n_data):
@@ -456,12 +444,8 @@ def parallel_plot(
 
     ## Change the plot layout and save
     plt.tight_layout()
-<<<<<<< HEAD
-    plt.subplots_adjust(wspace=0, right=0.95)
-    plt.savefig(Path(path + "_" + rank_col).with_suffix(".png"))
-=======
     plt.subplots_adjust(wspace=0, left=0.05, right=0.95)
-    plt.savefig(Path(path).with_suffix(".png"))
+    plt.savefig(Path(path + "_" + rank_col).with_suffix(".png"))
 
 
 def plot_2d_hists(path, hist_list, hist_labels, ax_labels, bins):
@@ -505,4 +489,3 @@ def plot_latent_space(path, latents, labels=None):
     fig.colorbar(scttr)
     fig.savefig(path.with_suffix(".png"))
     plt.close(fig)
->>>>>>> yggBranch

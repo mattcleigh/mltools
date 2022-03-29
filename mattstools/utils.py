@@ -211,7 +211,7 @@ def key_prefix(pref: str, dic: dict) -> dict:
     return {f"{pref}{key}": val for key, val in dic.items()}
 
 
-def key_change(dic: dict, old_key: str, new_key: str, new_value=None)->None:
+def key_change(dic: dict, old_key: str, new_key: str, new_value=None) -> None:
     """Changes the key used in a dictionary inplace only if it exists"""
 
     ## If the original key is not present, nothing changes
@@ -227,11 +227,12 @@ def key_change(dic: dict, old_key: str, new_key: str, new_value=None)->None:
         dic[new_key] = new_value
         del dic[old_key]
 
-def remove_keys_starting_with(dic: dict, match: str)->dict:
+
+def remove_keys_starting_with(dic: dict, match: str) -> dict:
     """Removes all keys from the dictionary if they start with
     - Returns a copy of the dictionary
     """
-    return {key:val for key, val in dic.items() if key[:len(match)] != match}
+    return {key: val for key, val in dic.items() if key[: len(match)] != match}
 
 
 def interweave(arr_1: np.ndarray, arr_2: np.ndarray) -> np.ndarray:
@@ -250,9 +251,9 @@ def interweave(arr_1: np.ndarray, arr_2: np.ndarray) -> np.ndarray:
     return arr_comb
 
 
-def chunk_given_size(a: np.ndarray, size: int, axis: int = 0)->  np.ndarray:
+def chunk_given_size(a: np.ndarray, size: int, axis: int = 0) -> np.ndarray:
     """Split an array into chunks along an axis, the final chunk will be smaller"""
-    return np.split(a, np.arange(size, a.shape[axis], size), axis = axis)
+    return np.split(a, np.arange(size, a.shape[axis], size), axis=axis)
 
 
 def str2bool(mystring: str) -> bool:

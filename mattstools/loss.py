@@ -8,9 +8,10 @@ import torch.nn.functional as F
 
 from mattstools.distances import masked_dist_matrix
 
+
 class VAELoss(nn.Module):
-    """The Kullback-Leibler divergence to unit normal loss used for VAEs
-    """
+    """The Kullback-Leibler divergence to unit normal loss used for VAEs"""
+
     def __init__(self):
         super().__init__()
 
@@ -82,11 +83,11 @@ class ChampferLoss(nn.Module):
             mask_a=o_weights > 0,
             tensor_b=targets,
             mask_b=t_weights > 0,
-            pad_val=1e6, ## Dont use inf as we can't zero that out
+            pad_val=1e6,  ## Dont use inf as we can't zero that out
         )[0]
 
         ## Get the sum of the minimum along each axis, square, and scale by the weights
-        min1 = T.min(dist, dim=-1)[0] ** 2 * (o_weights) ## Zeros out the padded
+        min1 = T.min(dist, dim=-1)[0] ** 2 * (o_weights)  ## Zeros out the padded
         min2 = T.min(dist, dim=-2)[0] ** 2 * (t_weights)
 
         ## Add the two metrics together (no batch reduction)
@@ -120,6 +121,7 @@ def masked_dist_loss(
     loss = loss_fn(a_weights, pc_a, b_weights, pc_b).mean()
 
     return loss
+
 
 # class GANLoss(nn.Module):
 #     """Aversarial loss for use in GANs or AAEs
@@ -156,5 +158,3 @@ def masked_dist_loss(
 
 #         ## TODO Add gradient penalties here
 #         return disc_loss + gen_loss
-
-

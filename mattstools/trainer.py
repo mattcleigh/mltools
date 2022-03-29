@@ -16,7 +16,13 @@ import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader, IterableDataset
 
 from mattstools.plotting import plot_multi_loss
-from mattstools.torch_utils import RunningAverage, get_optim, get_sched, move_dev, get_grad_norm
+from mattstools.torch_utils import (
+    RunningAverage,
+    get_optim,
+    get_sched,
+    move_dev,
+    get_grad_norm,
+)
 
 
 class Trainer:
@@ -110,7 +116,10 @@ class Trainer:
         }
 
         ## A running average tracker for each loss during an epoch
-        self.run_loss = {lsnm: RunningAverage(dev=self.network.device) for lsnm in self.network.loss_names}
+        self.run_loss = {
+            lsnm: RunningAverage(dev=self.network.device)
+            for lsnm in self.network.loss_names
+        }
 
         ## Gradient clipping settings and saving settings
         self.grad_clip = grad_clip
