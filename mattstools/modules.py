@@ -282,19 +282,6 @@ class DeepSet(nn.Module):
 
         ## For attention
         if self.pool_type == "attn":
-<<<<<<< HEAD
-
-            ## Calculate the weights using using -infinite padding
-            attn_outs = pass_with_mask(tensor, self.attn_net, mask, padval=-T.inf)
-
-            ## Remove the padding and normalise using the appropriate function
-            if self.attn_type == "mean":
-                attn_outs = F.softmax(attn_outs, dim=-2)  ## Weighted mean
-            if self.attn_type == "sum":
-                attn_outs = F.softplus(attn_outs)  ## Weighted sum
-            if self.attn_type == "raw":
-                attn_outs = T.nan_to_num(attn_outs, neginf=0)  ## Change -inf padding
-=======
             attn_outs = pass_with_mask(
                 tensor,
                 self.attn_net,
@@ -308,7 +295,6 @@ class DeepSet(nn.Module):
                 attn_outs = F.softmax(attn_outs, dim=-2)
             elif self.attn_type == "sum":
                 attn_outs = F.softplus(attn_outs)
->>>>>>> yggBranch
 
             ## Broadcast the attention to get the multiple poolings and sum
             feat_outs = (
