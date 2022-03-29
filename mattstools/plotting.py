@@ -10,8 +10,10 @@ import pandas as pd
 import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
+from matplotlib.colors import LogNorm
 
 from scipy.interpolate import make_interp_spline
+from sklearn.decomposition import PCA
 
 from mattstools.utils import mid_points, undo_mid
 
@@ -144,6 +146,7 @@ def plot_multi_hists(
 
         ## Reduce bins based on number of unique datapoints
         ## If the number of datapoints is less than 10 then we assume interger types
+<<<<<<< HEAD
         if not already_hists:
             if isinstance(bins[i], str):
                 n_unique = len(np.unique(data_list[0][:, i]))
@@ -153,6 +156,16 @@ def plot_multi_hists(
                         data_list[0][:, i].max() + 0.5,
                         n_unique + 1,
                     )
+=======
+        b = bins[i]
+        if isinstance(bins, str):
+            unq = np.unique(data_list[0][:, i])[0]
+            n_unique = len(unq)
+            if n_unique < 10:
+                b = (n_unique[1:] - n_unique[2:]) / 2  ## Use midpoints
+                b.append(unq.max() + (b[-1] - b[-2]) / 2)  ## Add final bin
+                b.insert(0, unq.min() - (b[1] + b[0]) / 2)  ## Add initial bin
+>>>>>>> yggBranch
 
         ## Cycle through the different data arrays
         for j in range(n_data):
@@ -443,5 +456,53 @@ def parallel_plot(
 
     ## Change the plot layout and save
     plt.tight_layout()
+<<<<<<< HEAD
     plt.subplots_adjust(wspace=0, right=0.95)
     plt.savefig(Path(path + "_" + rank_col).with_suffix(".png"))
+=======
+    plt.subplots_adjust(wspace=0, left=0.05, right=0.95)
+    plt.savefig(Path(path).with_suffix(".png"))
+
+
+def plot_2d_hists(path, hist_list, hist_labels, ax_labels, bins):
+    """Given a list of 2D histograms, plot them side by side as imshows"""
+
+    ## Calculate the axis limits from the bins
+    limits = (min(bins[0]), max(bins[0]), min(bins[1]), max(bins[1]))
+    mid_bins = [(b[1:] + b[:-1]) / 2 for b in bins]
+
+    ## Create the subplots
+    fig, axes = plt.subplots(1, len(hist_list), figsize=(8, 4))
+
+    ## For each histogram to be plotted
+    for i in range(len(hist_list)):
+        axes[i].set_xlabel(ax_labels[0])
+        axes[i].set_title(hist_labels[i])
+        axes[i].imshow(
+            hist_list[i], cmap="viridis", origin="lower", extent=limits, norm=LogNorm()
+        )
+        axes[i].contour(*mid_bins, np.log(hist_list[i] + 1e-4), colors="k", levels=10)
+
+    axes[0].set_ylabel(ax_labels[1])
+    fig.tight_layout()
+    fig.savefig(path.with_suffix(".png"))
+    plt.close(fig)
+
+
+def plot_latent_space(path, latents, labels=None):
+    fig, axis = plt.subplots(1, 1, figsize=(5, 5))
+    fig.suptitle("Latent Space")
+
+    if latents.shape[-1] > 2:
+        latents = PCA(2).fit_transform(latents)
+
+    if labels is None:
+        labels = np.ones(len(latents))
+
+    scttr = axis.scatter(*latents.T, c=labels, vmin=0, vmax=9, cmap="tab10")
+
+    fig.tight_layout()
+    fig.colorbar(scttr)
+    fig.savefig(path.with_suffix(".png"))
+    plt.close(fig)
+>>>>>>> yggBranch

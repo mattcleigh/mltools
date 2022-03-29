@@ -95,6 +95,15 @@ class MLPBlock(nn.Module):
 
         return temp
 
+    def __repr__(self):
+        string = str(self.inpt_dim)
+        if self.ctxt_dim:
+            string += f"({self.ctxt_dim})"
+        string += "->"
+        string += "->".join([str(b).split("(")[0] for b in self.block])
+        string += "->" + str(self.outp_dim)
+        return string
+
 
 class DenseNetwork(nn.Module):
     """A dense neural network made from a series of consecutive MLP blocks and context
@@ -114,7 +123,7 @@ class DenseNetwork(nn.Module):
         nrm: str = "none",
         drp: float = 0,
         do_res: bool = False,
-        ctxt_in_all: bool = True,
+        ctxt_in_all: bool = False,
     ) -> None:
         """
         args:
@@ -142,7 +151,7 @@ class DenseNetwork(nn.Module):
         else:
             self.hddn_dim = num_blocks * [hddn_dim]
         self.outp_dim = outp_dim or inpt_dim if do_out else self.hddn_dim[-1]
-        self.depth = len(self.hddn_dim)
+        self.num_blocks = len(self.hddn_dim)
         self.ctxt_dim = ctxt_dim
         self.do_out = do_out
 
@@ -160,20 +169,22 @@ class DenseNetwork(nn.Module):
         )
 
         ## All hidden blocks as a single module list
-        self.hidden_blocks = nn.ModuleList()
-        for h_1, h_2 in zip(self.hddn_dim[:-1], self.hddn_dim[1:]):
-            self.hidden_blocks.append(
-                MLPBlock(
-                    inpt_dim=h_1,
-                    outp_dim=h_2,
-                    ctxt_dim=self.ctxt_dim if ctxt_in_all else 0,
-                    n_layers=n_lyr_pbk,
-                    act=act_h,
-                    nrm=nrm,
-                    drp=drp,
-                    do_res=do_res,
+        self.hidden_blocks = []
+        if self.num_blocks > 1:
+            self.hidden_blocks = nn.ModuleList()
+            for h_1, h_2 in zip(self.hddn_dim[:-1], self.hddn_dim[1:]):
+                self.hidden_blocks.append(
+                    MLPBlock(
+                        inpt_dim=h_1,
+                        outp_dim=h_2,
+                        ctxt_dim=self.ctxt_dim if ctxt_in_all else 0,
+                        n_layers=n_lyr_pbk,
+                        act=act_h,
+                        nrm=nrm,
+                        drp=drp,
+                        do_res=do_res,
+                    )
                 )
-            )
 
         ## Output block (optional and there is no normalisation, dropout or context)
         if do_out:
@@ -214,8 +225,13 @@ class DeepSet(nn.Module):
             inpt_dim: The number of input features
             outp_dim: The number of desired output featues
         kwargs:
+<<<<<<< HEAD
             pool_type: The type of set pooling applied: mean, sum, or attn
             attn_type: The type of attention: mean or sum
+=======
+            pool_type: The type of set pooling applied, mean, sum, max or attention
+            attn_type: The type of attention, mean, sum, raw
+>>>>>>> yggBranch
             feat_net_kwargs: Keyword arguments for the feature network
             attn_net_kwargs: Keyword arguments for the attention network
             post_net_kwargs: Keyword arguments for the post network
@@ -254,17 +270,19 @@ class DeepSet(nn.Module):
         ## Create the post network to update the pooled features of the set
         self.post_net = DenseNetwork(pooled_dim, **post_net_kwargs)
 
-    def forward(self, tensor: T.tensor, mask: T.BoolTensor):
+    def forward(self, tensor: T.tensor, mask: T.BoolTensor, ctxt: Union[T.Tensor, list] = None):
         """The expected shapes of the inputs are
-        - tensor: batch x set x features
-        - mask: batch x set
+        - tensor: batch x setsize x features
+        - mask: batch x setsize
+        - ctxt: batch x features
         """
 
         ## Pass the non_zero values through the feature network
-        feat_outs = pass_with_mask(tensor, self.feat_net, mask)
+        feat_outs = pass_with_mask(tensor, self.feat_net, mask, context=ctxt)
 
         ## For attention
         if self.pool_type == "attn":
+<<<<<<< HEAD
 
             ## Calculate the weights using using -infinite padding
             attn_outs = pass_with_mask(tensor, self.attn_net, mask, padval=-T.inf)
@@ -276,8 +294,23 @@ class DeepSet(nn.Module):
                 attn_outs = F.softplus(attn_outs)  ## Weighted sum
             if self.attn_type == "raw":
                 attn_outs = T.nan_to_num(attn_outs, neginf=0)  ## Change -inf padding
+=======
+            attn_outs = pass_with_mask(
+                tensor,
+                self.attn_net,
+                mask,
+                context=ctxt,
+                padval=0 if self.attn_type == "raw" else -T.inf,
+            )
 
-            ## Broadcast the attention to get the multiple poolings
+            ## Apply either a softmax for weighted mean or softplus for weighted sum
+            if self.attn_type == "mean":
+                attn_outs = F.softmax(attn_outs, dim=-2)
+            elif self.attn_type == "sum":
+                attn_outs = F.softplus(attn_outs)
+>>>>>>> yggBranch
+
+            ## Broadcast the attention to get the multiple poolings and sum
             feat_outs = (
                 (feat_outs.unsqueeze(-1) * attn_outs.unsqueeze(-2))
                 .flatten(start_dim=-2)

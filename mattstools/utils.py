@@ -8,7 +8,7 @@ import json
 import yaml
 import argparse
 from pathlib import Path
-from typing import Any, Union
+from typing import Any, Union, Tuple
 import numpy as np
 
 from pickle import load, dump
@@ -19,6 +19,122 @@ from sklearn.preprocessing import (
     PowerTransformer,
     QuantileTransformer,
 )
+
+
+def get_standard_configs(
+    def_train: str = "config/data.yaml",
+    def_netw: str = "config/netw.yaml",
+    def_data: str = "config/train.yaml",
+) -> Tuple[dict, dict, dict]:
+    """Loads, modifies, and returns three configuration dictionaries using command
+    line arguments for a basic training setup
+    - For configuring the dataset, network and training scheme
+    - One can set the names of the config files to load
+    - One can then modify the returned dictionaries using additional arguments
+
+    Any extra arguments can be manually added in each project
+    args:
+        def_train: Path to default train config file
+        def_netw: Path to default netw config file
+        def_data: Path to default data config file
+    """
+    print("Loading config files")
+
+    parser = argparse.ArgumentParser()
+
+    ## Config files
+    parser.add_argument(
+        "--data_config",
+        type=str,
+        default=def_train,
+        help="Path to config file to use as a template for data preperation",
+    )
+    parser.add_argument(
+        "--netw_config",
+        type=str,
+        default=def_netw,
+        help="Path to config file to use as a template for network construction",
+    )
+    parser.add_argument(
+        "--train_config",
+        type=str,
+        default=def_data,
+        help="Path to config file to use as a template for training scheme",
+    )
+
+    ## Network base kwargs
+    parser.add_argument(
+        "--name", type=str, help="The name to use for saving the network"
+    )
+    parser.add_argument(
+        "--save_dir", type=str, help="The directory to use for saving the network"
+    )
+
+    ## Learning scheme
+    parser.add_argument(
+        "--lr", type=float, help="Learning rate given to optimiser (max for cyclic)"
+    )
+    parser.add_argument(
+        "--sched_name", type=float, help="Name of the learning rate scheduler"
+    )
+    parser.add_argument(
+        "--b_size", type=int, help="Number of samples per training batch"
+    )
+    parser.add_argument(
+        "--n_workers", type=int, help="Number of parellel threads to load the batches"
+    )
+    parser.add_argument(
+        "--resume",
+        type=str2bool,
+        help="Resume the latest training checkpoint",
+        nargs="?",
+        const=True,
+        default=False,
+    )
+    parser.add_argument(
+        "--tqdm_quiet",
+        type=str2bool,
+        help="Silences the tqdm output for logging",
+        nargs="?",
+        const=True,
+        default=False,
+    )
+
+    ## Load the arguments
+    args, _ = parser.parse_known_args()
+
+    ## Load previous configs if resuming, otherwise keep defaults
+    if args.resume:
+        args.data_conf = Path(args.save_dir, args.name, "config/data.yaml")
+        args.net_conf = Path(args.save_dir, args.name, "config/netw.yaml")
+        args.train_conf = Path(args.save_dir, args.name, "config/train.yaml")
+
+    ## Load the config dictionaries
+    data_conf, net_conf, train_conf = load_yaml_files(
+        [args.data_config, args.netw_config, args.train_config]
+    )
+
+    ## Remove all yaml anchors
+    print("- Removing yaml anchors")
+    data_conf = remove_keys_starting_with(data_conf, "__")
+    net_conf = remove_keys_starting_with(net_conf, "__")
+    train_conf = remove_keys_starting_with(train_conf, "__")
+
+    ## Some arguments are identified by the exact keys in each dict
+    args_into_conf(args, train_conf, "b_size")
+    args_into_conf(args, train_conf, "n_workers")
+    if args.resume:
+        args_into_conf(args, train_conf, "resume")
+    if args.tqdm_quiet:
+        args_into_conf(args, train_conf, "tqdm_quiet")
+
+    ## Other arguments need more manual placement in the configuration dicts
+    args_into_conf(args, net_conf, "name", "base_kwargs/name")
+    args_into_conf(args, net_conf, "save_dir", "base_kwargs/save_dir")
+    args_into_conf(args, train_conf, "sched_name", "sched_dict/name")
+    args_into_conf(args, train_conf, "lr", "optim_dict/lr")
+
+    return data_conf, net_conf, train_conf
 
 
 def standardise(data, means, stds):
@@ -35,7 +151,7 @@ def merge_dict(source: dict, update: dict) -> dict:
     """Merges two deep dictionaries recursively
     - Apply to small dictionaries please!
     args:
-        source: The source dict, will be updated in place
+        source: The source dict, will be copied (not modified)
         update: Will be used to overwrite and append values to the source
     """
     ## Make a copy of the source dictionary
@@ -90,26 +206,32 @@ def set_in_dict(data_dict: dict, key_list: list, value: Any):
     get_from_dict(data_dict, key_list[:-1])[key_list[-1]] = value
 
 
-def key_add(pref: str, dic: dict) -> dict:
+def key_prefix(pref: str, dic: dict) -> dict:
     """Adds a prefix to each key in a dictionary"""
     return {f"{pref}{key}": val for key, val in dic.items()}
 
 
-def key_change(dict, old_key, new_key, new_value=None):
+def key_change(dic: dict, old_key: str, new_key: str, new_value=None)->None:
     """Changes the key used in a dictionary inplace only if it exists"""
 
     ## If the original key is not present, nothing changes
-    if old_key not in dict:
+    if old_key not in dic:
         return
 
-    ## Use the old value and pop, really just a jey change
+    ## Use the old value and pop. Essentially a rename
     if new_value is None:
-        dict[new_key] = dict.pop(old_key)
+        dic[new_key] = dic.pop(old_key)
 
-    ## Both a key change AND value change! Essentially a replacement
+    ## Both a key change AND value change. Essentially a replacement
     else:
-        dict[new_key] = new_value
-        del dict[old_key]
+        dic[new_key] = new_value
+        del dic[old_key]
+
+def remove_keys_starting_with(dic: dict, match: str)->dict:
+    """Removes all keys from the dictionary if they start with
+    - Returns a copy of the dictionary
+    """
+    return {key:val for key, val in dic.items() if key[:len(match)] != match}
 
 
 def interweave(arr_1: np.ndarray, arr_2: np.ndarray) -> np.ndarray:
@@ -128,29 +250,9 @@ def interweave(arr_1: np.ndarray, arr_2: np.ndarray) -> np.ndarray:
     return arr_comb
 
 
-def sum_other_axes(array: np.ndarray, axis: int) -> np.ndarray:
-    """Applies numpy sum to all axes except one in an array"""
-    axes_for_sum = [i for i in range(len(array.shape))]
-    axes_for_sum.pop(axis)
-    return array.sum(axis=tuple(axes_for_sum))
-
-
-def mid_points(array: np.ndarray) -> np.ndarray:
-    """Return the midpoints of an array, one smaller"""
-    return (array[1:] + array[:-1]) / 2
-
-
-def undo_mid(array: np.ndarray) -> np.ndarray:
-    """Undo the midpoints, trying to get the bin boundaries"""
-    array = np.array(array)  ## Have to include this because of pandas
-    half_bw = (array[1] - array[0]) / 2  ## Assumes constant bin widths
-    array = np.insert(array + half_bw, 0, array[0] - half_bw)
-    return array
-
-
-def chunk_given_size(array: np.ndarray, size: int) -> np.ndarray:
-    """Split an array using a given size, last one will be smaller"""
-    return np.split(array, np.arange(size, len(array), size))
+def chunk_given_size(a: np.ndarray, size: int, axis: int = 0)->  np.ndarray:
+    """Split an array into chunks along an axis, the final chunk will be smaller"""
+    return np.split(a, np.arange(size, a.shape[axis], size), axis = axis)
 
 
 def str2bool(mystring: str) -> bool:
@@ -176,14 +278,14 @@ def load_yaml_files(files: Union[list, tuple, str]) -> tuple:
     ## If the input is not a list then it returns a dict
     if isinstance(files, (str, Path)):
         with open(files, encoding="utf-8") as f:
-            return yaml.full_load(f)
+            return yaml.safe_load(f)
 
     opened = []
 
     ## Load each file using yaml
     for fnm in files:
         with open(fnm, encoding="utf-8") as f:
-            opened.append(yaml.full_load(f))
+            opened.append(yaml.safe_load(f))
 
     return tuple(opened)
 
