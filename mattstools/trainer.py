@@ -318,7 +318,7 @@ class Trainer:
 
         ## Use the running losses to update the total history, then reset
         for lnm, running in self.run_loss.items():
-            self.loss_hist[lnm][mode].append(running.avg.item())
+            self.loss_hist[lnm][mode].append(running.avg)
             running.reset()
 
     def count_epochs(self) -> None:

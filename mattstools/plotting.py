@@ -189,7 +189,7 @@ def plot_multi_hists(
 
     ## Only do legend on the first axis
     if leg:
-        axes[0].legend()
+        axes[0].legend(prop={"family": "monospace"})
 
     ## Save the image as a png
     fig.tight_layout()
@@ -444,7 +444,7 @@ def parallel_plot(
 
     ## Change the plot layout and save
     plt.tight_layout()
-    plt.subplots_adjust(wspace=0, left=0.05, right=0.95)
+    plt.subplots_adjust(wspace=0, right=0.95)
     plt.savefig(Path(path + "_" + rank_col).with_suffix(".png"))
 
 

@@ -251,9 +251,34 @@ def interweave(arr_1: np.ndarray, arr_2: np.ndarray) -> np.ndarray:
     return arr_comb
 
 
+def sum_other_axes(array: np.ndarray, axis: int) -> np.ndarray:
+    """Applies numpy sum to all axes except one in an array"""
+    axes_for_sum = [i for i in range(len(array.shape))]
+    axes_for_sum.pop(axis)
+    return array.sum(axis=tuple(axes_for_sum))
+
+
+def mid_points(array: np.ndarray) -> np.ndarray:
+    """Return the midpoints of an array, one smaller"""
+    return (array[1:] + array[:-1]) / 2
+
+
+def undo_mid(array: np.ndarray) -> np.ndarray:
+    """Undo the midpoints, trying to get the bin boundaries"""
+    array = np.array(array)  ## Have to include this because of pandas
+    half_bw = (array[1] - array[0]) / 2  ## Assumes constant bin widths
+    array = np.insert(array + half_bw, 0, array[0] - half_bw)
+    return array
+
+
 def chunk_given_size(a: np.ndarray, size: int, axis: int = 0) -> np.ndarray:
     """Split an array into chunks along an axis, the final chunk will be smaller"""
     return np.split(a, np.arange(size, a.shape[axis], size), axis=axis)
+
+
+def apply_mask(arrays: list, mask: np.ndarray):
+    """Applies a mask to a list of arrays"""
+    return [a[mask] for a in arrays]
 
 
 def str2bool(mystring: str) -> bool:
