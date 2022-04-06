@@ -84,7 +84,7 @@ def plot_multi_hists(
     logy: bool = False,
     ylim: list = None,
     hor: bool = True,
-    scale: int = 4,
+    scale: int = 5,
     leg: bool = True,
     incl_zeros: bool = True,
     already_hists: bool = False,
@@ -265,13 +265,14 @@ def parallel_plot(
     groupby_methods: list = None,
     highlight_best: bool = False,
     do_sort: bool = True,
+    alpha: float = 0.3
 ) -> None:
     """
     Create a parallel coordinates plot from pandas dataframe
     args:
         path: Location of output plot
         df: dataframe
-        cols: columns to use for axes, final column will be used for colour ranking
+        cols: columns to use along the x axis
     kwargs:
         rank_col: The name of the column to use for ranking, otherwise takes last
         cmap: Colour palette to use for ranking of lines
@@ -279,7 +280,8 @@ def parallel_plot(
         curved_extend: Fraction extension in y axis, adjust to contain curvature
         groupby_methods: List of aggr methods to include for each categorical column
         highlight_best: Highlight the best row with a darker line
-        do_sort: Sort the dataframe by rank column, best configs are more visible
+        do_sort: Sort dataframe by rank column, best are drawn last -> more visible
+        alpha: Opacity of each line
     """
 
     ## Make sure that the rank column is the final column in the list
@@ -387,7 +389,7 @@ def parallel_plot(
         ## Keyword arguments for drawing the line
         lne_kwargs = {
             "color": colmap(y_matrix[-1, lne]),
-            "alpha": 1 if lne == best_idx else 0.3,
+            "alpha": 1 if lne == best_idx else alpha,
             "linewidth": 4 if lne == best_idx else None,
         }
 

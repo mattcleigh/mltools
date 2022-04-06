@@ -46,9 +46,14 @@ class RunningAverage:
         return (self.sum / self.count).item()
 
 
-def calc_rmse(value_a: T.Tensor, value_b: T.Tensor, dim: int = 0) -> T.Tensor:
+def rms(tens: T.Tensor, dim: int = 0) -> T.Tensor:
+    """Returns RMS of a tensor along a dimension"""
+    return tens.pow(2).mean(dim=dim).sqrt()
+
+
+def rmse(tens_a: T.Tensor, tens_b: T.Tensor, dim: int = 0) -> T.Tensor:
     """Returns RMSE without having to go through torch's warning filled mseloss method"""
-    return (value_a - value_b).pow(2).mean(dim=dim).sqrt()
+    return (tens_a - tens_b).pow(2).mean(dim=dim).sqrt()
 
 
 def get_act(name: str) -> nn.Module:
