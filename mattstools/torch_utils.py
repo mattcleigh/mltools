@@ -308,6 +308,14 @@ def ctxt_from_mask(context: Union[list, T.Tensor], mask: T.BoolTensor) -> T.Tens
     return smart_cat(all_context)
 
 
+def np_group_by(a: np.ndarray)->np.ndarray:
+    """A groupby method which runs over a numpy array, binning by the first column
+    and making many seperate arrays as results
+    """
+    a = a[a[:, 0].argsort()]
+    return np.split(a[:, 1:], np.unique(a[:, 0], return_index=True)[1][1:])
+
+
 def pass_with_mask(
     inputs: T.Tensor,
     module: nn.Module,
@@ -326,7 +334,7 @@ def pass_with_mask(
         padval: A value to pad the outputs with
     """
 
-    ## Get the output dimension from the passed module
+    ## Get the output dimension from the passed module (mine=outp_dim, torch=features)
     if hasattr(module, "outp_dim"):
         outp_dim = module.outp_dim
     elif hasattr(module, "out_features"):

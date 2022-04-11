@@ -207,6 +207,13 @@ class DenseNetwork(nn.Module):
 
         return inputs
 
+    def __repr__(self):
+        string = "\n  (inp): " + repr(self.input_block) + "\n"
+        for i, h_block in enumerate(self.hidden_blocks):
+            string += f"  (h-{i+1}): " + repr(h_block) + "\n"
+        if self.do_out:
+            string += "  (out): " + repr(self.output_block)
+        return string
 
 class DeepSet(nn.Module):
     """A deep set network that can provide attention pooling"""
@@ -214,6 +221,7 @@ class DeepSet(nn.Module):
     def __init__(
         self,
         inpt_dim: int,
+        outp_dim: int,
         pool_type: str = "mean",
         attn_type: str = "mean",
         feat_net_kwargs=None,
@@ -225,13 +233,8 @@ class DeepSet(nn.Module):
                     inpt_dim: The number of input features
                     outp_dim: The number of desired output featues
                 kwargs:
-        <<<<<<< HEAD
-                    pool_type: The type of set pooling applied: mean, sum, or attn
-                    attn_type: The type of attention: mean or sum
-        =======
-                    pool_type: The type of set pooling applied, mean, sum, max or attention
-                    attn_type: The type of attention, mean, sum, raw
-        >>>>>>> yggBranch
+                    pool_type: The type of set pooling applied; mean, sum, max or attn
+                    attn_type: The type of attention; mean, sum, raw
                     feat_net_kwargs: Keyword arguments for the feature network
                     attn_net_kwargs: Keyword arguments for the attention network
                     post_net_kwargs: Keyword arguments for the post network
@@ -250,7 +253,7 @@ class DeepSet(nn.Module):
 
         ## Save the class attributes
         self.inpt_dim = inpt_dim
-        self.outp_dim = post_net_kwargs["outp_dim"]  ## Must be present!
+        self.outp_dim = outp_dim
         self.pool_type = pool_type
         self.attn_type = attn_type
 
@@ -268,7 +271,7 @@ class DeepSet(nn.Module):
             pooled_dim *= self.attn_net.outp_dim
 
         ## Create the post network to update the pooled features of the set
-        self.post_net = DenseNetwork(pooled_dim, **post_net_kwargs)
+        self.post_net = DenseNetwork(pooled_dim, outp_dim, **post_net_kwargs)
 
     def forward(
         self, tensor: T.tensor, mask: T.BoolTensor, ctxt: Union[T.Tensor, list] = None

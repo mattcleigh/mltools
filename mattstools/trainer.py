@@ -2,8 +2,10 @@
 Base class for training network
 """
 
+from ast import Sub
 import json
 from pathlib import Path
+from re import L
 from typing import Union
 from functools import partialmethod
 
@@ -13,7 +15,7 @@ import matplotlib.pyplot as plt
 
 import torch as T
 import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader, IterableDataset
+from torch.utils.data import Dataset, DataLoader, IterableDataset, Subset
 
 from mattstools.plotting import plot_multi_loss
 from mattstools.torch_utils import (
@@ -31,8 +33,8 @@ class Trainer:
     def __init__(
         self,
         network,
-        train_set: Union[Dataset, IterableDataset],
-        valid_set: Union[Dataset, IterableDataset] = None,
+        train_set: Union[Subset, Dataset, IterableDataset],
+        valid_set: Union[Subset, Dataset, IterableDataset] = None,
         b_size: int = 32,
         patience: int = 100,
         max_epochs: int = 100,
@@ -90,24 +92,23 @@ class Trainer:
             "drop_last": True,
             "pin_memory": True,
         }
-        tload_kwargs = loader_kwargs.copy()
-        vload_kwargs = loader_kwargs.copy()
+
+        ## Add a custom collate function to the kwargs if present
+        ## But if the set is a pytorch subset we must look one level up
+        base_set = train_set.dataset if isinstance(train_set, Subset) else train_set
+        loader_kwargs["collate_fn"] = getattr(base_set, "col_fn", None)
+
+        ## Initialise the validation loader
+        self.valid_loader = (
+            DataLoader(valid_set, **loader_kwargs) if self.has_v else None
+        )
 
         ## For mapable datasets we can add a shuffle option
         if isinstance(train_set, Dataset):
-            tload_kwargs["shuffle"] = True
-            tload_kwargs["shuffle"] = False
-
-        ## Add a custom collate function to the kwargs if present
-        if hasattr(train_set, "col_fn"):
-            loader_kwargs["collate_fn"] = train_set.col_fn
+            loader_kwargs["shuffle"] = True
 
         ## Initialise the loaders, dont shuffle for iterable datasets
         self.train_loader = DataLoader(train_set, **loader_kwargs)
-        if self.has_v:
-            self.valid_loader = DataLoader(valid_set, **vload_kwargs)
-        else:
-            self.valid_loader = None
 
         ## Create a history of train and validation losses for early stopping
         self.loss_hist = {
@@ -176,7 +177,7 @@ class Trainer:
             n_iter: The number of batch passes to test
             scheme: The lr increase scheme, either 'lin' or 'exp'
         """
-        print("\nExploding the learning rate from {init_lr} to {finl_lr}")
+        print(f"\nExploding the learning rate from {init_lr} to {finl_lr}")
 
         ## Turn off the scheduler and turn on quick mode silence tqdm
         self.scheduler = None
