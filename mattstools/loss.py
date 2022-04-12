@@ -100,6 +100,7 @@ def masked_dist_loss(
     pc_a_mask: T.BoolTensor,
     pc_b: T.Tensor,
     pc_b_mask: T.BoolTensor,
+    reduce: str = "mean",
 ) -> T.Tensor:
     """Calculates the distribution loss between two masked pointclouds
     - This is done by using the masks as weights (compatible with the geomloss package)
@@ -111,6 +112,8 @@ def masked_dist_loss(
         pc_a_mask: The mask of the first point cloud
         pc_b: The second point cloud
         pc_b_mask: The mask of the second point cloud
+    kwargs:
+        reduce: If the loss should be reduced along the batch dimension
     """
 
     ## Calculate the weights by normalising the mask for each sample
@@ -118,9 +121,14 @@ def masked_dist_loss(
     b_weights = pc_b_mask.float() / pc_b_mask.sum(dim=-1, keepdim=True)
 
     ## Calculate the loss using these weights
-    loss = loss_fn(a_weights, pc_a, b_weights, pc_b).mean()
+    loss = loss_fn(a_weights, pc_a, b_weights, pc_b)
 
-    return loss
+    if reduce == "mean":
+        return loss.mean()
+    elif reduce == "none":
+        return loss
+    else:
+        raise ValueError("Unknown reduce option for masked_dist_loss")
 
 
 # class GANLoss(nn.Module):

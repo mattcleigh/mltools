@@ -83,6 +83,10 @@ class MLPBlock(nn.Module):
         """
 
         ## Concatenate the context information to the input of the block
+        if self.ctxt_dim and ctxt is None:
+            raise ValueError(
+                "Was expecting contextual information but none has been provided!"
+            )
         temp = T.cat([input, ctxt], dim=-1) if self.ctxt_dim else input
 
         ## Pass through each transform in the block
