@@ -141,19 +141,17 @@ def plot_multi_hists(
 
     ## Cycle through each axis
     for i in range(n_axis):
-
         b = bins[i]
 
         ## Reduce bins based on number of unique datapoints
         ## If the number of datapoints is less than 10 then we assume interger types
-        b = bins[i]
-        if isinstance(bins, str) and not already_hists:
-            unq = np.unique(data_list[0][:, i])[0]
+        if isinstance(b, str) and not already_hists:
+            unq = np.unique(data_list[0][:, i])
             n_unique = len(unq)
-            if n_unique < 10:
-                b = (n_unique[1:] - n_unique[2:]) / 2  ## Use midpoints
-                b.append(unq.max() + (b[-1] - b[-2]) / 2)  ## Add final bin
-                b.insert(0, unq.min() - (b[1] + b[0]) / 2)  ## Add initial bin
+            if 1 < n_unique < 10:
+                b = (unq[1:] - unq[:-1]) / 2  ## Use midpoints
+                b = np.append(b, unq.max() + unq.max() - b[-1])  ## Add final bin
+                b = np.insert(b, 0, unq.min() + unq.min() - b[0])  ## Add initial bin
 
         ## Cycle through the different data arrays
         for j in range(n_data):
