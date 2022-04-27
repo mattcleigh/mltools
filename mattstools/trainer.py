@@ -2,10 +2,8 @@
 Base class for training network
 """
 
-from ast import Sub
 import json
 from pathlib import Path
-from re import L
 from typing import Union
 from functools import partialmethod
 
@@ -15,7 +13,7 @@ import matplotlib.pyplot as plt
 
 import torch as T
 import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader, IterableDataset, Subset
+from torch.utils.data import Dataset, DataLoader, IterableDataset, Subset, random_split
 
 from mattstools.plotting import plot_multi_loss
 from mattstools.torch_utils import (
@@ -35,6 +33,7 @@ class Trainer:
         network,
         train_set: Union[Subset, Dataset, IterableDataset],
         valid_set: Union[Subset, Dataset, IterableDataset] = None,
+        make_val: bool = False,
         b_size: int = 32,
         patience: int = 100,
         max_epochs: int = 100,
@@ -47,6 +46,7 @@ class Trainer:
         chkp_every: int = 10,
         resume: bool = False,
         tqdm_quiet: bool = False,
+        val_frac: float = 0.1,
     ) -> None:
         """
         args:
@@ -54,6 +54,7 @@ class Trainer:
             train_set:   Dataset on which to perform batched gradient descent
         kwargs:
             valid_set:   Dataset for validation loss and early stopping conditions
+            make_val:    If the data should be split into train and val using val_frac
             b_size:      Batch size to use in the minibatch gradient descent
             patience:    Early stopping patience calculated using the validation set
             max_epochs:  Maximum number of epochs to train for
@@ -66,6 +67,9 @@ class Trainer:
             chkp_every:  Save a checkpoint of the net/opt/schd/loss every X epochs
             resume:      Load the 'latest' checkpoint of the trainer object
             tqdm_quiet:  Prevents tqdm loading bars, good for gridjobs writing to logs
+            val_frac:    The fraction of events to use as a holdout
+                Only applicable if valid set is not explicitly provided
+                and make_val is set to true
 
         """
         print("\nInitialising the trainer")
@@ -77,13 +81,26 @@ class Trainer:
         ## Save the network
         self.network = network
 
-        ## Report on the number of files/samples used
+        ## Check if there is a validation set present or if we need to manually split
         self.has_v = not (valid_set is None)
+        if self.has_v and make_val: ## If both splitting and valid are present
+            print("Warning: Requested splitting of data but also gave val set!")
+            print("Will continue with the provided val set and not split!")
+        elif (not self.has_v) and make_val: ## If splitting is required
+            print(f"Manually splitting of validation set using fraction: {val_frac}")
+            if val_frac < 0 or val_frac > 1:
+                raise ValueError(f"The passed val_frac is out of bounds: {val_frac}")
+            v_size = int(val_frac * len(train_set))
+            t_size = len(train_set) - v_size
+            train_set, valid_set = random_split(train_set, [t_size, v_size])
+            self.has_v = True
+
+        ## Report on the number of files/samples used
         print(f"train set: {len(train_set):7} samples")
         if self.has_v:
             print(f"valid set: {len(valid_set):7} samples")
         else:
-            print("No validation set added")
+            print("No validation set provided or requested")
 
         ## Create the common dataloader arguments
         loader_kwargs = {
@@ -93,21 +110,19 @@ class Trainer:
             "pin_memory": True,
         }
 
-        ## Add a custom collate function to the kwargs if present
-        ## But if the set is a pytorch subset we must look one level up
+        ## Add a custom collate function to the kwargs if present in the train_set
+        ## But if the set is a pytorch subset we must look one level up!
         base_set = train_set.dataset if isinstance(train_set, Subset) else train_set
         loader_kwargs["collate_fn"] = getattr(base_set, "col_fn", None)
 
-        ## Initialise the validation loader
+        ## Initialise the validation loader first as it is deterministic
         self.valid_loader = (
             DataLoader(valid_set, **loader_kwargs) if self.has_v else None
         )
 
-        ## For mapable datasets we can add a shuffle option
-        if isinstance(train_set, Dataset):
+        ## For mapable datasets we can add a shuffle option to the train loader
+        if not isinstance(train_set, IterableDataset):
             loader_kwargs["shuffle"] = True
-
-        ## Initialise the loaders, dont shuffle for iterable datasets
         self.train_loader = DataLoader(train_set, **loader_kwargs)
 
         ## Create a history of train and validation losses for early stopping
@@ -144,12 +159,12 @@ class Trainer:
         self.bad_epochs = 0
         self.best_epoch = 0
 
-        ## For quick_mode operations
+        ## For quick_mode operations (one batch pass per epoch)
         self.quick_mode = quick_mode
         if self.quick_mode:
             print(" - quickmode activated (should be only for debugging!)")
 
-        ## Turning off tqdm
+        ## Turning off tqdm (for sbatch logfiles)
         if tqdm_quiet:
             print(" - disabling tqdm outputs")
             tqdm.__init__ = partialmethod(tqdm.__init__, disable=True)

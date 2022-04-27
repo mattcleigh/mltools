@@ -137,3 +137,9 @@ class MyNetBase(nn.Module):
             ["data", "netw", "train"],
             [data_conf, net_conf, train_conf],
         )
+
+    def set_device(self, device):
+        """Sets the device attribute and moves all parameters
+        """
+        self.device = sel_device(device)
+        self.to(self.device)

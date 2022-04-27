@@ -52,7 +52,7 @@ def rms(tens: T.Tensor, dim: int = 0) -> T.Tensor:
 
 
 def rmse(tens_a: T.Tensor, tens_b: T.Tensor, dim: int = 0) -> T.Tensor:
-    """Returns RMSE without having to go through torch's warning filled mseloss method"""
+    """Returns RMSE without using torch's warning filled mseloss method"""
     return (tens_a - tens_b).pow(2).mean(dim=dim).sqrt()
 
 
