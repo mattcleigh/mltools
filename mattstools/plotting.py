@@ -149,7 +149,7 @@ def plot_multi_hists(
             unq = np.unique(data_list[0][:, i])
             n_unique = len(unq)
             if 1 < n_unique < 10:
-                b = (unq[1:] - unq[:-1]) / 2  ## Use midpoints
+                b = (unq[1:] + unq[:-1]) / 2  ## Use midpoints
                 b = np.append(b, unq.max() + unq.max() - b[-1])  ## Add final bin
                 b = np.insert(b, 0, unq.min() + unq.min() - b[0])  ## Add initial bin
 
