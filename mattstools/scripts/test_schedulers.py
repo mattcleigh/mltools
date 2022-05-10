@@ -37,7 +37,7 @@ def main():
         plt.plot(lrs, label=schd_nm)
 
     plt.legend()
-    plt.xlabel("batch passes")
+    plt.xlabel("batch passes (100 per epoch)")
     plt.ylabel("learning rate")
     plt.savefig("schedulers.png")
 

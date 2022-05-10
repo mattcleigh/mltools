@@ -196,9 +196,12 @@ def print_dict(dic: dict, indent: int = 1) -> None:
     print(json.dumps(dic, indent=indent))
 
 
-def get_from_dict(data_dict: dict, key_list: list) -> Any:
+def get_from_dict(data_dict: dict, key_list: list, default = None) -> Any:
     """Returns a value from a nested dictionary using list of keys"""
-    return reduce(operator.getitem, key_list, data_dict)
+    try:
+        return reduce(operator.getitem, key_list, data_dict)
+    except:
+        return default
 
 
 def set_in_dict(data_dict: dict, key_list: list, value: Any):

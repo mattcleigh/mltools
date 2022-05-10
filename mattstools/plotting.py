@@ -17,6 +17,14 @@ from sklearn.decomposition import PCA
 
 from mattstools.utils import mid_points, undo_mid
 
+## Some defaults for my plots to make them look nicer
+plt.rcParams['xaxis.labellocation'] = "right"
+plt.rcParams['yaxis.labellocation'] = "top"
+plt.rcParams['legend.edgecolor'] = "1"
+plt.rcParams['legend.loc'] = "upper left"
+plt.rcParams['legend.framealpha'] = 0.0
+plt.rcParams['axes.labelsize'] = "large"
+
 
 def plot_multi_loss(
     path: Path,
@@ -88,6 +96,13 @@ def plot_multi_hists(
     leg: bool = True,
     incl_zeros: bool = True,
     already_hists: bool = False,
+    col_fills: list = None,
+    col_colours: list = None,
+    col_kwargs: dict = None,
+    div: float = None,
+    incl_overflow: bool = False,
+    incl_underflow: bool = True,
+    do_step: bool = True,
 ):
     """Plot multiple histograms given a list of 2D tensors/arrays
     - Performs the histogramming here
@@ -102,11 +117,18 @@ def plot_multi_hists(
         normed: If the histograms are to be a density plot
         bins: The bins to use for each axis, can use numpy's strings
         logy: If we should use the log in the y-axis
+        ylim: The y limits for all plots
         hor: If the multiplot should be horizontal or vertical
         scale: The size in inches for each subplot
         leg: If the legend should be plotted
         incl_zeros: If zero values should be included in the histograms or ignored
         already_hists: If the data is already histogrammed and doesnt need to be binned
+        col_fills: Bool for each column/histogram, if it should be filled
+        col_colours: Color for each column/histogram
+        col_kwargs: Additional keyword arguments for the line for each column
+        incl_overflow: Have the final bin include the overflow
+        incl_underflow: Have the first bin include the underflow
+        do_step: If the data should be represented as a step plot
     """
 
     ## Make sure we are using a pathlib type variable
@@ -121,10 +143,16 @@ def plot_multi_hists(
         col_labels = [col_labels]
     if not isinstance(bins, list):
         bins = len(data_list[0][0]) * [bins]
+    if not isinstance(col_colours, list):
+        col_colours = len(data_list) * [col_colours]
 
     ## Check the number of histograms to plot
     n_data = len(data_list)
     n_axis = len(data_list[0][0])
+
+    ## Make sure the there are not too many subplots
+    if n_axis > 20:
+        raise RuntimeError("You are asking to create more than 20 subplots!")
 
     ## Create the figure and axes listss
     dims = np.array([n_axis, 1]) if hor else np.array([1, n_axis])
@@ -162,10 +190,42 @@ def plot_multi_hists(
 
             ## Calculate histogram of the column and remember the bins
             else:
-                histo, b = np.histogram(data_list[j][:, i], b, density=normed)
+
+                ## Get the bins for the histogram based on the first plot
+                if j == 0:
+                    b = np.histogram_bin_edges(data_list[j][:, i], bins=b)
+
+                ## Apply overflow and underflow (make a copy)
+                data = np.copy(data_list[j][:, i])
+                if incl_overflow:
+                    data = np.minimum(data, b[-1])
+                if incl_underflow:
+                    data = np.maximum(data, b[0])
+
+                ## Calculate the histogram
+                histo, _ = np.histogram(data, b, density=normed)
+
+            ## Apply the division factor
+            if div is not None:
+                histo = histo / div
+
+            ## Get the additional keywork arguments
+            if col_kwargs is not None:
+                kwargs = {key: val[j] for key, val in col_kwargs.items()}
+            else:
+                kwargs = {}
+
+            ## Plot the fill
+            ydata = [0] + histo.tolist()
+            if col_fills is not None and col_fills[j]:
+                axes[i].fill_between(b, ydata, label=type_labels[j], step="pre" if do_step else None, alpha=0.4, color=col_colours[j])
 
             ## Plot the histogram as a step graph
-            axes[i].step(b, [0] + histo.tolist(), label=type_labels[j])
+            elif do_step:
+                axes[i].step(b, ydata, label=type_labels[j], color=col_colours[j], **kwargs)
+
+            else:
+                axes[i].step(b, ydata, label=type_labels[j], color=col_colours[j], **kwargs)
 
         ## Set the x_axis label and limits
         axes[i].set_xlabel(col_labels[i])
@@ -179,15 +239,16 @@ def plot_multi_hists(
             axes[i].set_yscale("log")
 
         ## Set the y axis, only on first if horizontal
-        if not hor or i == 0:
-            if normed:
-                axes[i].set_ylabel("Normalised Entries")
-            else:
-                axes[i].set_ylabel("Entries")
+        if normed:
+            axes[i].set_ylabel("Normalised Entries")
+        elif div is not None:
+            axes[i].set_ylabel("a.u.")
+        else:
+            axes[i].set_ylabel("Entries")
 
     ## Only do legend on the first axis
     if leg:
-        axes[0].legend(prop={"family": "monospace"})
+        axes[0].legend()
 
     ## Save the image as a png
     fig.tight_layout()
@@ -263,7 +324,8 @@ def parallel_plot(
     groupby_methods: list = None,
     highlight_best: bool = False,
     do_sort: bool = True,
-    alpha: float = 0.3
+    alpha: float = 0.3,
+    class_thresh = 10,
 ) -> None:
     """
     Create a parallel coordinates plot from pandas dataframe
@@ -280,6 +342,7 @@ def parallel_plot(
         highlight_best: Highlight the best row with a darker line
         do_sort: Sort dataframe by rank column, best are drawn last -> more visible
         alpha: Opacity of each line
+        class_thresh: Minimum unique values before ticks are treated as classes
     """
 
     ## Make sure that the rank column is the final column in the list
@@ -308,8 +371,8 @@ def parallel_plot(
         ## Pull the column data from the dataframe
         col_data = df[col]
 
-        ## For continuous data (more than 10 unique values)
-        if (col_data.dtype == float) & (len(np.unique(col_data)) > 10):
+        ## For continuous data (more than class_thresh unique values)
+        if (col_data.dtype == float) & (len(np.unique(col_data)) > class_thresh):
 
             ## Scale the range of data to [0,1] and save to matrix
             y_min = np.min(col_data)
@@ -324,7 +387,7 @@ def parallel_plot(
             tick_values = np.linspace(0, 1, nticks, endpoint=True)
             ax_info[col] = [tick_labels, tick_values]
 
-        ## For categorical data (less than 10 unique values)
+        ## For categorical data (less than class_thresh unique values)
         else:
 
             ## Set the type for the data to categorical to pull out stats using pandas
@@ -427,7 +490,7 @@ def parallel_plot(
     ## Create the colour bar on the far right side of the plot
     norm = matplotlib.colors.Normalize(0, 1)  ## Map data into the colour range [0, 1]
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)  ## Required for colourbar
-    cbar = plt.colorbar(
+    cbar = fig.colorbar(
         sm,
         pad=0,
         ticks=ax_info[rank_col][1],  ## Uses ranking attribute
@@ -436,11 +499,10 @@ def parallel_plot(
         extendfrac=y_ax_ext,
     )
 
-    ## The colour bar also needs tick labels, x labels and y limits extended
+    ## The colour bar also needs axis labels
     cbar.ax.set_yticklabels(ax_info[rank_col][0])
-    cbar.ax.set_xlabel(rank_col)
-    if curved:
-        cbar.ax.set_ylim(0 - curved_extend, 1 + curved_extend)
+    cbar.ax.set_xlabel(rank_col) # For some reason this is not showing up now?
+    cbar.set_label(rank_col)
 
     ## Change the plot layout and save
     plt.tight_layout()
