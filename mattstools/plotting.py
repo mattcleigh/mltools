@@ -14,16 +14,92 @@ from matplotlib.colors import LogNorm
 
 from scipy.interpolate import make_interp_spline
 from sklearn.decomposition import PCA
-
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 from mattstools.utils import mid_points, undo_mid
 
 ## Some defaults for my plots to make them look nicer
-plt.rcParams['xaxis.labellocation'] = "right"
-plt.rcParams['yaxis.labellocation'] = "top"
-plt.rcParams['legend.edgecolor'] = "1"
-plt.rcParams['legend.loc'] = "upper left"
-plt.rcParams['legend.framealpha'] = 0.0
-plt.rcParams['axes.labelsize'] = "large"
+plt.rcParams["font.family"] = "cmr10"
+plt.rcParams["axes.unicode_minus"] = False
+plt.rcParams["axes.formatter.use_mathtext"] = True
+plt.rcParams["mathtext.fontset"] = "cm"
+plt.rcParams["xaxis.labellocation"] = "right"
+plt.rcParams["yaxis.labellocation"] = "top"
+plt.rcParams["legend.edgecolor"] = "1"
+plt.rcParams["legend.loc"] = "upper left"
+plt.rcParams["legend.framealpha"] = 0.0
+plt.rcParams["axes.labelsize"] = "x-large"
+plt.rcParams["axes.titlesize"] = "x-large"
+
+def plot_corr_heatmaps(
+    path: Path,
+    x_vals: np.ndarray,
+    y_vals: np.ndarray,
+    bins: list,
+    xlabel: str,
+    ylabel: str,
+    do_log: bool = True,
+    cmap: str = "coolwarm",
+    incl_line: bool = True,
+    incl_cbar: bool = True,
+    title: str = "",
+    figsize=(6, 5),
+    do_pdf: bool = False
+) -> None:
+    """
+    Plot and save a 2D heatmap, usually for correlation plots
+
+    args:
+        path: Location of the output file
+        x_vals: The values to put along the x-axis, usually truth
+        y_vals: The values to put along the y-axis, usually reco
+        bins: The bins to use, must be [xbins, ybins]
+        xlabel: Label for the x-axis
+        ylabel: Label for the y-axis
+        do_log: If the z axis should be the logarithm
+        cmap: The name of the cmap to use for z values
+        incl_line: If a y=x line should be included to show ideal correlation
+        incl_cbar: Add the colour bar to the axis
+        figsize: The size of the output figure
+        title: Title for the plot
+        do_pdf: If the output should also contain a pdf version
+    """
+
+    ## Create the histogram
+    if len(bins) != 2:
+        bins = [bins, bins]
+    hist, xedges, yedges = np.histogram2d(x_vals, y_vals, bins=bins)
+
+    ## Initialise the figure
+    fig, ax = plt.subplots(1, 1, figsize=figsize)
+    imshow = ax.imshow(
+        np.log(hist.T) if do_log else hist.T,
+        origin="lower",
+        cmap=cmap,
+        extent=[min(xedges), max(xedges), min(yedges), max(yedges)],
+    )
+
+    ## Add line
+    if incl_line:
+        ax.plot([min(xedges), max(xedges)], [min(yedges), max(yedges)], "k--")
+
+    ## Add colourbar
+    if incl_cbar:
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes('right', size='5%', pad=0.05)
+        fig.colorbar(imshow, cax=cax, orientation='vertical')
+
+    ## Axis labels and titles
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    if title != "":
+        ax.set_title(title)
+
+    ## Save the image
+    fig.tight_layout()
+    fig.savefig(path.with_suffix(".png"))
+    if do_pdf:
+        fig.savefig(path.with_suffix(".pdf"))
+    plt.close(fig)
 
 
 def plot_multi_loss(
@@ -96,13 +172,14 @@ def plot_multi_hists(
     leg: bool = True,
     incl_zeros: bool = True,
     already_hists: bool = False,
-    col_fills: list = None,
-    col_colours: list = None,
-    col_kwargs: dict = None,
+    hist_fills: list = None,
+    hist_colours: list = None,
+    hist_kwargs: dict = None,
     div: float = None,
     incl_overflow: bool = False,
     incl_underflow: bool = True,
     do_step: bool = True,
+    as_pdf: bool = False,
 ):
     """Plot multiple histograms given a list of 2D tensors/arrays
     - Performs the histogramming here
@@ -123,12 +200,13 @@ def plot_multi_hists(
         leg: If the legend should be plotted
         incl_zeros: If zero values should be included in the histograms or ignored
         already_hists: If the data is already histogrammed and doesnt need to be binned
-        col_fills: Bool for each column/histogram, if it should be filled
-        col_colours: Color for each column/histogram
-        col_kwargs: Additional keyword arguments for the line for each column
+        hist_fills: Bool for each histogram in data_list, if it should be filled
+        hist_colours: Color for each histogram in data_list
+        hist_kwargs: Additional keyword arguments for the line for each histogram
         incl_overflow: Have the final bin include the overflow
         incl_underflow: Have the first bin include the underflow
         do_step: If the data should be represented as a step plot
+        as_pdf: Also save an additional image in pdf format
     """
 
     ## Make sure we are using a pathlib type variable
@@ -143,8 +221,8 @@ def plot_multi_hists(
         col_labels = [col_labels]
     if not isinstance(bins, list):
         bins = len(data_list[0][0]) * [bins]
-    if not isinstance(col_colours, list):
-        col_colours = len(data_list) * [col_colours]
+    if not isinstance(hist_colours, list):
+        hist_colours = len(data_list) * [hist_colours]
 
     ## Check the number of histograms to plot
     n_data = len(data_list)
@@ -210,22 +288,33 @@ def plot_multi_hists(
                 histo = histo / div
 
             ## Get the additional keywork arguments
-            if col_kwargs is not None:
-                kwargs = {key: val[j] for key, val in col_kwargs.items()}
+            if hist_kwargs is not None:
+                kwargs = {key: val[j] for key, val in hist_kwargs.items()}
             else:
                 kwargs = {}
 
             ## Plot the fill
             ydata = [0] + histo.tolist()
-            if col_fills is not None and col_fills[j]:
-                axes[i].fill_between(b, ydata, label=type_labels[j], step="pre" if do_step else None, alpha=0.4, color=col_colours[j])
+            if hist_fills is not None and hist_fills[j]:
+                axes[i].fill_between(
+                    b,
+                    ydata,
+                    label=type_labels[j],
+                    step="pre" if do_step else None,
+                    alpha=0.4,
+                    color=hist_colours[j],
+                )
 
             ## Plot the histogram as a step graph
             elif do_step:
-                axes[i].step(b, ydata, label=type_labels[j], color=col_colours[j], **kwargs)
+                axes[i].step(
+                    b, ydata, label=type_labels[j], color=hist_colours[j], **kwargs
+                )
 
             else:
-                axes[i].step(b, ydata, label=type_labels[j], color=col_colours[j], **kwargs)
+                axes[i].step(
+                    b, ydata, label=type_labels[j], color=hist_colours[j], **kwargs
+                )
 
         ## Set the x_axis label and limits
         axes[i].set_xlabel(col_labels[i])
@@ -253,6 +342,8 @@ def plot_multi_hists(
     ## Save the image as a png
     fig.tight_layout()
     fig.savefig(Path(path).with_suffix(".png"))
+    if as_pdf:
+        fig.savefig(path.with_suffix(".pdf"))
     plt.close(fig)
 
 
@@ -325,7 +416,7 @@ def parallel_plot(
     highlight_best: bool = False,
     do_sort: bool = True,
     alpha: float = 0.3,
-    class_thresh = 10,
+    class_thresh=10,
 ) -> None:
     """
     Create a parallel coordinates plot from pandas dataframe
@@ -501,7 +592,7 @@ def parallel_plot(
 
     ## The colour bar also needs axis labels
     cbar.ax.set_yticklabels(ax_info[rank_col][0])
-    cbar.ax.set_xlabel(rank_col) # For some reason this is not showing up now?
+    cbar.ax.set_xlabel(rank_col)  # For some reason this is not showing up now?
     cbar.set_label(rank_col)
 
     ## Change the plot layout and save

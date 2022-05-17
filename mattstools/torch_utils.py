@@ -308,7 +308,7 @@ def ctxt_from_mask(context: Union[list, T.Tensor], mask: T.BoolTensor) -> T.Tens
     return smart_cat(all_context)
 
 
-def np_group_by(a: np.ndarray)->np.ndarray:
+def np_group_by(a: np.ndarray) -> np.ndarray:
     """A groupby method which runs over a numpy array, binning by the first column
     and making many seperate arrays as results
     """

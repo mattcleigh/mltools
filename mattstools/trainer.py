@@ -83,10 +83,10 @@ class Trainer:
 
         ## Check if there is a validation set present or if we need to manually split
         self.has_v = not (valid_set is None)
-        if self.has_v and make_val: ## If both splitting and valid are present
+        if self.has_v and make_val:  ## If both splitting and valid are present
             print("Warning: Requested splitting of data but also gave val set!")
             print("Will continue with the provided val set and not split!")
-        elif (not self.has_v) and make_val: ## If splitting is required
+        elif (not self.has_v) and make_val:  ## If splitting is required
             print(f"Manually splitting of validation set using fraction: {val_frac}")
             if val_frac < 0 or val_frac > 1:
                 raise ValueError(f"The passed val_frac is out of bounds: {val_frac}")

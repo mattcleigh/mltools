@@ -221,6 +221,7 @@ class DenseNetwork(nn.Module):
             string += "  (out): " + repr(self.output_block)
         return string
 
+
 class DeepSet(nn.Module):
     """A deep set network that can provide attention pooling"""
 
@@ -236,16 +237,16 @@ class DeepSet(nn.Module):
         post_net_kwargs=None,
     ) -> None:
         """
-                args:
-                    inpt_dim: The number of input features
-                    outp_dim: The number of desired output featues
-                kwargs:
-                    ctxt_dim: Dimension of the context information for all networks
-                    pool_type: The type of set pooling applied; mean, sum, max or attn
-                    attn_type: The type of attention; mean, sum, raw
-                    feat_net_kwargs: Keyword arguments for the feature network
-                    attn_net_kwargs: Keyword arguments for the attention network
-                    post_net_kwargs: Keyword arguments for the post network
+        args:
+            inpt_dim: The number of input features
+            outp_dim: The number of desired output featues
+        kwargs:
+            ctxt_dim: Dimension of the context information for all networks
+            pool_type: The type of set pooling applied; mean, sum, max or attn
+            attn_type: The type of attention; mean, sum, raw
+            feat_net_kwargs: Keyword arguments for the feature network
+            attn_net_kwargs: Keyword arguments for the attention network
+            post_net_kwargs: Keyword arguments for the post network
         """
         super().__init__()
 
@@ -268,7 +269,7 @@ class DeepSet(nn.Module):
 
         ## Create the feature extraction network
         self.feat_net = DenseNetwork(
-            self.inpt_dim, ctxt_dim = self.ctxt_dim, **feat_net_kwargs
+            self.inpt_dim, ctxt_dim=self.ctxt_dim, **feat_net_kwargs
         )
         pooled_dim = self.feat_net.outp_dim
 
@@ -277,7 +278,7 @@ class DeepSet(nn.Module):
 
             ## Create the attention network
             self.attn_net = DenseNetwork(
-                self.inpt_dim, ctxt_dim = self.ctxt_dim, **attn_net_kwargs
+                self.inpt_dim, ctxt_dim=self.ctxt_dim, **attn_net_kwargs
             )
 
             ## Pooled dimension increases with multiheaded attention
@@ -285,7 +286,7 @@ class DeepSet(nn.Module):
 
         ## Create the post network to update the pooled features of the set
         self.post_net = DenseNetwork(
-            pooled_dim, outp_dim, ctxt_dim = self.ctxt_dim, **post_net_kwargs
+            pooled_dim, outp_dim, ctxt_dim=self.ctxt_dim, **post_net_kwargs
         )
 
     def forward(
