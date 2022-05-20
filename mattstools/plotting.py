@@ -30,6 +30,7 @@ plt.rcParams["legend.framealpha"] = 0.0
 plt.rcParams["axes.labelsize"] = "x-large"
 plt.rcParams["axes.titlesize"] = "x-large"
 
+
 def plot_corr_heatmaps(
     path: Path,
     x_vals: np.ndarray,
@@ -43,7 +44,7 @@ def plot_corr_heatmaps(
     incl_cbar: bool = True,
     title: str = "",
     figsize=(6, 5),
-    do_pdf: bool = False
+    do_pdf: bool = False,
 ) -> None:
     """
     Plot and save a 2D heatmap, usually for correlation plots
@@ -85,8 +86,8 @@ def plot_corr_heatmaps(
     ## Add colourbar
     if incl_cbar:
         divider = make_axes_locatable(ax)
-        cax = divider.append_axes('right', size='5%', pad=0.05)
-        fig.colorbar(imshow, cax=cax, orientation='vertical')
+        cax = divider.append_axes("right", size="5%", pad=0.05)
+        fig.colorbar(imshow, cax=cax, orientation="vertical")
 
     ## Axis labels and titles
     ax.set_xlabel(xlabel)
@@ -175,7 +176,7 @@ def plot_multi_hists(
     hist_fills: list = None,
     hist_colours: list = None,
     hist_kwargs: dict = None,
-    div: float = None,
+    hist_scale: float = 1,
     incl_overflow: bool = False,
     incl_underflow: bool = True,
     do_step: bool = True,
@@ -203,6 +204,7 @@ def plot_multi_hists(
         hist_fills: Bool for each histogram in data_list, if it should be filled
         hist_colours: Color for each histogram in data_list
         hist_kwargs: Additional keyword arguments for the line for each histogram
+        hist_scale: Amount to scale all histograms
         incl_overflow: Have the final bin include the overflow
         incl_underflow: Have the first bin include the underflow
         do_step: If the data should be represented as a step plot
@@ -283,9 +285,8 @@ def plot_multi_hists(
                 ## Calculate the histogram
                 histo, _ = np.histogram(data, b, density=normed)
 
-            ## Apply the division factor
-            if div is not None:
-                histo = histo / div
+            ## Apply the scaling factor
+            histo = histo * hist_scale
 
             ## Get the additional keywork arguments
             if hist_kwargs is not None:
@@ -330,7 +331,7 @@ def plot_multi_hists(
         ## Set the y axis, only on first if horizontal
         if normed:
             axes[i].set_ylabel("Normalised Entries")
-        elif div is not None:
+        elif hist_scale != 1:
             axes[i].set_ylabel("a.u.")
         else:
             axes[i].set_ylabel("Entries")

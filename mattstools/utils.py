@@ -320,7 +320,7 @@ def load_yaml_files(files: Union[list, tuple, str]) -> tuple:
 
 
 def save_yaml_files(
-    path: str, file_names: Union[list, tuple], dicts: Union[list, tuple]
+    path: str, file_names: Union[str, list, tuple], dicts: Union[dict, list, tuple]
 ) -> None:
     """Saves a collection of yaml files in a folder
     - Makes the folder if it does not exist
@@ -329,7 +329,8 @@ def save_yaml_files(
     ## If the input is not a list then one file is saved
     if isinstance(file_names, (str, Path)):
         with open(f"{path}/{file_names}.yaml", "w") as f:
-            yaml.dump(dic, f, sort_keys=False)
+            yaml.dump(dicts, f, sort_keys=False)
+        return
 
     ## Make the folder
     Path(path).mkdir(parents=True, exist_ok=True)
