@@ -2,6 +2,7 @@
 Mix of utility functions specifically for pytorch
 """
 
+from ast import Sub
 from typing import Iterable, List, Union, Tuple
 
 import numpy as np
@@ -11,7 +12,7 @@ import torch as T
 import torch.nn as nn
 import torch.optim as optim
 import torch.optim.lr_scheduler as schd
-from torch.utils.data import Dataset, random_split
+from torch.utils.data import Dataset, Subset, random_split
 
 from geomloss import SamplesLoss
 
@@ -207,17 +208,29 @@ def get_sched(
         raise ValueError(f"No scheduler with name: {name}")
 
 
-def train_valid_split(dataset: Dataset, v_frac: float):
-    """Split a pytorch dataset into a training and validation set using the random_split funciton
+def train_valid_split(dataset: Dataset, v_frac: float, rand_split=False)->Tuple[Subset, Subset]:
+    """Split a pytorch dataset into a training and validation pytorch Subsets
+
     args:
         dataset: The dataset to split
-        v_frac: The validation fraction (0, 1)
+        v_frac: The validation fraction, reciprocals of whole numbers are best
+    kwargs:
+        is_rand: If the splitting is random (seed 42), otherwise takes every
     """
-    v_size = int(v_frac * len(dataset))
-    t_size = len(dataset) - v_size
-    return random_split(
-        dataset, [t_size, v_size], generator=T.Generator().manual_seed(42)
-    )
+
+    if rand_split:
+        v_size = int(v_frac * len(dataset))
+        t_size = len(dataset) - v_size
+        return random_split(
+            dataset, [t_size, v_size], generator=T.Generator().manual_seed(42)
+        )
+    else:
+        v_every = int(1/v_frac)
+        valid_idxs = list(range(0, len(dataset), v_every))
+        train_indxs = [i for i in range(len(dataset)) if i%v_every != 0]
+        return Subset(dataset, train_indxs), Subset(dataset, valid_idxs)
+
+
 
 
 def masked_pool(

@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 
 import torch as T
 import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader, IterableDataset, Subset, random_split
+from torch.utils.data import Dataset, DataLoader, IterableDataset, Subset
 
 from mattstools.plotting import plot_multi_loss
 from mattstools.torch_utils import (
@@ -22,6 +22,7 @@ from mattstools.torch_utils import (
     get_sched,
     move_dev,
     get_grad_norm,
+    train_valid_split,
 )
 
 
@@ -90,11 +91,7 @@ class Trainer:
             print(f"Manually splitting of validation set using fraction: {val_frac}")
             if val_frac < 0 or val_frac > 1:
                 raise ValueError(f"The passed val_frac is out of bounds: {val_frac}")
-            v_size = int(val_frac * len(train_set))
-            t_size = len(train_set) - v_size
-            train_set, valid_set = random_split(
-                train_set, [t_size, v_size], generator=T.Generator().manual_seed(42)
-            )
+            train_set, valid_set = train_valid_split(train_set, val_frac, rand_split=False)
             self.has_v = True
 
         ## Report on the number of files/samples used
