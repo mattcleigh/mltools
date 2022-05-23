@@ -93,9 +93,7 @@ class Trainer:
             v_size = int(val_frac * len(train_set))
             t_size = len(train_set) - v_size
             train_set, valid_set = random_split(
-                train_set,
-                [t_size, v_size],
-                generator=T.Generator().manual_seed(42)
+                train_set, [t_size, v_size], generator=T.Generator().manual_seed(42)
             )
             self.has_v = True
 

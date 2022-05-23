@@ -9,7 +9,13 @@ import torch.nn.functional as F
 
 from torch.autograd import Function
 
-from mattstools.torch_utils import get_act, get_nrm, pass_with_mask, masked_pool, smart_cat
+from mattstools.torch_utils import (
+    get_act,
+    get_nrm,
+    pass_with_mask,
+    masked_pool,
+    smart_cat,
+)
 
 
 class MLPBlock(nn.Module):
@@ -290,7 +296,7 @@ class DeepSet(nn.Module):
         )
 
     def forward(
-        self, tensor: T.tensor, mask: T.BoolTensor,  ctxt: Union[T.Tensor, list] = None
+        self, tensor: T.tensor, mask: T.BoolTensor, ctxt: Union[T.Tensor, list] = None
     ):
         """The expected shapes of the inputs are
         - tensor: batch x setsize x features

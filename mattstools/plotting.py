@@ -13,22 +13,24 @@ import matplotlib.ticker as ticker
 from matplotlib.colors import LogNorm
 
 from scipy.interpolate import make_interp_spline
+from scipy.stats import pearsonr, spearmanr
 from sklearn.decomposition import PCA
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from mattstools.utils import mid_points, undo_mid
 
 ## Some defaults for my plots to make them look nicer
-plt.rcParams["font.family"] = "cmr10"
-plt.rcParams["axes.unicode_minus"] = False
-plt.rcParams["axes.formatter.use_mathtext"] = True
-plt.rcParams["mathtext.fontset"] = "cm"
+# plt.rcParams["font.family"] = "cmr10"
+# plt.rcParams["axes.unicode_minus"] = False
+# plt.rcParams["axes.formatter.use_mathtext"] = True
+# plt.rcParams["mathtext.fontset"] = "cm"
 plt.rcParams["xaxis.labellocation"] = "right"
 plt.rcParams["yaxis.labellocation"] = "top"
 plt.rcParams["legend.edgecolor"] = "1"
 plt.rcParams["legend.loc"] = "upper left"
 plt.rcParams["legend.framealpha"] = 0.0
-plt.rcParams["axes.labelsize"] = "x-large"
-plt.rcParams["axes.titlesize"] = "x-large"
+plt.rcParams["axes.labelsize"] = "large"
+plt.rcParams["axes.titlesize"] = "large"
+plt.rcParams["legend.fontsize"] = 11
 
 
 def plot_corr_heatmaps(
@@ -44,6 +46,7 @@ def plot_corr_heatmaps(
     incl_cbar: bool = True,
     title: str = "",
     figsize=(6, 5),
+    do_pearson=False,
     do_pdf: bool = False,
 ) -> None:
     """
@@ -62,6 +65,7 @@ def plot_corr_heatmaps(
         incl_cbar: Add the colour bar to the axis
         figsize: The size of the output figure
         title: Title for the plot
+        do_pearson: Add the pearson correlation coeficient to the plot
         do_pdf: If the output should also contain a pdf version
     """
 
@@ -94,6 +98,17 @@ def plot_corr_heatmaps(
     ax.set_ylabel(ylabel)
     if title != "":
         ax.set_title(title)
+
+    ## Correlation coeficient
+    if do_pearson:
+        ax.text(
+            0.05,
+            0.92,
+            f"r = {spearmanr(x_vals, y_vals)[0]:.3f}",
+            transform=ax.transAxes,
+            fontsize="large",
+            bbox=dict(facecolor="white", edgecolor="black"),
+        )
 
     ## Save the image
     fig.tight_layout()
@@ -164,11 +179,12 @@ def plot_multi_hists(
     data_list: Union[list, np.ndarray],
     type_labels: Union[list, str],
     col_labels: Union[list, str],
-    normed: bool = True,
+    normed: bool = False,
     bins: Union[list, str] = "auto",
     logy: bool = False,
     ylim: list = None,
-    hor: bool = True,
+    rat_ylim=[0, 2],
+    rat_label=None,
     scale: int = 5,
     leg: bool = True,
     incl_zeros: bool = True,
@@ -180,6 +196,7 @@ def plot_multi_hists(
     incl_overflow: bool = False,
     incl_underflow: bool = True,
     do_step: bool = True,
+    do_ratio_to_first: bool = False,
     as_pdf: bool = False,
 ):
     """Plot multiple histograms given a list of 2D tensors/arrays
@@ -196,7 +213,8 @@ def plot_multi_hists(
         bins: The bins to use for each axis, can use numpy's strings
         logy: If we should use the log in the y-axis
         ylim: The y limits for all plots
-        hor: If the multiplot should be horizontal or vertical
+        rat_ylim: The y limits of the ratio plots
+        rat_label: The label for the ratio plot
         scale: The size in inches for each subplot
         leg: If the legend should be plotted
         incl_zeros: If zero values should be included in the histograms or ignored
@@ -208,6 +226,7 @@ def plot_multi_hists(
         incl_overflow: Have the final bin include the overflow
         incl_underflow: Have the first bin include the underflow
         do_step: If the data should be represented as a step plot
+        do_ratio_to_first: Include a ratio plot to the first histogram in the list
         as_pdf: Also save an additional image in pdf format
     """
 
@@ -235,12 +254,17 @@ def plot_multi_hists(
         raise RuntimeError("You are asking to create more than 20 subplots!")
 
     ## Create the figure and axes listss
-    dims = np.array([n_axis, 1]) if hor else np.array([1, n_axis])
-    fig, axes = plt.subplots(*dims[::-1], figsize=tuple(scale * dims))
-
-    ## To support a single plot
-    if n_axis == 1:
-        axes = [axes]
+    dims = np.array([n_axis, 1])
+    size = np.array([n_axis, 1.0])
+    if do_ratio_to_first:
+        dims *= np.array([1, 2])
+        size *= np.array([1, 1.2])
+    fig, axes = plt.subplots(
+        *dims[::-1], figsize=tuple(scale * size), gridspec_kw={"height_ratios": [3, 1] if do_ratio_to_first else {1}}
+    )
+    if n_axis == 1 and not do_ratio_to_first:
+        axes = np.array([axes])
+    axes = axes.reshape(dims)
 
     ## Replace the zeros
     if not incl_zeros:
@@ -288,6 +312,10 @@ def plot_multi_hists(
             ## Apply the scaling factor
             histo = histo * hist_scale
 
+            ## Save the first histogram for the ratio plots
+            if j == 0:
+                denom_hist = histo
+
             ## Get the additional keywork arguments
             if hist_kwargs is not None:
                 kwargs = {key: val[j] for key, val in hist_kwargs.items()}
@@ -295,9 +323,10 @@ def plot_multi_hists(
                 kwargs = {}
 
             ## Plot the fill
-            ydata = [0] + histo.tolist()
+            ydata = histo.tolist()
+            ydata = [ydata[0]] + ydata
             if hist_fills is not None and hist_fills[j]:
-                axes[i].fill_between(
+                axes[i, 0].fill_between(
                     b,
                     ydata,
                     label=type_labels[j],
@@ -308,40 +337,70 @@ def plot_multi_hists(
 
             ## Plot the histogram as a step graph
             elif do_step:
-                axes[i].step(
+                axes[i, 0].step(
                     b, ydata, label=type_labels[j], color=hist_colours[j], **kwargs
                 )
 
             else:
-                axes[i].step(
+                axes[i, 0].plot(
                     b, ydata, label=type_labels[j], color=hist_colours[j], **kwargs
                 )
 
-        ## Set the x_axis label and limits
-        axes[i].set_xlabel(col_labels[i])
-        axes[i].set_xlim(b[0], b[-1])
+            ## Plot the ratio plot
+            if do_ratio_to_first:
+                ydata = (histo / denom_hist).tolist()
+                ydata = [ydata[0]] + ydata
+                axes[i, 1].step(
+                    b,
+                    ydata,
+                    color=hist_colours[j],
+                    **kwargs,
+                )
 
+        ## Set the x_axis label
+        if do_ratio_to_first:
+            axes[i, 0].set_xticklabels([])
+            axes[i, 1].set_xlabel(col_labels[i])
+        else:
+            axes[i, 0].set_xlabel(col_labels[i])
+
+        ## Set the limits
+        axes[i, 0].set_xlim(b[0], b[-1])
         if ylim is not None:
-            axes[i].set_ylim(*ylim)
+            axes[i, 0].set_ylim(*ylim)
+
+        if do_ratio_to_first:
+            axes[i, 1].set_xlim(b[0], b[-1])
+            axes[i, 1].set_ylim(rat_ylim)
 
         ## Set the y scale to be logarithmic
         if logy:
-            axes[i].set_yscale("log")
+            axes[i, 0].set_yscale("log")
 
-        ## Set the y axis, only on first if horizontal
+        ## Set the y axis
         if normed:
-            axes[i].set_ylabel("Normalised Entries")
+            axes[i, 0].set_ylabel("Normalised Entries")
         elif hist_scale != 1:
-            axes[i].set_ylabel("a.u.")
+            axes[i, 0].set_ylabel("a.u.")
         else:
-            axes[i].set_ylabel("Entries")
+            axes[i, 0].set_ylabel("Entries")
+        if do_ratio_to_first:
+            if rat_label is not None:
+                axes[i, 1].set_ylabel(rat_label)
+            else:
+                axes[i, 1].set_ylabel(f"Ratio to {type_labels[0]}")
 
     ## Only do legend on the first axis
     if leg:
-        axes[0].legend()
+        axes[0, 0].legend()
 
     ## Save the image as a png
     fig.tight_layout()
+
+    ## For ratio plots minimise the h_space
+    if do_ratio_to_first:
+        fig.subplots_adjust(hspace=0.08)
+
     fig.savefig(Path(path).with_suffix(".png"))
     if as_pdf:
         fig.savefig(path.with_suffix(".pdf"))
