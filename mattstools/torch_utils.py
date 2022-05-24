@@ -224,8 +224,8 @@ def train_valid_split(dataset: Dataset, v_frac: float, rand_split=False)->Tuple[
         )
     else:
         v_every = int(1/v_frac)
-        valid_idxs = list(range(0, len(dataset), v_every))
-        train_indxs = [i for i in range(len(dataset)) if i%v_every != 0]
+        valid_idxs = np.arange(0, len(dataset), v_every)
+        train_indxs = np.delete(np.arange(len(dataset)), np.s_[::v_every])
         return Subset(dataset, train_indxs), Subset(dataset, valid_idxs)
 
 
