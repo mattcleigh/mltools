@@ -2,11 +2,9 @@
 Mix of utility functions specifically for pytorch
 """
 
-from ast import Sub
 from typing import Iterable, List, Union, Tuple
 
 import numpy as np
-import geomloss as gl
 
 import torch as T
 import torch.nn as nn
@@ -231,8 +229,6 @@ def train_valid_split(dataset: Dataset, v_frac: float, rand_split=False)->Tuple[
         return Subset(dataset, train_indxs), Subset(dataset, valid_idxs)
 
 
-
-
 def masked_pool(
     pool_type: str, tensor: T.Tensor, mask: T.BoolTensor, axis: int = None
 ) -> T.Tensor:
@@ -424,6 +420,7 @@ def to_np(tensor: T.Tensor) -> np.ndarray:
 
 
 def print_gpu_info(dev=0):
+    """Prints current gpu usage"""
     total = T.cuda.get_device_properties(dev).total_memory / 1024**3
     reser = T.cuda.memory_reserved(dev) / 1024**3
     alloc = T.cuda.memory_allocated(dev) / 1024**3
@@ -467,6 +464,7 @@ def apply_residual(rsdl_type: str, res: T.Tensor, outp: T.Tensor) -> T.Tensor:
 
 @T.jit.script
 def falling_sigmoid(x):
+    """Falling sigmoid used in some of my distance functions"""
     return T.sigmoid(-x - 3)
 
 
@@ -503,16 +501,16 @@ def aggr_via_sparse(cmprsed: T.Tensor, mask: T.BoolTensor, reduction: str, dim: 
         raise ValueError(f"Unknown sparse reduction method: {reduction}")
 
 
-def sparse_from_mask(input: T.Tensor, mask: T.BoolTensor, is_compressed: bool = False):
+def sparse_from_mask(inpt: T.Tensor, mask: T.BoolTensor, is_compressed: bool = False):
     """Create a pytorch sparse matrix given a tensor and a mask.
     - Shape is infered from the mask, meaning the final dim will be dense
     """
     return T.sparse_coo_tensor(
         T.nonzero(mask).t(),
-        input if is_compressed else input[mask],
-        device=input.device,
-        dtype=input.dtype,
-        requires_grad=input.requires_grad,
+        inpt if is_compressed else inpt[mask],
+        device=inpt.device,
+        dtype=inpt.dtype,
+        requires_grad=inpt.requires_grad,
     ).coalesce()
 
 

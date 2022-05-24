@@ -4,16 +4,12 @@ Custom loss functions and methods to calculate them
 
 import torch as T
 import torch.nn as nn
-import torch.nn.functional as F
 
 from mattstools.distances import masked_dist_matrix
 
 
 class VAELoss(nn.Module):
     """The Kullback-Leibler divergence to unit normal loss used for VAEs"""
-
-    def __init__(self):
-        super().__init__()
 
     def forward(self, means: T.Tensor, log_stds: T.Tensor) -> T.Tensor:
         """
@@ -42,6 +38,7 @@ class GeomWrapper(nn.Module):
         self.loss_fn = loss_fn
 
     def forward(self, *args, **kwargs):
+        """Return the loss"""
         current_grad_state = T.is_grad_enabled()
         loss = self.loss_fn(*args, **kwargs)
         T.set_grad_enabled(current_grad_state)
@@ -60,6 +57,7 @@ class MyBCEWithLogit(nn.Module):
         self.loss_fn = nn.BCEWithLogitsLoss(*args, **kwargs)
 
     def forward(self, outputs, targets):
+        """Return the loss"""
         return self.loss_fn(outputs.squeeze(), targets.float())
 
 
@@ -164,5 +162,5 @@ def masked_dist_loss(
 #         for param in network.parameters():
 #             param.requires_grad = True
 
-#         ## TODO Add gradient penalties here
+#         ## Add gradient penalties here
 #         return disc_loss + gen_loss

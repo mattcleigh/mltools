@@ -1,3 +1,8 @@
+
+"""
+Functions for calculating distances between elements of tensors
+"""
+
 import torch as T
 import torch.nn.functional as F
 

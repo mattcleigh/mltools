@@ -2,16 +2,14 @@
 General mix of utility functions
 """
 
+import argparse
+from pathlib import Path
+from typing import Union, Tuple, Any
 from functools import reduce
 import operator
 import json
 import yaml
-import argparse
-from pathlib import Path
-from typing import Any, Union, Tuple
 import numpy as np
-
-from pickle import load, dump
 
 from sklearn.preprocessing import (
     RobustScaler,
@@ -78,10 +76,10 @@ def get_standard_configs(
         "--sched_name", type=float, help="Name of the learning rate scheduler"
     )
     parser.add_argument(
-        "--b_size", type=int, help="Number of samples per training batch"
+        "--batch_size", type=int, help="Number of samples per training batch"
     )
     parser.add_argument(
-        "--n_workers", type=int, help="Number of parellel threads to load the batches"
+        "--num_workers", type=int, help="Number of parellel threads to load the batches"
     )
     parser.add_argument(
         "--resume",
@@ -103,7 +101,7 @@ def get_standard_configs(
     ## Load the arguments
     args, _ = parser.parse_known_args()
 
-    ## Load previous configs if resuming, otherwise keep defaults
+    ## Change the paths to previous configs if resuming, otherwise keep defaults
     if args.resume:
         args.data_conf = Path(args.save_dir, args.name, "config/data.yaml")
         args.net_conf = Path(args.save_dir, args.name, "config/netw.yaml")
@@ -120,19 +118,17 @@ def get_standard_configs(
     net_conf = remove_keys_starting_with(net_conf, "__")
     train_conf = remove_keys_starting_with(train_conf, "__")
 
-    ## Some arguments are identified by the exact keys in each dict
-    args_into_conf(args, train_conf, "b_size")
-    args_into_conf(args, train_conf, "n_workers")
-    if args.resume:
-        args_into_conf(args, train_conf, "resume")
-    if args.tqdm_quiet:
-        args_into_conf(args, train_conf, "tqdm_quiet")
-
-    ## Other arguments need more manual placement in the configuration dicts
+    ## Most args need manual placement in the configuration dicts
     args_into_conf(args, net_conf, "name", "base_kwargs/name")
     args_into_conf(args, net_conf, "save_dir", "base_kwargs/save_dir")
-    args_into_conf(args, train_conf, "sched_name", "sched_dict/name")
-    args_into_conf(args, train_conf, "lr", "optim_dict/lr")
+    args_into_conf(args, train_conf, "batch_size", "loader_kwargs/batch_size")
+    args_into_conf(args, train_conf, "num_workers", "loader_kwargs/num_workers")
+    args_into_conf(args, train_conf, "sched_name", "trainer_kwargs/sched_dict/name")
+    args_into_conf(args, train_conf, "lr", "trainer_kwargs/optim_dict/lr")
+    if args.resume:
+        args_into_conf(args, train_conf, "resume", "trainer_kwargs/resume")
+    if args.tqdm_quiet:
+        args_into_conf(args, train_conf, "tqdm_quiet", "trainer_kwargs/tqdm_quiet")
 
     return data_conf, net_conf, train_conf
 
@@ -200,7 +196,7 @@ def get_from_dict(data_dict: dict, key_list: list, default=None) -> Any:
     """Returns a value from a nested dictionary using list of keys"""
     try:
         return reduce(operator.getitem, key_list, data_dict)
-    except:
+    except KeyError:
         return default
 
 
@@ -328,7 +324,7 @@ def save_yaml_files(
 
     ## If the input is not a list then one file is saved
     if isinstance(file_names, (str, Path)):
-        with open(f"{path}/{file_names}.yaml", "w") as f:
+        with open(f"{path}/{file_names}.yaml", "w", encoding="UTF-8") as f:
             yaml.dump(dicts, f, sort_keys=False)
         return
 
@@ -337,7 +333,7 @@ def save_yaml_files(
 
     ## Save each file using yaml
     for f_nm, dic in zip(file_names, dicts):
-        with open(f"{path}/{f_nm}.yaml", "w") as f:
+        with open(f"{path}/{f_nm}.yaml", "w", encoding="UTF-8") as f:
             yaml.dump(dic, f, sort_keys=False)
 
 

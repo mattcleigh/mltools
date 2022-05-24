@@ -1,7 +1,8 @@
-from multiprocessing.sharedctypes import Value
+"""
+Collection of pytorch modules that make up the common networks used in my projects
+"""
+
 from typing import Union
-from typing_extensions import Literal
-from numpy import block
 
 import torch as T
 import torch.nn as nn
@@ -81,7 +82,7 @@ class MLPBlock(nn.Module):
             if drp > 0:
                 self.block.append(nn.Dropout(drp))
 
-    def forward(self, input: T.Tensor, ctxt: T.Tensor = None) -> T.Tensor:
+    def forward(self, inpt: T.Tensor, ctxt: T.Tensor = None) -> T.Tensor:
         """
         args:
             tensor: Pytorch tensor to pass through the network
@@ -93,7 +94,7 @@ class MLPBlock(nn.Module):
             raise ValueError(
                 "Was expecting contextual information but none has been provided!"
             )
-        temp = T.cat([input, ctxt], dim=-1) if self.ctxt_dim else input
+        temp = T.cat([inpt, ctxt], dim=-1) if self.ctxt_dim else inpt
 
         ## Pass through each transform in the block
         for layer in self.block:
@@ -101,7 +102,7 @@ class MLPBlock(nn.Module):
 
         ## Add the original inputs again for the residual connection
         if self.do_res:
-            temp += input
+            temp += inpt
 
         return temp
 
@@ -110,7 +111,7 @@ class MLPBlock(nn.Module):
         if self.ctxt_dim:
             string += f"({self.ctxt_dim})"
         string += "->"
-        string += "->".join([str(b).split("(")[0] for b in self.block])
+        string += "->".join([str(b).split("(", 1)[0] for b in self.block])
         string += "->" + str(self.outp_dim)
         if self.do_res:
             string += "(add)"
@@ -205,6 +206,7 @@ class DenseNetwork(nn.Module):
             )
 
     def forward(self, inputs: T.Tensor, ctxt: T.Tensor = None) -> T.Tensor:
+        """Pass through all layers of the dense network"""
 
         ## Pass through the input block
         inputs = self.input_block(inputs, ctxt)
@@ -345,13 +347,32 @@ class DeepSet(nn.Module):
 class GRF(Function):
     """A gradient reversal function
     - The forward pass is the identity function
-    - The backward pass multiplices the upstream gradients by -1
+    - The backward pass multiplies the upstream gradients by -1
     """
 
     @staticmethod
-    def forward(_, inputs):
-        return inputs.clone()
+    def forward(ctx, inpt, alpha):
+        """Pass inputs without chaning them"""
+        ctx.alpha = alpha
+        return inpt.clone()
 
     @staticmethod
-    def backward(_, grads):
-        return grads.neg(), None
+    def backward(ctx, grads):
+        """Inverse the gradients"""
+        alpha = ctx.alpha
+        neg_grads = - alpha * grads
+        return neg_grads, None
+
+
+class GRL(nn.Module):
+    """A gradient reversal layer.
+    This layer has no parameters, and simply reverses the gradient
+    in the backward pass.
+    """
+    def __init__(self, alpha=1.0):
+        super().__init__()
+        self.alpha = T.tensor(alpha, requires_grad=False)
+
+    def forward(self, inpt):
+        """Pass to the GRF"""
+        return GRF.apply(inpt, self.alpha)
