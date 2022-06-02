@@ -123,10 +123,9 @@ def masked_dist_loss(
 
     if reduce == "mean":
         return loss.mean()
-    elif reduce == "none":
+    if reduce == "none":
         return loss
-    else:
-        raise ValueError("Unknown reduce option for masked_dist_loss")
+    raise ValueError("Unknown reduce option for masked_dist_loss")
 
 
 # class GANLoss(nn.Module):

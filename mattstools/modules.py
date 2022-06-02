@@ -360,7 +360,7 @@ class GRF(Function):
     def backward(ctx, grads):
         """Inverse the gradients"""
         alpha = ctx.alpha
-        neg_grads = - alpha * grads
+        neg_grads = -alpha * grads
         return neg_grads, None
 
 
@@ -369,6 +369,7 @@ class GRL(nn.Module):
     This layer has no parameters, and simply reverses the gradient
     in the backward pass.
     """
+
     def __init__(self, alpha=1.0):
         super().__init__()
         self.alpha = T.tensor(alpha, requires_grad=False)

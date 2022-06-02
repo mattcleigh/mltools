@@ -71,22 +71,14 @@ class MyNetBase(nn.Module):
         for key, val in stat_dict.items():
             self.register_buffer(key, val.to(self.device))
 
-    def fowrard(self, *_, get_loss=True) -> dict:
-        """This method should be overwritten, but ideally the forward pass should return
-        - Network outputs
-        - Dictionary of losses
-        - Dictionary of extra details
-        """
-        return tuple(0, {}, {})
-
-    def get_losses(self, sample: tuple) -> dict:
+    def get_losses(self, _batch: tuple, _batch_idx: int) -> dict:
         """The function called by the trainer class to perform gradient descent
         by defualt the forward pass should have space for the sample and a get_loss
         flag
         - This method can be overwritten if there is a quicker way to get the loss
             - This is the case for normalising flows
         """
-        _, loss_dict, _ = self.forward(*sample, get_loss=True)
+        loss_dict = {"total": 0}
         return loss_dict
 
     def visualise(self, *_, **__):

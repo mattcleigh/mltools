@@ -253,13 +253,13 @@ class Trainer:
             T.set_grad_enabled(False)
 
         ## Cycle through the batches provided by the selected loader
-        for batch_idx, sample in enumerate(tqdm(loader, desc=mode, ncols=80)):
+        for batch_idx, batch in enumerate(tqdm(loader, desc=mode, ncols=80)):
 
             ## Move the sample to the network device
-            sample = move_dev(sample, self.network.device)
+            batch = move_dev(batch, self.network.device)
 
             ## Pass through the network and get the loss dictionary
-            losses = self.network.get_losses(sample)
+            losses = self.network.get_losses(batch, batch_idx)
 
             ## For training epochs we perform gradient descent
             if is_train:

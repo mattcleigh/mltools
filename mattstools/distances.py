@@ -1,4 +1,3 @@
-
 """
 Functions for calculating distances between elements of tensors
 """

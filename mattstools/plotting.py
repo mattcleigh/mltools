@@ -13,16 +13,11 @@ import matplotlib.ticker as ticker
 from matplotlib.colors import LogNorm
 
 from scipy.interpolate import make_interp_spline
-from scipy.stats import pearsonr, spearmanr
-from sklearn.decomposition import PCA
+from scipy.stats import pearsonr
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from mattstools.utils import mid_points, undo_mid
 
 ## Some defaults for my plots to make them look nicer
-# plt.rcParams["font.family"] = "cmr10"
-# plt.rcParams["axes.unicode_minus"] = False
-# plt.rcParams["axes.formatter.use_mathtext"] = True
-# plt.rcParams["mathtext.fontset"] = "cm"
 plt.rcParams["xaxis.labellocation"] = "right"
 plt.rcParams["yaxis.labellocation"] = "top"
 plt.rcParams["legend.edgecolor"] = "1"
@@ -32,6 +27,9 @@ plt.rcParams["axes.labelsize"] = "large"
 plt.rcParams["axes.titlesize"] = "large"
 plt.rcParams["legend.fontsize"] = 11
 
+def gaussian(x_data, mu=0, sig=1):
+    """Return the value of the gaussian distribution"""
+    return np.exp(-(x_data - mu)**2 / (2 * sig**2))
 
 def plot_corr_heatmaps(
     path: Path,
@@ -104,7 +102,7 @@ def plot_corr_heatmaps(
         ax.text(
             0.05,
             0.92,
-            f"r = {spearmanr(x_vals, y_vals)[0]:.3f}",
+            f"r = {pearsonr(x_vals, y_vals)[0]:.3f}",
             transform=ax.transAxes,
             fontsize="large",
             bbox=dict(facecolor="white", edgecolor="black"),
@@ -183,7 +181,7 @@ def plot_multi_hists(
     bins: Union[list, str] = "auto",
     logy: bool = False,
     ylim: list = None,
-    rat_ylim=[0, 2],
+    rat_ylim=(0, 2),
     rat_label=None,
     scale: int = 5,
     leg: bool = True,
@@ -260,7 +258,9 @@ def plot_multi_hists(
         dims *= np.array([1, 2])
         size *= np.array([1, 1.2])
     fig, axes = plt.subplots(
-        *dims[::-1], figsize=tuple(scale * size), gridspec_kw={"height_ratios": [3, 1] if do_ratio_to_first else {1}}
+        *dims[::-1],
+        figsize=tuple(scale * size),
+        gridspec_kw={"height_ratios": [3, 1] if do_ratio_to_first else {1}},
     )
     if n_axis == 1 and not do_ratio_to_first:
         axes = np.array([axes])
@@ -686,19 +686,51 @@ def plot_2d_hists(path, hist_list, hist_labels, ax_labels, bins):
     plt.close(fig)
 
 
-def plot_latent_space(path, latents, labels=None):
-    fig, axis = plt.subplots(1, 1, figsize=(5, 5))
-    fig.suptitle("Latent Space")
+def plot_latent_space(path, latents, labels=None, n_classes=None):
+    """Plot the latent space marginal distributions of a VAE"""
 
-    if latents.shape[-1] > 2:
-        latents = PCA(2).fit_transform(latents)
+    ## If there are labels then we do multiple lines per datapoint
+    if labels is not None and n_classes is None:
+        unique_lab = np.unique(labels)
+    elif n_classes is not None:
+        unique_lab = np.arange(n_classes)
+    else:
+        unique_lab = [-1]
 
-    if labels is None:
-        labels = np.ones(len(latents))
+    ## Get the number of plots based on the dimension of the latents
+    lat_dim = min(8, latents.shape[-1])
 
-    scttr = axis.scatter(*latents.T, c=labels, vmin=0, vmax=9, cmap="tab10")
+    ## Create the figure with the  correct number of plots
+    fig, axis = plt.subplots(2, int(np.ceil(lat_dim/2)), figsize=(8, 4))
+    axis = axis.flatten()
+
+    ## Plot the distributions of the marginals
+    for dim in range(lat_dim):
+
+        ## Make a seperate plot for each of the unique labels
+        for lab in unique_lab:
+
+            ## If the lab is -1 then it means use all
+            if lab == -1:
+                mask = np.ones((len(latents))).astype("bool")
+            else:
+                mask = labels==lab
+
+            ## Use the selected info for making the histogram
+            x_data = latents[mask, dim]
+            hist, edges = np.histogram(x_data, bins=30, density=True)
+            hist = np.insert(hist, 0, hist[0])
+            axis[dim].step(edges, hist, label=lab)
+
+        ## Plot the standard gaussian which should be the latent distribution
+        x_space = np.linspace(-4, 4, 100)
+        axis[dim].plot(x_space, gaussian(x_space), "--k")
+
+        ## Remove the axis ticklabels
+        axis[dim].set_xticklabels([])
+        axis[dim].set_yticklabels([])
 
     fig.tight_layout()
-    fig.colorbar(scttr)
+    fig.subplots_adjust(wspace=0, hspace=0)
     fig.savefig(path.with_suffix(".png"))
     plt.close(fig)

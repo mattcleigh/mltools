@@ -206,7 +206,9 @@ def get_sched(
         raise ValueError(f"No scheduler with name: {name}")
 
 
-def train_valid_split(dataset: Dataset, v_frac: float, rand_split=False)->Tuple[Subset, Subset]:
+def train_valid_split(
+    dataset: Dataset, v_frac: float, rand_split=False
+) -> Tuple[Subset, Subset]:
     """Split a pytorch dataset into a training and validation pytorch Subsets
 
     args:
@@ -223,7 +225,7 @@ def train_valid_split(dataset: Dataset, v_frac: float, rand_split=False)->Tuple[
             dataset, [t_size, v_size], generator=T.Generator().manual_seed(42)
         )
     else:
-        v_every = int(1/v_frac)
+        v_every = int(1 / v_frac)
         valid_idxs = np.arange(0, len(dataset), v_every)
         train_indxs = np.delete(np.arange(len(dataset)), np.s_[::v_every])
         return Subset(dataset, train_indxs), Subset(dataset, valid_idxs)
