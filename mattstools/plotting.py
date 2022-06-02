@@ -29,7 +29,7 @@ plt.rcParams["legend.fontsize"] = 11
 
 def gaussian(x_data, mu=0, sig=1):
     """Return the value of the gaussian distribution"""
-    return np.exp(-(x_data - mu)**2 / (2 * sig**2))
+    return 1/np.sqrt(2*np.pi*sig**2) * np.exp(-(x_data - mu)**2 / (2 * sig**2))
 
 def plot_corr_heatmaps(
     path: Path,

@@ -356,6 +356,9 @@ class GraphNetwork(nn.Module):
     def forward(self, graph: GraphBatch) -> GraphBatch:
         """Forward pass for GraphNetwork"""
 
+        ## This must happen so that the GNB's do not change the original inplace!
+        graph = graph.clone()
+
         ## Pass through each of the submodules
         for module in self.blocks:
             graph = module(graph)

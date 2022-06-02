@@ -134,6 +134,7 @@ class DenseNetwork(nn.Module):
         act_o: str = "none",
         do_out: bool = True,
         nrm: str = "none",
+        inpt_nrm: str = "none",
         drp: float = 0,
         do_res: bool = False,
         ctxt_in_all: bool = False,
@@ -150,7 +151,9 @@ class DenseNetwork(nn.Module):
             act_h: The name of the activation function to apply in the hidden blocks
             act_o: The name of the activation function to apply to the outputs
             do_out: If the network has a dedicated output block
-            nrm: Type of normalisation, either layer or batch in each hidden block
+            nrm: Type of normalisation (layer or batch) in each hidden block
+            inpt_nrm: Type of normalisation (layer or batch) to apply to inputs
+                Useful for transformers with residual connections
             drp: Dropout probability for hidden layers (0 means no dropout)
             do_res: Use res-connections between hidden blocks (only if same size)
             ctxt_in_all: Include the ctxt tensor in all blocks, not just input
@@ -167,9 +170,14 @@ class DenseNetwork(nn.Module):
         self.num_blocks = len(self.hddn_dim)
         self.ctxt_dim = ctxt_dim
         self.do_out = do_out
+        self.inpt_nrm = inpt_nrm
 
         ## Necc for this module to work with the nflows package
         self.hidden_features = self.hddn_dim[-1]
+
+        ## Input normalisation
+        if self.inpt_nrm != "none":
+            self.inpt_nrm_layer = get_nrm(inpt_nrm, inpt_dim)
 
         ## Input MLP block
         self.input_block = MLPBlock(
@@ -208,6 +216,10 @@ class DenseNetwork(nn.Module):
     def forward(self, inputs: T.Tensor, ctxt: T.Tensor = None) -> T.Tensor:
         """Pass through all layers of the dense network"""
 
+        ## Normalise the inputs to the mlp
+        if self.inpt_nrm != "none":
+            inputs = self.inpt_nrm_layer(inputs)
+
         ## Pass through the input block
         inputs = self.input_block(inputs, ctxt)
 
@@ -222,6 +234,8 @@ class DenseNetwork(nn.Module):
         return inputs
 
     def __repr__(self):
+        if self.inpt_nrm != "none":
+            string = "\n  (nrm): " + repr(self.inpt_nrm_layer)
         string = "\n  (inp): " + repr(self.input_block) + "\n"
         for i, h_block in enumerate(self.hidden_blocks):
             string += f"  (h-{i+1}): " + repr(h_block) + "\n"
