@@ -797,27 +797,23 @@ class GNBlock(nn.Module):
         """
         string = str(self.inpt_dim)
 
+        ## Message Pooling
         string += f"->MssPool({self.mspl_block.msg_type})"
 
+        ## Edge updating
         if self.edge_block.use_net:
-            dims = [self.edge_block.dense_net.inpt_dim]
-            dims += [self.edge_block.dense_net.hddn_dim]
-            dims += [self.edge_block.dense_net.outp_dim]
-            dims = "->".join([str(d) for d in dims])
-            string += f"->EdgeNet[{dims}]"
+            string += f"->EdgeNet[{self.edge_block.dense_net.one_line_string()}]"
         if self.edge_block.do_rsdl:
             string += f"({self.edge_block.rsdl_type})"
 
+        ## Edge pooling
         string += f"->{self.egpl_block.pool_type}"
         if self.egpl_block.pool_type == "attn":
             string += f"({self.egpl_block.attn_net.outp_dim})"
 
+        ## Node updating
         if self.node_block.use_net:
-            dims = [self.node_block.dense_net.inpt_dim]
-            dims += [self.node_block.dense_net.hddn_dim]
-            dims += [self.node_block.dense_net.outp_dim]
-            dims = "->".join([str(d) for d in dims])
-            string += f"->NodeNet[{dims}]"
+            string += f"->NodeNet[{self.node_block.dense_net.one_line_string()}]"
         if self.node_block.do_rsdl:
             string += f"({self.node_block.rsdl_type})"
 
@@ -830,11 +826,7 @@ class GNBlock(nn.Module):
 
             ## Global updating
             if self.glob_block.use_net:
-                dims = [self.glob_block.dense_net.inpt_dim]
-                dims += [self.glob_block.dense_net.hddn_dim]
-                dims += [self.glob_block.dense_net.outp_dim]
-                dims = "->".join([str(d) for d in dims])
-                string += f"->GlobNet[{dims}]"
+                string += f"->GlobNet[{self.glob_block.dense_net.one_line_string()}]"
             if self.glob_block.do_rsdl:
                 string += f"({self.glob_block.rsdl_type})"
 

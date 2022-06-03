@@ -21,7 +21,7 @@ from sklearn.preprocessing import (
 
 def get_standard_configs(
     def_train: str = "config/data.yaml",
-    def_netw: str = "config/netw.yaml",
+    def_net: str = "config/net.yaml",
     def_data: str = "config/train.yaml",
 ) -> Tuple[dict, dict, dict]:
     """Loads, modifies, and returns three configuration dictionaries using command
@@ -33,7 +33,7 @@ def get_standard_configs(
     Any extra arguments can be manually added in each project
     args:
         def_train: Path to default train config file
-        def_netw: Path to default netw config file
+        def_net: Path to default net config file
         def_data: Path to default data config file
     """
     print("Loading config files")
@@ -42,19 +42,19 @@ def get_standard_configs(
 
     ## Config files
     parser.add_argument(
-        "--data_config",
+        "--data_conf",
         type=str,
         default=def_train,
         help="Path to config file to use as a template for data preperation",
     )
     parser.add_argument(
-        "--netw_config",
+        "--net_conf",
         type=str,
-        default=def_netw,
+        default=def_net,
         help="Path to config file to use as a template for network construction",
     )
     parser.add_argument(
-        "--train_config",
+        "--train_conf",
         type=str,
         default=def_data,
         help="Path to config file to use as a template for training scheme",
@@ -104,12 +104,12 @@ def get_standard_configs(
     ## Change the paths to previous configs if resuming, otherwise keep defaults
     if args.resume:
         args.data_conf = Path(args.save_dir, args.name, "config/data.yaml")
-        args.net_conf = Path(args.save_dir, args.name, "config/netw.yaml")
+        args.net_conf = Path(args.save_dir, args.name, "config/net.yaml")
         args.train_conf = Path(args.save_dir, args.name, "config/train.yaml")
 
     ## Load the config dictionaries
     data_conf, net_conf, train_conf = load_yaml_files(
-        [args.data_config, args.netw_config, args.train_config]
+        [args.data_conf, args.net_conf, args.train_conf]
     )
 
     ## Remove all yaml anchors

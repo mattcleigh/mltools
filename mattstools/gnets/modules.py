@@ -488,6 +488,7 @@ class GraphNetEncoder(nn.Module):
     """A version of a graph network encoder which produces a vector representation
     can use the reparam trick to produce a stochastic ouptut
     """
+
     def __init__(
         self,
         inpt_dim: list,
@@ -523,7 +524,7 @@ class GraphNetEncoder(nn.Module):
             inpt_dim=self.gnn.outp_dim[2],
             ctxt_dim=self.gnn.outp_dim[3],
             outp_dim=outp_dim + (outp_dim if is_gaussian else 0),
-            **dns_kwargs
+            **dns_kwargs,
         )
 
     def forward(self, inputs: GraphBatch) -> Tuple[T.Tensor, T.Tensor, T.Tensor]:
@@ -546,7 +547,7 @@ class GraphGenerator(nn.Module):
     1. Passes the vector through a dense network.
     2. Initialises a graph object using:
        - no edges
-       - random noise for nodes
+       - learnable seeds OR random noise for nodes
        - the dense output as the globals
        - any extra conditional info as the conditionals
     3. Applies GN updates to the graph.
@@ -561,6 +562,8 @@ class GraphGenerator(nn.Module):
         outp_dim: int,
         cndt_dim: int = 0,
         node_init_dim: int = 0,
+        n_nodes: int = 1,
+        learnable_seeds: bool = False,
         dns_kwargs: dict = None,
         gnn_kwargs: dict = None,
         emb_kwargs: dict = None,
@@ -571,8 +574,10 @@ class GraphGenerator(nn.Module):
             outp_dim: The number of features of the output nodes.
                 Other dimensions are determined by the GNN structure and cndt_dim
         kwargs:
-            node_init_dim: The initial dimension of the nodes (if 0 takes from output).
             cndt_dim: The dimension of the contextual tensor for conditional generation.
+            node_init_dim: The initial dimension of the nodes (if 0 takes from output).
+            n_nodes: Number of nodes used when training this network
+            learnable_seeds: If the initial node seeds are learnable, otherwise random.
             dns_kwargs: The keyword for a the initial dense network for vector.
             gnn_kwargs: The kwargs dict for the GNN layers.
             emb_kwargs: The kwargs dict for the output embedding mlp.
@@ -587,6 +592,12 @@ class GraphGenerator(nn.Module):
         self.inpt_dim = inpt_dim
         self.node_init_dim = node_init_dim or outp_dim[1]
         self.cndt_dim = cndt_dim
+        self.n_nodes = n_nodes
+        self.learnable_seeds = learnable_seeds
+
+        ## If learnable seeds register the parameter
+        if self.learnable_seeds:
+            self.seeds = nn.Parameter(T.randn((1, n_nodes, self.node_init_dim)))
 
         ## The dense network for the vector, make the output the global size
         self.dns = DenseNetwork(self.inpt_dim, ctxt_dim=cndt_dim, **dns_kwargs)
@@ -615,28 +626,33 @@ class GraphGenerator(nn.Module):
         n_nodes = target_mask.shape[-1]
         edge_size = (0, 0)
         node_size = (b_size, n_nodes, self.node_init_dim)
-        cndt_size = (b_size, 0) ## If no ctxt is provided
+        cndt_size = (b_size, 0)  ## If no ctxt is provided
         adjm_size = (b_size, n_nodes, n_nodes)
-        kwargs = {"dtype":T.float32, "device":inputs.device}
+        kwargs = {"dtype": T.float32, "device": inputs.device}
 
         ## Initialise the random graph batch
         inputs = GraphBatch(
-            edges = T.zeros(edge_size, **kwargs),
-            nodes = T.randn(node_size, **kwargs),
-            globs = inputs,
-            cndts = ctxt if ctxt is not None else T.zeros(cndt_size, **kwargs),
-            adjmat = T.zeros(adjm_size, dtype=T.bool, device=inputs.device),
-            mask = target_mask,
-            dev = inputs.device,
+            edges=T.zeros(edge_size, **kwargs),
+            nodes=T.randn(node_size, **kwargs)
+            if not self.learnable_seeds
+            else self.seeds.expand(node_size),
+            globs=inputs,
+            cndts=ctxt if ctxt is not None else T.zeros(cndt_size, **kwargs),
+            adjmat=T.zeros(adjm_size, dtype=T.bool, device=inputs.device),
+            mask=target_mask,
+            dev=inputs.device,
         )
 
         ## All nodes were just initialised as random! Apply the masking!
-        inputs.nodes[~target_mask] = 0
+        inputs.nodes = inputs.nodes * target_mask.unsqueeze(-1)
 
         return inputs
 
     def forward(
-        self, inputs: T.Tensor, target_mask: T.BoolTensor, ctxt: T.Tensor = None,
+        self,
+        inputs: T.Tensor,
+        target_mask: T.BoolTensor,
+        ctxt: T.Tensor = None,
     ) -> tuple:
         """Decode a batch of inputs, creating a batch of graph objects
         args:

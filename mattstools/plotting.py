@@ -730,6 +730,7 @@ def plot_latent_space(path, latents, labels=None, n_classes=None):
         axis[dim].set_xticklabels([])
         axis[dim].set_yticklabels([])
 
+    axis[0].legend()
     fig.tight_layout()
     fig.subplots_adjust(wspace=0, hspace=0)
     fig.savefig(path.with_suffix(".png"))

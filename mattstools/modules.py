@@ -234,13 +234,24 @@ class DenseNetwork(nn.Module):
         return inputs
 
     def __repr__(self):
+        string = ""
         if self.inpt_nrm != "none":
-            string = "\n  (nrm): " + repr(self.inpt_nrm_layer)
-        string = "\n  (inp): " + repr(self.input_block) + "\n"
+            string += "\n  (nrm): " + repr(self.inpt_nrm_layer)
+        string += "\n  (inp): " + repr(self.input_block) + "\n"
         for i, h_block in enumerate(self.hidden_blocks):
             string += f"  (h-{i+1}): " + repr(h_block) + "\n"
         if self.do_out:
             string += "  (out): " + repr(self.output_block)
+        return string
+
+    def one_line_string(self):
+        """Return a one line string that sums up the network structure"""
+        string = ""
+        if self.inpt_nrm != "none":
+            string+="LN>"
+        string += ">".join(
+            [str(d) for d in [self.inpt_dim, *self.hddn_dim, self.outp_dim]]
+        )
         return string
 
 
