@@ -14,7 +14,7 @@ import torch.nn as nn
 from mattstools.utils import merge_dict
 from mattstools.modules import DenseNetwork
 from mattstools.torch_utils import smart_cat, masked_pool, pass_with_mask, reparam_trick
-from mattstools.distances import knn, masked_dist_matrix
+from mattstools.distances import knn, masked_dist_matrix, masked_diff_matrix
 
 from mattstools.gnets.graphs import GraphBatch
 from mattstools.gnets.gn_blocks import GNBlock
@@ -101,6 +101,7 @@ class EdgeBuilder(nn.Module):
                 -> threshold if clus_type is 'thresh'
             edge_type: How the new edges are created
                 -> same: Keep original edge features, 0 pad in the new ones
+                -> diff: Replace all edge features with the difference matrix
                 -> dist: Replace all edge features with the distance matrix
             crd_frc: The fraction of node features to use in clustering (rounds up)
             strip: Remove all features used to create the matrix from the nodes
@@ -113,7 +114,7 @@ class EdgeBuilder(nn.Module):
         ## Configuration checks
         if clus_type not in ["knn", "thresh", "fc"]:
             raise ValueError(f"Unknown cluster method: {clus_type}")
-        if edge_type not in ["same", "dist"]:
+        if edge_type not in ["same", "dist", "diff"]:
             raise ValueError(f"Unknown edge construction method: {clus_type}")
         if clus_type == "fc" and strip:
             raise ValueError(
@@ -141,6 +142,8 @@ class EdgeBuilder(nn.Module):
         ## Change the output dimension based on how we construct edge and node features
         if edge_type == "dist":
             self.outp_dim[0] = 1
+        elif edge_type == "diff":
+            self.outp_dim[0] = self.n_crd
         if strip:
             self.outp_dim[1] = self.outp_dim[1] - self.n_crd
 

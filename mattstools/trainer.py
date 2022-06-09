@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from functools import partialmethod
 
+import wandb
 import numpy as np
 from tqdm import tqdm
 import matplotlib.pyplot as plt
@@ -290,6 +291,7 @@ class Trainer:
         ## Use the running losses to update the total history, then reset
         for lnm, running in self.run_loss.items():
             self.loss_hist[lnm][mode].append(running.avg)
+            # wandb.log({mode: {lnm: running.avg}})
             running.reset()
 
     def count_epochs(self) -> None:

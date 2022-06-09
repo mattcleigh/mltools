@@ -7,7 +7,6 @@ from typing import Union
 
 import torch as T
 import torch.nn as nn
-from torch.utils.data import DataLoader
 
 from mattstools.torch_utils import sel_device
 from mattstools.utils import save_yaml_files
@@ -82,7 +81,7 @@ class MyNetBase(nn.Module):
         loss_dict = {"total": 0}
         return loss_dict
 
-    def visualise(self, _loader: DataLoader, _path: str = "SetPls!", _flag: str = ""):
+    def visualise(self, *_args, **__kwargs):
         """This method should be overwritten by any inheriting network
         - It is used to save certain plots using a batch of samples
         """

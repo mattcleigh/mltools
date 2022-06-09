@@ -2,7 +2,7 @@
 Defines the graph object type and other operations specific to handing them
 """
 
-from typing import Iterable
+from typing import Iterable, Union
 
 import torch as T
 from torch.utils.data._utils.collate import default_collate
@@ -68,6 +68,18 @@ class Graph:
     def __len__(self):
         """Return the masking length of the graph"""
         return len(self.mask)
+
+    def to(self, dev: str):
+        """Move the graph to a selected device"""
+        return Graph(
+            self.edges,
+            self.nodes,
+            self.globs,
+            self.cndts,
+            self.adjmat,
+            self.mask,
+            dev=dev,
+        )
 
 
 class GraphBatch:
@@ -237,7 +249,7 @@ class GraphBatch:
         )
 
 
-def graph_collate(batch: Iterable) -> GraphBatch:
+def graph_collate(batch: Iterable) -> Union[GraphBatch, tuple]:
     """A custom collation function which allows us to batch together multiple graphs
     - Wraps the pytorch default collation function to allow for all the memory tricks
     - Looks at the first element of the batch for instructions on what to do

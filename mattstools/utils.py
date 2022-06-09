@@ -347,6 +347,8 @@ def get_scaler(name: str):
         return PowerTransformer()
     if name == "quantile":
         return QuantileTransformer(output_distribution="normal")
+    if name == "none":
+        return None
     raise ValueError(f"No sklearn scaler with name: {name}")
 
 

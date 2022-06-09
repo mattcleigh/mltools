@@ -8,6 +8,66 @@ import torch.nn.functional as F
 
 EPS = 1e-8  ## epsilon for preventing division by zero
 
+def masked_diff_matrix(
+    tensor_a: T.Tensor,
+    mask_a: T.BoolTensor,
+    tensor_b: T.Tensor = None,
+    mask_b: T.BoolTensor = None,
+    pad_val: float = float("Inf"),
+    allow_self: bool = False,
+    track_grad: bool = False,
+) -> T.Tensor:
+    """Builds a difference matrix between two masked/padded tensors
+    - DOES NOT WORK WITH BATCH DIMENSION FOR NOW!
+
+    - Will create the self distance matrix if only one tensor and mask is provided
+    - The distance matrix will be padded
+    - Uses the tensors as a->senders (dim 1) vs b->receivers (dim 2)
+        - Symettrical if doing self distance (tensor_b is none)
+    - Attributes of the matrix will be the senders-receivers
+
+    args:
+        tensor_a: The first tensor to use (n_nodes x n_features)
+        mask_a: Shows which nodes in tensor_a are real (n_nodes)
+    kwargs:
+        tensor_b: The second tensor to use (N_nodes x n_features)
+        mask_b: Shows which nodes in tensor_b are real (n_nodes)
+        pad_val: The value to use for distances between fake and real (fake) nodes
+        allow_self: Only applicable for self distances. Allows self connections.
+        track_grad: If the gradients are tracked during this step (memory heavy!)
+    returns:
+        diff_matrix matrix: distance between tensor_a and tensor_a(b)
+        matrix_mask: location of connections between real nodes
+    """
+
+    ## Save current gradient settings then change to argument
+    has_grad = T.is_grad_enabled()
+    T.set_grad_enabled(track_grad)
+
+    ## Initialise a self distance matrix
+    allow_self = allow_self and tensor_b is None
+    if tensor_b is None:
+        tensor_b = tensor_a
+        mask_b = mask_a
+
+    ## Calculate the matrix mask of real nodes to real nodes
+    matrix_mask = mask_a.unsqueeze(-1) * mask_b.unsqueeze(-2)
+
+    ## Remove diagonal (loops) from the mask for self connections
+    if not allow_self:
+        matrix_mask *= ~T.eye(len(mask_a)).bool()
+
+    ## Calculate the distance matrix as normal
+    diff_matrix = tensor_a.unsqueeze(-2) - tensor_b.unsqueeze(-3)
+
+    ## Ensure the distances between fake nodes take the padding value
+    diff_matrix[~matrix_mask] = pad_val
+
+    ## Revert the gradient tracking to the previous setting
+    T.set_grad_enabled(has_grad)
+
+    return diff_matrix, matrix_mask.detach()
+
 
 def masked_dist_matrix(
     tensor_a: T.Tensor,
