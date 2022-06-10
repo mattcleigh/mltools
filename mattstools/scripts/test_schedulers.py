@@ -15,15 +15,15 @@ def main():
 
     ## Define dummy network and an optimiser
     net = nn.Linear(3, 3)
-    opt = get_optim({"name": "sgd", "lr": lr}, net.parameters())
 
     ## Define the schedulers
-    schd_nms = ["cosann", "cosannwr", "onecycle", "cyclicwithwarmup"]
+    schd_nms = ["cosann", "cosannwr", "onecycle", "cyclicwithwarmup", "warmup"]
 
     ## Cycle through the different schedulers
     for schd_nm in schd_nms:
 
         ## Build the scheduler
+        opt = get_optim({"name": "sgd", "lr": lr}, net.parameters())
         schd = get_sched({"name": schd_nm}, opt, batches, max_lr=lr, max_epochs=epochs)
 
         ## Simulate the learning loop

@@ -3,7 +3,28 @@ Custom pytorch learning rate schedulers
 """
 
 import warnings
-from torch.optim.lr_scheduler import OneCycleLR
+from torch.optim.lr_scheduler import _LRScheduler, OneCycleLR
+
+
+class WarmupToConstant(_LRScheduler):
+    """Gradually warm-up learning rate in optimizer to a constant value
+    """
+
+    def __init__(self, optimizer, num_steps=100):
+        """
+        args:
+            optimizer (Optimizer): Wrapped optimizer.
+            num_steps: target learning rate is reached at num_steps.
+        """
+        self.num_steps = num_steps
+        self.finished = False
+        super().__init__(optimizer)
+
+    def get_lr(self):
+        if self.last_epoch > self.num_steps:
+            return [base_lr for base_lr in self.base_lrs]
+        else:
+            return [(base_lr / self.num_steps) * self.last_epoch for base_lr in self.base_lrs]
 
 
 class CyclicWithWarmup(OneCycleLR):

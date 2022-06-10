@@ -15,7 +15,7 @@ from torch.utils.data import Dataset, Subset, random_split
 from geomloss import SamplesLoss
 
 from mattstools.loss import GeomWrapper, MyBCEWithLogit, VAELoss, ChampferLoss
-from mattstools.schedulers import CyclicWithWarmup
+from mattstools.schedulers import CyclicWithWarmup, WarmupToConstant
 
 
 class RunningAverage:
@@ -202,6 +202,8 @@ def get_sched(
         return CyclicWithWarmup(
             opt, max_lr, total_steps=steps_per_epoch * epochs_per_cycle, **dict_copy
         )
+    elif name == "warmup":
+        return WarmupToConstant(opt, **dict_copy)
     else:
         raise ValueError(f"No scheduler with name: {name}")
 
