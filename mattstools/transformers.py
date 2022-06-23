@@ -135,7 +135,7 @@ class MultiHeadedAttentionBlock(nn.Module):
         if attn_mask is not None:
             mask *= attn_mask
         mask = mask.unsqueeze(-3)
-        scores.masked_fill(~mask, -T.inf)
+        scores = scores.masked_fill(~mask, -T.inf)
 
         ## Apply the softmax function per head feature
         scores = F.softmax(scores, dim=-1)
@@ -194,7 +194,7 @@ class TransformerEncoderLayer(nn.Module):
     def forward(self, x: T.Tensor, mask: T.BoolTensor) -> T.Tensor:
         "Pass through the layer using residual connections and layer normalisation"
         x = x + self.self_attn(self.norm1(x), q_mask=mask, kv_mask=mask)
-        x = x + self.feed_forward(self.norm2(x))
+        x = x + pass_with_mask(self.norm2(x), self.feed_forward, mask)
         return x
 
 
