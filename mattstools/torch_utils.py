@@ -90,11 +90,15 @@ def empty_0dim_like(tensor: T.Tensor) -> T.Tensor:
 
 
 def get_nrm(name: str, outp_dim: int) -> nn.Module:
-    """Return a 1D pytorch normalisation layer given a name and a output size"""
+    """Return a 1D pytorch normalisation layer given a name and a output size
+    Returns None object if name is none
+    """
     if name == "batch":
         return nn.BatchNorm1d(outp_dim)
     if name == "layer":
         return nn.LayerNorm(outp_dim)
+    if name == "none":
+        return None
     else:
         raise ValueError("No normalistation with name: ", name)
 
@@ -255,7 +259,7 @@ def masked_pool(
     elif axis < 0:
         axis = len(tensor.shape) - axis
 
-    ## Applyt the pooling method, which requires specific pooling
+    ## Apply the pooling method
     if pool_type == "max":
         tensor[~mask] = -T.inf
         return tensor.max(dim=axis)
@@ -337,6 +341,7 @@ def pass_with_mask(
     padval: float = 0.0,
 ) -> T.Tensor:
     """Pass a collection of padded tensors through a module without wasting computation
+    on padded elements!
     - Only confirmed tested with mattstools DenseNet
 
     args:
@@ -476,6 +481,9 @@ def aggr_via_sparse(cmprsed: T.Tensor, mask: T.BoolTensor, reduction: str, dim: 
     """Aggregate a compressed tensor by first blowing up to a sparse representation
 
     The tensor is blown up to full size such that: full[mask] = cmprsed
+    This is suprisingly quick and the fastest method I have tested to do sparse
+    aggregation in pytorch.
+    I am sure that there might be a way to get this to work with gather though!
 
     Supports sum, mean, and softmax
     - mean is not supported by torch.sparse, so we use sum and the mask
@@ -512,6 +520,7 @@ def sparse_from_mask(inpt: T.Tensor, mask: T.BoolTensor, is_compressed: bool = F
     return T.sparse_coo_tensor(
         T.nonzero(mask).t(),
         inpt if is_compressed else inpt[mask],
+        size=(*mask.shape, inpt.shape[-1]),
         device=inpt.device,
         dtype=inpt.dtype,
         requires_grad=inpt.requires_grad,

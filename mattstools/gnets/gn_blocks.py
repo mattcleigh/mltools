@@ -2,7 +2,7 @@
 The specific modules that make up the GNblock
 """
 
-import math
+import wandb
 from typing import Tuple
 
 import torch as T
@@ -19,6 +19,7 @@ from mattstools.torch_utils import (
     masked_pool,
     pass_with_mask,
     decompress,
+    sparse_from_mask,
 )
 
 from mattstools.gnets.graphs import GraphBatch

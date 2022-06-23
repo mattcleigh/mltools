@@ -8,13 +8,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import FancyArrowPatch
 
+
 def plot_bar_graphs(
     path: Path,
     real_nodes: list,
     real_mask: list,
     gen_nodes: list,
     gen_mask: list,
-    labels: list = None
+    labels: list = None,
 ):
     """Plot a series of scatter plots using batch of generated point clouds
     - Creates a multiplot with n_samples rows and n_stages columns
@@ -71,10 +72,7 @@ def plot_bar_graphs(
 
             ## Plot the real nodes
             axis.plot(
-                *real_nodes[j][(real_mask[j])].T,
-                "o",
-                color="grey",
-                label = labels[i]
+                *real_nodes[j][(real_mask[j])].T, "o", color="grey", label=labels[i]
             )
 
             if n_dim == 2:
@@ -107,9 +105,9 @@ def plot_bar_graphs(
             axis.set_xlim([-0.5, 0.5])
             axis.set_ylim([-0.5, 0.5])
             if n_dim == 3:
-                axis.set_xlim([-3.5, 3.5])
-                axis.set_ylim([-3.5, 3.5])
-                axis.set_zlim([-3.5, 3.5])
+                axis.set_xlim([-1, 1])
+                axis.set_ylim([-1, 1])
+                axis.set_zlim([-1, 1])
                 axis.zaxis.set_ticklabels([])
                 axis.zaxis.set_ticks_position("none")
             else:

@@ -2,13 +2,14 @@
 A collection of networks that all inherit from the MyNetwork base class
 """
 
+from itertools import count
 from pathlib import Path
 from typing import Union
 
 import torch as T
 import torch.nn as nn
 
-from mattstools.torch_utils import sel_device
+from mattstools.torch_utils import sel_device, count_parameters
 from mattstools.utils import save_yaml_files
 
 
@@ -134,3 +135,6 @@ class MyNetBase(nn.Module):
         """Sets the device attribute and moves all parameters"""
         self.device = sel_device(device)
         self.to(self.device)
+
+    def __repr__(self):
+        return super().__repr__() + "\nNum params: " + str(count_parameters(self))

@@ -248,10 +248,19 @@ class DenseNetwork(nn.Module):
         """Return a one line string that sums up the network structure"""
         string = ""
         if self.inpt_nrm != "none":
-            string+="LN>"
+            string += "LN>"
+        string += str(self.inpt_dim) + ">"
+        string += str(self.input_block.outp_dim) + ">"
         string += ">".join(
-            [str(d) for d in [self.inpt_dim, *self.hddn_dim, self.outp_dim]]
+            [
+                str(layer.out_features)
+                for hidden in self.hidden_blocks
+                for layer in hidden.block
+                if isinstance(layer, nn.Linear)
+            ]
         )
+        if self.do_out:
+            string += ">" + str(self.outp_dim)
         return string
 
 

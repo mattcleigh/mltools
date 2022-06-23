@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 
 import torch as T
 import torch.nn as nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 
 from mattstools.plotting import plot_multi_loss
 from mattstools.torch_utils import (
@@ -65,8 +65,8 @@ class Trainer:
         print("\nInitialising the trainer")
 
         ## Default dict arguments
-        optim_dict = optim_dict or {"name": "adam", "lr": 1e-4}
-        sched_dict = sched_dict or {"name": "none"}
+        self.optim_dict = optim_dict.copy() or {"name": "adam", "lr": 1e-4}
+        self.sched_dict = sched_dict.copy() or {"name": "none"}
 
         ## Save the network and dataloaders
         self.network = network
@@ -74,7 +74,16 @@ class Trainer:
         self.valid_loader = valid_loader
         self.has_v = valid_loader is not None
 
-        ## Report on the number of files/samples used
+        ## Its also really useful to save the underlying dataset objects (by reference)
+        self.train_set = train_loader.dataset
+        if isinstance(self.train_set, Subset):
+            self.train_set = self.train_set.dataset
+        if self.has_v:
+            self.valid_set = valid_loader.dataset
+            if isinstance(self.valid_set, Subset):
+                self.valid_set = self.valid_set.dataset
+
+        ## Report on the number of files/samples used (keep as the subset for length!)
         print(f"train set: {len(self.train_loader.dataset):7} samples")
         if self.has_v:
             print(f"valid set: {len(self.valid_loader.dataset):7} samples")
@@ -83,7 +92,7 @@ class Trainer:
 
         ## Create a history of train and validation losses for early stopping
         self.loss_hist = {
-            lsnm: {set: [] for set in ["train", "valid"]}
+            lsnm: {dset: [] for dset in ["train", "valid"]}
             for lsnm in self.network.loss_names
         }
 
@@ -99,12 +108,12 @@ class Trainer:
         self.chkp_every = chkp_every
 
         ## Load the optimiser and scheduler
-        self.optimiser = get_optim(optim_dict, self.network.parameters())
+        self.optimiser = get_optim(self.optim_dict, self.network.parameters())
         self.scheduler = get_sched(
-            sched_dict,
+            self.sched_dict,
             self.optimiser,
             len(self.train_loader),
-            max_lr=optim_dict["lr"],  ## Only used for onecycle
+            max_lr=self.optim_dict["lr"],  ## Only used for onecycle
             max_epochs=max_epochs,  ## Only used for onecycle
         )
 
@@ -129,6 +138,9 @@ class Trainer:
         if resume:
             self.load_checkpoint(flag="latest")
             self._save_chpt_dict("before_resume")  ## Make a save before continuing
+
+        ## Initialise the weights and biases metrics for loss tracking
+        self.wandb_define_metrics()
 
     def explode_learning(
         self,
@@ -222,6 +234,7 @@ class Trainer:
                 self.epoch(is_train=False)
             self.count_epochs()
             self.save_checkpoint()
+            self.wandb_update()
 
             ## Check if we have exceeded the patience
             if self.bad_epochs > self.patience:
@@ -247,11 +260,15 @@ class Trainer:
             self.network.train()
             loader = self.train_loader
             T.set_grad_enabled(True)
+            if hasattr(self.train_set, "do_augment"):
+                self.train_set.do_augment = True
         else:
             mode = "valid"
             self.network.eval()
             loader = self.valid_loader
             T.set_grad_enabled(False)
+            if hasattr(self.valid_set, "do_augment"):
+                self.valid_set.do_augment = False
 
         ## Cycle through the batches provided by the selected loader
         for batch_idx, batch in enumerate(tqdm(loader, desc=mode, ncols=80)):
@@ -266,7 +283,7 @@ class Trainer:
             if is_train:
 
                 ## Zero and calculate gradients using total loss (from dict)
-                self.optimiser.zero_grad(set_to_none=False)
+                self.optimiser.zero_grad(set_to_none=True)
                 losses["total"].backward()
 
                 ## Apply gradient clipping
@@ -290,8 +307,9 @@ class Trainer:
 
         ## Use the running losses to update the total history, then reset
         for lnm, running in self.run_loss.items():
+
+            ## Update my own dict and reset
             self.loss_hist[lnm][mode].append(running.avg)
-            # wandb.log({mode: {lnm: running.avg}})
             running.reset()
 
     def count_epochs(self) -> None:
@@ -399,3 +417,49 @@ class Trainer:
             raise ValueError("Loaded checkpoint already exeeds specified patience!")
         if self.num_epochs > self.max_epochs:
             raise ValueError("Loaded checkpoint already trained up to max epochs!")
+
+    def wandb_define_metrics(self):
+        """Define metrics for tracking with weights and biases.
+        - Right now it just uses the loss terms from the network
+        - Does nothing if there is no wanb session running
+        """
+        if wandb.run is not None:
+            for dset in ["train", "valid"]:
+                for lsnm in self.network.loss_names:
+                    wandb.define_metric(f"{dset} {lsnm}", summary="min")
+
+    def wandb_update(self):
+        """Send an update for the weights and biases logger
+        - Does nothing if there is no wanb session running
+        """
+
+        if wandb.run is None:
+            return
+
+        ## Start by logging the saved loss metrics
+        for dset in ["train", "valid"]:
+            for lsnm in self.network.loss_names:
+                wandb.log(
+                    {f"{dset} {lsnm}": self.loss_hist[lsnm][dset][-1]},
+                    step=self.num_epochs,
+                )
+
+        ## Log patience parameters
+        wandb.log(
+            {
+                "best_epoch": self.best_epoch,
+                "num_epochs": self.num_epochs,
+                "bad_epochs": self.bad_epochs,
+            },
+            step=self.num_epochs,
+        )
+
+        ## Log optimiser (only 1st param groups) and learning rate information
+        wandb.log(
+            {
+                k: np.array(v) if isinstance(v, tuple) else v
+                for k, v in self.optimiser.state_dict()["param_groups"][0].items()
+                if k != "params"
+            },
+            step=self.num_epochs,
+        )

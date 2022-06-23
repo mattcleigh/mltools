@@ -7,8 +7,7 @@ from torch.optim.lr_scheduler import _LRScheduler, OneCycleLR
 
 
 class WarmupToConstant(_LRScheduler):
-    """Gradually warm-up learning rate in optimizer to a constant value
-    """
+    """Gradually warm-up learning rate in optimizer to a constant value"""
 
     def __init__(self, optimizer, num_steps=100):
         """
@@ -24,7 +23,10 @@ class WarmupToConstant(_LRScheduler):
         if self.last_epoch > self.num_steps:
             return [base_lr for base_lr in self.base_lrs]
         else:
-            return [(base_lr / self.num_steps) * self.last_epoch for base_lr in self.base_lrs]
+            return [
+                (base_lr / self.num_steps) * self.last_epoch
+                for base_lr in self.base_lrs
+            ]
 
 
 class CyclicWithWarmup(OneCycleLR):
@@ -39,7 +41,7 @@ class CyclicWithWarmup(OneCycleLR):
         Only line that is changed from the original method is the step number!
         Also removed the warning that step > length
         """
-        if not self._get_lr_called_within_step:
+        if not self._get_lr_called_within_step:  # pylint: disable=no-member
             warnings.warn(
                 "To get the last learning rate computed by the scheduler, "
                 "please use `get_last_lr()`.",

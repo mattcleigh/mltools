@@ -27,9 +27,15 @@ plt.rcParams["axes.labelsize"] = "large"
 plt.rcParams["axes.titlesize"] = "large"
 plt.rcParams["legend.fontsize"] = 11
 
+
 def gaussian(x_data, mu=0, sig=1):
     """Return the value of the gaussian distribution"""
-    return 1/np.sqrt(2*np.pi*sig**2) * np.exp(-(x_data - mu)**2 / (2 * sig**2))
+    return (
+        1
+        / np.sqrt(2 * np.pi * sig**2)
+        * np.exp(-((x_data - mu) ** 2) / (2 * sig**2))
+    )
+
 
 def plot_corr_heatmaps(
     path: Path,
@@ -38,6 +44,7 @@ def plot_corr_heatmaps(
     bins: list,
     xlabel: str,
     ylabel: str,
+    weights: np.ndarray = None,
     do_log: bool = True,
     cmap: str = "coolwarm",
     incl_line: bool = True,
@@ -57,6 +64,8 @@ def plot_corr_heatmaps(
         bins: The bins to use, must be [xbins, ybins]
         xlabel: Label for the x-axis
         ylabel: Label for the y-axis
+    kwargs:
+        weights: The weight value for each x, y pair
         do_log: If the z axis should be the logarithm
         cmap: The name of the cmap to use for z values
         incl_line: If a y=x line should be included to show ideal correlation
@@ -70,7 +79,7 @@ def plot_corr_heatmaps(
     ## Create the histogram
     if len(bins) != 2:
         bins = [bins, bins]
-    hist, xedges, yedges = np.histogram2d(x_vals, y_vals, bins=bins)
+    hist, xedges, yedges = np.histogram2d(x_vals, y_vals, weights=weights, bins=bins)
 
     ## Initialise the figure
     fig, ax = plt.subplots(1, 1, figsize=figsize)
@@ -701,7 +710,7 @@ def plot_latent_space(path, latents, labels=None, n_classes=None):
     lat_dim = min(8, latents.shape[-1])
 
     ## Create the figure with the  correct number of plots
-    fig, axis = plt.subplots(2, int(np.ceil(lat_dim/2)), figsize=(8, 4))
+    fig, axis = plt.subplots(2, int(np.ceil(lat_dim / 2)), figsize=(8, 4))
     axis = axis.flatten()
 
     ## Plot the distributions of the marginals
@@ -714,7 +723,7 @@ def plot_latent_space(path, latents, labels=None, n_classes=None):
             if lab == -1:
                 mask = np.ones((len(latents))).astype("bool")
             else:
-                mask = labels==lab
+                mask = labels == lab
 
             ## Use the selected info for making the histogram
             x_data = latents[mask, dim]

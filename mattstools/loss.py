@@ -115,8 +115,8 @@ def masked_dist_loss(
     """
 
     ## Calculate the weights by normalising the mask for each sample
-    a_weights = pc_a_mask.float() / pc_a_mask.sum(dim=-1, keepdim=True)
-    b_weights = pc_b_mask.float() / pc_b_mask.sum(dim=-1, keepdim=True)
+    a_weights = pc_a_mask.float()  # / pc_a_mask.sum(dim=-1, keepdim=True)
+    b_weights = pc_b_mask.float()  # / pc_b_mask.sum(dim=-1, keepdim=True)
 
     ## Calculate the loss using these weights
     loss = loss_fn(a_weights, pc_a, b_weights, pc_b)

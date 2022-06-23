@@ -8,6 +8,7 @@ import torch.nn.functional as F
 
 EPS = 1e-8  ## epsilon for preventing division by zero
 
+
 def masked_diff_matrix(
     tensor_a: T.Tensor,
     mask_a: T.BoolTensor,
@@ -204,7 +205,7 @@ def knn(
         restr_dim = {"send": 1, "recv": 2}[k_restr_dim]
 
         ## Find the kth smallest distance across the correct dimension
-        max_distances = T.kthvalue(distmat, k_val, dim=restr_dim, keepdim=True)[0]
+        max_distances = T.kthvalue(distmat, k_val + 1, dim=restr_dim, keepdim=True)[0]
         max_distances = T.transpose(max_distances, -1, -2)
 
     ## Build a connection if the distance between nodes is smaller or equal to the max
