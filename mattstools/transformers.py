@@ -175,7 +175,7 @@ class MultiHeadedAttentionBlock(nn.Module):
         self.q_linear = nn.Linear(model_dim, model_dim, bias=False)
         self.k_linear = nn.Linear(model_dim, model_dim, bias=False)
         self.v_linear = nn.Linear(model_dim, model_dim, bias=False)
-        self.dropout_layer = nn.Dropout if drp > 0 else None
+        self.dropout_layer = nn.Dropout(p=drp) if drp > 0 else None
         self.out_linear = nn.Linear(model_dim, model_dim)
 
     def forward(
