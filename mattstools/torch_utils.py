@@ -14,8 +14,9 @@ from torch.utils.data import Dataset, Subset, random_split
 
 from geomloss import SamplesLoss
 
-from mattstools.loss import GeomWrapper, MyBCEWithLogit, VAELoss, ChampferLoss
-from mattstools.schedulers import CyclicWithWarmup, WarmupToConstant
+from .lookahead import Lookahead
+from .loss import GeomWrapper, MyBCEWithLogit, VAELoss, ChampferLoss
+from .schedulers import CyclicWithWarmup, WarmupToConstant
 
 
 class RunningAverage:
@@ -65,8 +66,10 @@ def get_act(name: str) -> nn.Module:
         return nn.SiLU()
     if name == "selu":
         return nn.SELU()
-    if name == "sigm":
-        return nn.Sigmoid()
+    if name == "softmax":
+        return nn.Softmax()
+    if name == "gelu":
+        return nn.GELU()
     if name == "tanh":
         return nn.Tanh()
     if name == "softmax":
@@ -111,20 +114,30 @@ def get_optim(optim_dict: dict, params: Iterable) -> optim.Optimizer:
         params: A pointer to the parameters that will be updated by the optimiser
     """
 
-    ## Pop off the name and learning rate for the optimiser
+    ## Pop off the name and the lookahead setting
     dict_copy = optim_dict.copy()
     name = dict_copy.pop("name")
+    lookahead = dict_copy.pop("lookahead", False)
 
+    ## Load the optimiser
     if name == "adam":
-        return optim.Adam(params, **dict_copy)
+        opt = optim.Adam(params, **dict_copy)
     elif name == "adamw":
-        return optim.AdamW(params, **dict_copy)
+        opt = optim.AdamW(params, **dict_copy)
     elif name == "rmsp":
-        return optim.RMSprop(params, **dict_copy)
+        opt = optim.RMSprop(params, **dict_copy)
+    elif name == "radam":
+        opt = optim.RAdam(params, **dict_copy)
     elif name == "sgd":
-        return optim.SGD(params, **dict_copy)
+        opt = optim.SGD(params, **dict_copy)
     else:
         raise ValueError("No optimiser with name: ", name)
+
+    ## Switch to lookahead version
+    if lookahead:
+        opt = Lookahead(opt, k=5, alpha=0.5)
+
+    return opt
 
 
 def get_loss_fn(name: str) -> nn.Module:
@@ -336,7 +349,7 @@ def np_group_by(a: np.ndarray) -> np.ndarray:
 def pass_with_mask(
     inputs: T.Tensor,
     module: nn.Module,
-    mask: T.BoolTensor,
+    mask: T.BoolTensor = None,
     context: List[T.Tensor] = None,
     padval: float = 0.0,
 ) -> T.Tensor:
@@ -351,6 +364,14 @@ def pass_with_mask(
         context: A list of context tensor per sample to be repeated for the mask
         padval: A value to pad the outputs with
     """
+
+    ## For generalisability, if the mask is none then we just return the normal pass
+    if mask is None:
+        if context is None:
+            return module(inputs)
+        return module(
+            inputs, ctxt_from_mask(context, T.ones_like(inputs[..., 0], dtype=T.bool))
+        )
 
     ## Get the output dimension from the passed module (mine=outp_dim, torch=features)
     if hasattr(module, "outp_dim"):

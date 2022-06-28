@@ -22,11 +22,9 @@ class WarmupToConstant(_LRScheduler):
     def get_lr(self):
         if self.last_epoch > self.num_steps:
             return [base_lr for base_lr in self.base_lrs]
-        else:
-            return [
-                (base_lr / self.num_steps) * self.last_epoch
-                for base_lr in self.base_lrs
-            ]
+        return [
+            (base_lr / self.num_steps) * self.last_epoch for base_lr in self.base_lrs
+        ]
 
 
 class CyclicWithWarmup(OneCycleLR):

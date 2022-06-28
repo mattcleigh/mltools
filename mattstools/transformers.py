@@ -3,21 +3,105 @@ Some classes to describe transformer architectures
 """
 
 import math
-from typing import Any, List
-
-from copy import deepcopy
 
 import torch as T
 import torch.nn as nn
 import torch.nn.functional as F
 
-from mattstools.modules import DenseNetwork
-from mattstools.torch_utils import pass_with_mask
+from .modules import DenseNetwork
+from .torch_utils import pass_with_mask
+
+def merge_masks(
+    q_mask: T.BoolTensor,
+    kv_mask: T.BoolTensor,
+    attn_mask: T.BoolTensor,
+    q_shape: T.Size,
+    k_shape: T.Size,
+    device: T.device,
+):
+    """Create a full attention mask which incoporates the padding information"""
+
+    ## Create the full mask which combines the attention and padding masks!
+    full_mask = None
+
+    ## If either pad mask exists, create
+    if q_mask is not None or kv_mask is not None:
+        q_mask = (
+            q_mask
+            if q_mask is not None
+            else T.ones(q_shape[:-1], dtype=T.bool, device=device)
+        )
+        kv_mask = (
+            kv_mask
+            if kv_mask is not None
+            else T.ones(k_shape[:-1], dtype=T.bool, device=device)
+        )
+        full_mask = q_mask.unsqueeze(-1) * kv_mask.unsqueeze(-2)
+
+    ## If attention mask exists, create
+    if attn_mask is not None:
+        full_mask = attn_mask if full_mask is None else attn_mask * full_mask
+
+    return full_mask
 
 
-def make_clones(subject: Any, num_clones: int) -> List[Any]:
-    """Return a list of identical deep copies of an object"""
-    return [deepcopy(subject) for _ in range(num_clones)]
+def attention(
+    query: T.Tensor,
+    key: T.Tensor,
+    value: T.Tensor,
+    dim_key: int,
+    attn_mask: T.BoolTensor = None,
+    edge_weights: T.Tensor = None,
+    mul_weights: bool = True,
+    dropout_layer: nn.Module = None,
+):
+    """Apply the attention using the scaled dot product between the key query and
+    key tensors, then matrix multiplied by the value.
+
+    Note that the attention scores are ordered in recv x send, which is the opposite
+    to how I usually do it for the graph network, which is send x recv
+
+    args:
+        query: Batched query sequence of tensors (b, h, s, f)
+        key: Batched key sequence of tensors (b, h, s, f)
+        value: Batched value sequence of tensors (b, h, s, f)
+        dim_key: The dimension of the key features, used to scale the dot product
+        attn_mask: The attention mask, used to blind certain combinations of k,q pairs
+        edge_weights: Extra weights to combine with attention weights
+        mul_weights: If the weights are multiplied into the scores (False they are add)
+        dropout_layer: Optional dropout layer for the scores
+    """
+
+    ## Perform the matrix multiplication
+    scores = T.matmul(query, key.transpose(-2, -1)) / math.sqrt(dim_key)
+
+    ## Multiply the scores by adding in the manual weights
+    if edge_weights is not None:
+        if mul_weights:
+            scores = scores * edge_weights.unsqueeze(-3)
+        else:
+            scores = scores + edge_weights.unsqueeze(-3)
+
+    ## Mask away the scores between invalid nodes
+    if attn_mask is not None:
+        attn_mask = attn_mask.unsqueeze(-3)
+        scores = scores.masked_fill(~attn_mask, -T.inf)
+
+    ## Apply the softmax function per head feature
+    scores = F.softmax(scores, dim=-1)
+
+    ## Reinsert the mask, for the padded sequences will now have NaNs
+    if attn_mask is not None:
+        scores = scores.masked_fill(~attn_mask, 0)
+
+    ## Apply dropout to the scores
+    if dropout_layer is not None:
+        scores = dropout_layer(scores)
+
+    ## Finally multiply these scores by the output
+    scores = T.matmul(scores, value)
+
+    return scores
 
 
 class MultiHeadedAttentionBlock(nn.Module):
@@ -61,6 +145,8 @@ class MultiHeadedAttentionBlock(nn.Module):
         self,
         model_dim: int,
         num_heads: int = 1,
+        drp: float = 0,
+        mul_weights: bool = True,
     ):
         """Init method for AttentionBlock
 
@@ -69,6 +155,9 @@ class MultiHeadedAttentionBlock(nn.Module):
         kwargs:
             num_heads: The number of different attention heads to process in parallel
                 - Must allow interger division into model_dim
+            drp: The dropout probability used in the MHA operation
+            mul_weights: How extra interation weights should be used if passed
+                - See attention above
         """
         super().__init__()
 
@@ -76,6 +165,7 @@ class MultiHeadedAttentionBlock(nn.Module):
         self.model_dim = model_dim
         self.num_heads = num_heads
         self.head_dim = model_dim // num_heads
+        self.mul_weights = mul_weights
 
         ## Check that the dimension of each head makes internal sense
         if self.head_dim * num_heads != model_dim:
@@ -85,6 +175,7 @@ class MultiHeadedAttentionBlock(nn.Module):
         self.q_linear = nn.Linear(model_dim, model_dim, bias=False)
         self.k_linear = nn.Linear(model_dim, model_dim, bias=False)
         self.v_linear = nn.Linear(model_dim, model_dim, bias=False)
+        self.dropout_layer = nn.Dropout if drp > 0 else None
         self.out_linear = nn.Linear(model_dim, model_dim)
 
     def forward(
@@ -95,6 +186,7 @@ class MultiHeadedAttentionBlock(nn.Module):
         q_mask: T.BoolTensor = None,
         kv_mask: T.BoolTensor = None,
         attn_mask: T.BoolTensor = None,
+        edge_weights: T.Tensor = None,
     ) -> T.Tensor:
         """
         args:
@@ -102,19 +194,20 @@ class MultiHeadedAttentionBlock(nn.Module):
         kwargs:
             k: The incoming information keys
             v: The incoming information values
-            a_mask: Shows which elements of the main sequence are real
-            b_mask: Shows which elements of the attn sequence are real
+            q_mask: Shows which elements of the main sequence are real
+            kv_mask: Shows which elements of the attn sequence are real
             attn_mask: Extra mask for the attention matrix (eg: look ahead)
         """
 
         ## If the key and value tensors are not set they copy q
         k = k if k is not None else q
         v = v if v is not None else q
-        q_mask = q_mask if q_mask is not None else T.ones_like(q[..., 0], dtype=T.bool)
-        kv_mask = kv_mask if kv_mask is not None else T.ones_like(k[..., 0], dtype=T.bool)
 
         ## Store the batch size, useful for reshaping
         b_size = q.size(0)
+
+        ## First work out the masking situation, with padding, no peaking etc
+        attn_mask = merge_masks(q_mask, kv_mask, attn_mask, q.shape, k.shape, q.device)
 
         ## First generate the q, k, v embeddings, break final head dimension in 2
         shape = (b_size, -1, self.num_heads, self.head_dim)
@@ -127,30 +220,25 @@ class MultiHeadedAttentionBlock(nn.Module):
         k = k.transpose(1, 2)
         v = v.transpose(1, 2)
 
-        ## Perform the matrix multiplication
-        scores = T.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.model_dim)
+        ## Calculate the new sequence values, for memory reasons overwrite q
+        q = attention(
+            q,
+            k,
+            v,
+            self.model_dim,
+            attn_mask=attn_mask,
+            dropout_layer=self.dropout_layer,
+            edge_weights=edge_weights,
+            mul_weights=self.mul_weights,
+        )  ## Returned shape is b,h,s,f
 
-        ## Calculate the full attention mask and mask away the scores
-        mask = q_mask.unsqueeze(-1) * kv_mask.unsqueeze(-2)
-        if attn_mask is not None:
-            mask *= attn_mask
-        mask = mask.unsqueeze(-3)
-        scores = scores.masked_fill(~mask, -T.inf)
+        ## Concatenate the all of the heads together to get shape: b,s,f
+        q = q.transpose(1, 2).contiguous().view(b_size, -1, self.model_dim)
 
-        ## Apply the softmax function per head feature
-        scores = F.softmax(scores, dim=-1)
-        scores = scores.masked_fill(~mask, 0)
+        ## Pass through final linear layer
+        q = pass_with_mask(q, self.out_linear, q_mask)
 
-        ## Finally multiply these scores by the output
-        scores = T.matmul(scores, v)
-
-        ## Concatenate the all of the heads together: bs, seq, feature
-        scores = scores.transpose(1, 2).contiguous().view(b_size, -1, self.model_dim)
-
-        ## Pass through final attention layer
-        scores = pass_with_mask(scores, self.out_linear, q_mask)
-
-        return scores
+        return q
 
 
 class TransformerEncoderLayer(nn.Module):
@@ -167,95 +255,203 @@ class TransformerEncoderLayer(nn.Module):
     def __init__(
         self,
         model_dim: int,
-        num_heads: int = 1,
+        mha_kwargs: dict = None,
         ff_kwargs: dict = None,
     ) -> None:
         """Init method for TransformerEncoderLayer
 
         args:
-            attn_kwargs: Keyword arguments for attention block
+            mha_kwargs: Keyword arguments for multiheaded-attention block
             ff_kwargs: Keyword arguments for feed forward network
         """
         super().__init__()
 
         ## Default dict arguments
+        mha_kwargs = mha_kwargs or {}
         ff_kwargs = ff_kwargs or {}
 
-        ## The basic blocks
+        ## Save the model dim as an attribute
         self.model_dim = model_dim
-        self.num_heads = num_heads
-        self.self_attn = MultiHeadedAttentionBlock(model_dim, num_heads)
+
+        ## The basic blocks
+        self.self_attn = MultiHeadedAttentionBlock(model_dim, **mha_kwargs)
         self.feed_forward = DenseNetwork(model_dim, outp_dim=model_dim, **ff_kwargs)
 
-        ## The normalisation layers
-        self.norm1 = nn.LayerNorm(self.self_attn.model_dim)
-        self.norm2 = nn.LayerNorm(self.feed_forward.inpt_dim)
+        ## The normalisation layers (lots from NormFormer)
+        self.norm1 = nn.LayerNorm(model_dim)
+        self.norm2 = nn.LayerNorm(model_dim)
+        self.norm3 = nn.LayerNorm(model_dim)
 
-    def forward(self, x: T.Tensor, mask: T.BoolTensor) -> T.Tensor:
+    def forward(
+        self, x: T.Tensor, mask: T.BoolTensor, edge_weights: T.BoolTensor = None
+    ) -> T.Tensor:
         "Pass through the layer using residual connections and layer normalisation"
-        x = x + self.self_attn(self.norm1(x), q_mask=mask, kv_mask=mask)
-        x = x + pass_with_mask(self.norm2(x), self.feed_forward, mask)
+        x = x + self.norm2(self.self_attn(
+            self.norm1(x), q_mask=mask, kv_mask=mask, edge_weights=edge_weights
+        ))
+        x = x + pass_with_mask(self.norm3(x), self.feed_forward, mask)
         return x
 
 
-# class TransformerEncoder(nn.Module):
-#     """A stack of N transformer encoder layers"""
+class CrossAttentionLayer(TransformerEncoderLayer):
+    """A transformer cross attention block
 
-#     def __init__(self, encoder_layer: TransformerEncoderLayer, num_layers: int) -> None:
-#         """Init function for the TransformerEncoder
+    It contains:
+    - cross-attention-block
+    - A feed forward network
 
-#         args:
-#             encoder_layer: A single encoder layer which will be copied multiple times
-#             num_layers: The number of encoder layers to use for the stack
-#         """
+    Can be seen as a type of encoder layer with an overloaded forward method to
+    facilitate cross attention
+    """
 
-#         super().__init__()
-#         self.layers = nn.ModuleList(make_clones(encoder_layer, num_layers))
-#         self.num_layers = num_layers
-#         self.final_norm = nn.LayerNorm(encoder_layer.size)
+    def __init__(
+        self, model_dim: int, mha_kwargs: dict = None, ff_kwargs: dict = None
+    ) -> None:
+        super().__init__(model_dim, mha_kwargs, ff_kwargs)
+        self.norm0 = nn.LayerNorm(model_dim)
 
-#     def forward(
-#         self,
-#         inpt: T.Tensor,
-#         mask: T.Tensor = None,
-#         inpt_key_padding_mask: T.Tensor = None,
-#     ):
-#         """Pass the input through all layers sequentially
+    # pylint: disable=arguments-differ,arguments-renamed
+    def forward(
+        self,
+        q_seq: T.Tensor,
+        kv_seq: T.Tensor,
+        q_mask: T.BoolTensor = None,
+        kv_mask: T.BoolTensor = None,
+    ) -> T.Tensor:
+        "Pass through the layers of cross attention"
+        kv_seq = self.norm1(kv_seq)
+        q_seq = q_seq + self.norm2(self.self_attn(
+            self.norm0(q_seq), kv_seq, kv_seq, q_mask=q_mask, kv_mask=kv_mask
+        ))
+        q_seq = q_seq + pass_with_mask(self.norm3(q_seq), self.feed_forward, q_mask)
 
-#         args:
-#             inpt: The sequence provided to the encoder
-#             mask: The mask for the inpt sequence
-#             inpt_key_padding_mask: The input mask for the tensor
-
-#         """
-
-
-def main():
-    """Main script for debugging"""
-
-    ## Parameters
-    b_size = 2
-    seq_size = 3
-    num_heads = 2
-    model_dim = 4
-    ff_kwargs = {"num_blocks": 1, "drp": 0.1, "hddn_dim": 128}
-
-    ## Create the inputs
-    seq = T.rand((b_size, seq_size, model_dim))
-    mask = seq[..., 0] != 0
-
-    ## Manually kill the last element in each sequence so we can test padding
-    seq[:, -1] = 0
-    mask[:, -1] = False
-
-    ## Create the block
-    mha_block = TransformerEncoderLayer(model_dim, num_heads, ff_kwargs)
-
-    ## Pass the sequence through the block
-    outputs = mha_block.forward(seq, mask)
-
-    print(outputs)
+        return q_seq
 
 
-if __name__ == "__main__":
-    main()
+class TransformerEncoder(nn.Module):
+    """A stack of N transformer encoder layers followed by a final normalisation step"""
+
+    def __init__(
+        self,
+        model_dim: int,
+        num_layers: int = 3,
+        mha_kwargs: dict = None,
+        ff_kwargs: dict = None,
+    ) -> None:
+        """Init function for the TransformerEncoder
+
+        args:
+            model_dim: Feature sieze for input, output, and all intermediate layers
+        kwargs:
+            num_layers: Number of encoder layers used
+            mha_kwargs: Keyword arguments for the mha block
+            ff_kwargs: Keyword arguments for the ff network in each layer
+        """
+        super().__init__()
+
+        self.layers = nn.ModuleList(
+            [
+                TransformerEncoderLayer(model_dim, mha_kwargs, ff_kwargs)
+                for _ in range(num_layers)
+            ]
+        )
+        self.model_dim = model_dim
+        self.num_layers = num_layers
+        self.final_norm = nn.LayerNorm(model_dim)
+
+    def forward(self, sequence: T.Tensor, mask: T.BoolTensor = None) -> T.Tensor:
+        """Pass the input through all layers sequentially"""
+        for layer in self.layers:
+            sequence = layer(sequence, mask)
+        return self.final_norm(sequence)
+
+
+class TransformerVectorEncoder(nn.Module):
+    """A type of transformer encoder which procudes a single vector for the whole seq
+
+    It does this by using several self-attention layers on the whole sequence.
+    Then it introduces a class token which is initialised with small constant values
+    It then uses cross attention using the class token as queries resulting in a
+    single element sequence.
+
+    Then passes this final vector through one last dense network
+    """
+
+    def __init__(
+        self,
+        model_dim: int = 64,
+        outp_dim: int = 1,
+        num_sa_blocks: int = 3,
+        num_ca_blocks: int = 2,
+        ctxt_dim: int = 0,
+        mha_kwargs: dict = None,
+        trans_ff_kwargs: dict = None,
+        final_ff_kwargs: dict = None,
+    ) -> None:
+        """Init function for the TransformerVectorEncoder
+
+        args:
+            model_dim: Feature size for input, output, and all intermediate sequences
+            outp_dim: The dimension of final output vector
+        kwargs:
+            num_sa_blocks: Number of self attention encoder layers
+            num_ca_blocks: Number of cross/class attention encoder layers
+            ctxt_dim: Dimension of context tensor introduced before final net
+            mha_kwargs: Keyword arguments for all multiheaded attention layers
+            trans_ff_kwargs: Keyword arguments for the ff network in each layer
+            final_ff_kwargs: Keyword arguments for the ff network in each layer
+        """
+        super().__init__()
+
+        ## Default dict arguments
+        final_ff_kwargs = final_ff_kwargs or {}
+
+        ## Create the class attributes
+        self.model_dim = model_dim
+        self.outp_dim = outp_dim
+        self.num_sa_blocks = num_sa_blocks
+        self.num_ca_blocks = num_ca_blocks
+        self.ctxt_dim = ctxt_dim
+
+        ## Initialise the models
+        self.sa_blocks = nn.ModuleList(
+            [
+                TransformerEncoderLayer(model_dim, mha_kwargs, trans_ff_kwargs)
+                for _ in range(num_sa_blocks)
+            ]
+        )
+        self.ca_blocks = nn.ModuleList(
+            [
+                CrossAttentionLayer(model_dim, mha_kwargs, trans_ff_kwargs)
+                for _ in range(num_sa_blocks)
+            ]
+        )
+        self.final_ff = DenseNetwork(
+            model_dim, outp_dim, ctxt_dim=ctxt_dim, **final_ff_kwargs
+        )
+
+        ## Initialise the class token embedding as a learnable parameter
+        self.class_token = nn.Parameter(T.randn((1, 1, self.model_dim)))
+
+    def forward(
+        self,
+        seq: T.Tensor,
+        mask: T.BoolTensor = None,
+        ctxt: T.Tensor = None,
+        edge_weights: T.Tensor = None,
+    ) -> T.Tensor:
+        """Pass the input through all layers sequentially"""
+
+        ## Pass through the self attention encoder
+        for layer in self.sa_blocks:
+            seq = layer(seq, mask, edge_weights=edge_weights)
+
+        ## Get the learned class token and expand to the batch size
+        class_token = self.class_token.expand(len(seq), 1, self.model_dim)
+
+        ## Pass through the class attention blocks
+        for layer in self.ca_blocks:
+            class_token = layer(class_token, seq, q_mask=None, kv_mask=mask)
+
+        ## Pass through final dense network and return
+        return self.final_ff(class_token.squeeze(), ctxt=ctxt)
