@@ -52,7 +52,7 @@ def attention(
     dim_key: int,
     attn_mask: T.BoolTensor = None,
     edge_weights: T.Tensor = None,
-    mul_weights: bool = True,
+    mul_weights: bool = False,
     dropout_layer: nn.Module = None,
 ):
     """Apply the attention using the scaled dot product between the key query and
@@ -78,9 +78,9 @@ def attention(
     ## Multiply the scores by adding in the manual weights
     if edge_weights is not None:
         if mul_weights:
-            scores = scores * edge_weights.unsqueeze(-3)
+            scores = scores * edge_weights.transpose(-3, -1)
         else:
-            scores = scores + edge_weights.unsqueeze(-3)
+            scores = scores + edge_weights.transpose(-3, -1)
 
     ## Mask away the scores between invalid nodes
     if attn_mask is not None:
@@ -146,7 +146,7 @@ class MultiHeadedAttentionBlock(nn.Module):
         model_dim: int,
         num_heads: int = 1,
         drp: float = 0,
-        mul_weights: bool = True,
+        mul_weights: bool = False,
     ):
         """Init method for AttentionBlock
 
@@ -369,49 +369,38 @@ class TransformerEncoder(nn.Module):
 class TransformerVectorEncoder(nn.Module):
     """A type of transformer encoder which procudes a single vector for the whole seq
 
-    It does this by using several self-attention layers on the whole sequence.
-    Then it introduces a class token which is initialised with small constant values
-    It then uses cross attention using the class token as queries resulting in a
-    single element sequence.
+    Then the nodes (and optionally edges) are passed through several MHSA layers.
+    Then a learnable class token is updated using cross attention.
+    This results in a single element sequence.
 
-    Then passes this final vector through one last dense network
+    It is non resizing, so model_dim must be used for inputs and outputs
     """
 
     def __init__(
         self,
         model_dim: int = 64,
-        outp_dim: int = 1,
         num_sa_blocks: int = 3,
         num_ca_blocks: int = 2,
-        ctxt_dim: int = 0,
         mha_kwargs: dict = None,
         trans_ff_kwargs: dict = None,
-        final_ff_kwargs: dict = None,
     ) -> None:
         """Init function for the TransformerVectorEncoder
 
         args:
             model_dim: Feature size for input, output, and all intermediate sequences
-            outp_dim: The dimension of final output vector
         kwargs:
             num_sa_blocks: Number of self attention encoder layers
             num_ca_blocks: Number of cross/class attention encoder layers
             ctxt_dim: Dimension of context tensor introduced before final net
             mha_kwargs: Keyword arguments for all multiheaded attention layers
             trans_ff_kwargs: Keyword arguments for the ff network in each layer
-            final_ff_kwargs: Keyword arguments for the ff network in each layer
         """
         super().__init__()
 
-        ## Default dict arguments
-        final_ff_kwargs = final_ff_kwargs or {}
-
         ## Create the class attributes
         self.model_dim = model_dim
-        self.outp_dim = outp_dim
         self.num_sa_blocks = num_sa_blocks
         self.num_ca_blocks = num_ca_blocks
-        self.ctxt_dim = ctxt_dim
 
         ## Initialise the models
         self.sa_blocks = nn.ModuleList(
@@ -426,9 +415,6 @@ class TransformerVectorEncoder(nn.Module):
                 for _ in range(num_sa_blocks)
             ]
         )
-        self.final_ff = DenseNetwork(
-            model_dim, outp_dim, ctxt_dim=ctxt_dim, **final_ff_kwargs
-        )
 
         ## Initialise the class token embedding as a learnable parameter
         self.class_token = nn.Parameter(T.randn((1, 1, self.model_dim)))
@@ -437,8 +423,8 @@ class TransformerVectorEncoder(nn.Module):
         self,
         seq: T.Tensor,
         mask: T.BoolTensor = None,
-        ctxt: T.Tensor = None,
         edge_weights: T.Tensor = None,
+        return_seq: bool = False,
     ) -> T.Tensor:
         """Pass the input through all layers sequentially"""
 
@@ -453,5 +439,109 @@ class TransformerVectorEncoder(nn.Module):
         for layer in self.ca_blocks:
             class_token = layer(class_token, seq, q_mask=None, kv_mask=mask)
 
-        ## Pass through final dense network and return
-        return self.final_ff(class_token.squeeze(), ctxt=ctxt)
+        ## Pop out the unneeded sequence dimension of 1
+        class_token = class_token.squeeze()
+
+        ## Return the class token and optionally the sequence as well
+        if return_seq:
+            return class_token, seq
+        return class_token
+
+
+class FullTransformerVectorEncoder(nn.Module):
+    """A TVE with added input and output embedding networks
+
+    1)  First it embeds the tokens into a higher dimensional space based on model_dim
+        using a dense network.
+    2)  If there are edge features these are embedded into a single dimensional space
+            This is a very optional step which most will want to ignore but it is what
+            ParT used! https://arxiv.org/abs/2202.03772
+    3)  Then it passes these through a TVE to get a single vector output
+    4)  Finally is passes the vector through en embedding network
+    """
+
+    def __init__(
+        self,
+        inpt_dim: int,
+        outp_dim: int,
+        ctxt_dim: int = 0,
+        edge_dim: int = 0,
+        tve_kwargs: dict = None,
+        node_embd_kwargs: dict = None,
+        edge_embd_kwargs: dict = None,
+        outp_embd_kwargs: dict = None,
+    ) -> None:
+        """Init function for the TransformerVectorEncoder
+
+        args:
+            inpt_dim: Dim. of each element of the sequence
+            outp_dim: Dim. of of the final output vector
+        kwargs:
+            ctxt_dim: Dim. of the context vector to pass to the embedding nets
+            ctxt_dim: Dimension of context tensor introduced before final net
+            tve_kwargs: Keyword arguments to pass to the TVE constructor
+            node_embd_kwargs: Keyword arguments for node ff embedder
+            edge_embd_kwargs: Keyword arguments for edge ff embedder
+            outp_embd_kwargs: Keyword arguments for output ff embedder
+        """
+        super().__init__()
+
+        ## Safe default dict arguments
+        node_embd_kwargs = node_embd_kwargs or {}
+        edge_embd_kwargs = edge_embd_kwargs or {}
+        outp_embd_kwargs = outp_embd_kwargs or {}
+        tve_kwargs = tve_kwargs or {}
+
+        ## Create the class attributes
+        self.inpt_dim = inpt_dim
+        self.outp_dim = outp_dim
+        self.ctxt_dim = ctxt_dim
+        self.edge_dim = edge_dim
+
+        ## Initialise the TVE, the main part of this network
+        self.tve = TransformerVectorEncoder(**tve_kwargs)
+
+        ## Initialise all embedding networks
+        self.node_embd = DenseNetwork(
+            inpt_dim=self.inpt_dim,
+            outp_dim=self.tve.model_dim,
+            ctxt_dim=self.ctxt_dim,
+            **node_embd_kwargs
+        )
+        self.outp_embd = DenseNetwork(
+            inpt_dim=self.tve.model_dim,
+            outp_dim=self.outp_dim,
+            ctxt_dim=self.ctxt_dim,
+            **outp_embd_kwargs
+        )
+
+        ## Initialise the edge embedding network (optional)
+        if self.edge_dim:
+            self.edge_embd = DenseNetwork(
+                inpt_dim=self.edge_dim,
+                outp_dim=self.tve.sa_blocks[0].self_attn.num_heads,
+                ctxt_dim=self.ctxt_dim,
+                **edge_embd_kwargs
+            )
+
+    def forward(
+        self,
+        nodes: T.Tensor,
+        mask: T.BoolTensor = None,
+        ctxt: T.Tensor = None,
+        edges: T.Tensor = None,
+    ) -> T.Tensor:
+        """Pass the input through all layers sequentially"""
+
+        ## Embed the nodes
+        nodes = pass_with_mask(nodes, self.node_embd, mask, ctxt)
+
+        ## Embed the edges (optional)
+        if edges is not None:
+            edges = self.edge_embd(edges, ctxt)
+
+        ## Pass through the main transformer (overwrite nodes to save space)
+        nodes = self.tve(nodes, mask, edges)
+
+        ## Pass through the final embedding network and return
+        return self.outp_embd(nodes)

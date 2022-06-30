@@ -229,6 +229,7 @@ class EdgePoolBlock(nn.Module):
         ## Specifically for attention pooling
         if self.pool_type == "attn":
 
+
             ## Attributes needed for attention pooling
             self.pooled_mssg_dim = pooled_mssg_dim
             self.attn_type = attn_type
@@ -239,7 +240,12 @@ class EdgePoolBlock(nn.Module):
 
             attn_dim, ctxt_dim = self._get_dims()
             self.attn_net = DenseNetwork(attn_dim, ctxt_dim=ctxt_dim, **net_kwargs)
-            self.outp_dim *= self.attn_net.outp_dim  ## Dim increases for multiheaded
+
+            ## Check that the dimension of each head makes internal sense
+            self.head_dim = self.outp_dim // self.attn_net.outp_dim
+            if self.head_dim * self.attn_net.outp_dim != self.outp_dim:
+                raise ValueError("Output dimension must be divisible by # of heads!")
+
 
     def _get_dims(self) -> int:
         """Calculates the attention input and context sizes based on config"""
@@ -281,8 +287,8 @@ class EdgePoolBlock(nn.Module):
                 )
 
             ## Broadcast the attention weights with the features and sum
-            new_edges = new_edges.unsqueeze(-1) * attn_outs.unsqueeze(-2)
-            new_edges = new_edges.flatten(start_dim=-2)
+            attn_outs = attn_outs.unsqueeze(-1).expand(-1, -1, self.head_dim).flatten(1)
+            new_edges = new_edges * attn_outs
             new_edges = aggr_via_sparse(new_edges, graph.adjmat, reduction="sum", dim=1)
 
         ## For normal pooling methods
@@ -487,7 +493,11 @@ class NodePoolBlock(nn.Module):
 
             attn_dim, ctxt_dim = self._get_dims()
             self.attn_net = DenseNetwork(attn_dim, ctxt_dim=ctxt_dim, **net_kwargs)
-            self.outp_dim *= self.attn_net.outp_dim  ## Dim increases for multiheaded
+
+            ## Check that the dimension of each head makes internal sense
+            self.head_dim = self.outp_dim // self.attn_net.outp_dim
+            if self.head_dim * self.attn_net.outp_dim != self.outp_dim:
+                raise ValueError("Output dimension must be divisible by # of heads!")
 
     def _get_dims(self) -> int:
         """Calculates the attention input and context sizes based on config"""
@@ -530,11 +540,8 @@ class NodePoolBlock(nn.Module):
                 attn_outs = F.softplus(attn_outs)
 
             ## Broadcast the attention to get the multiple poolings and sum
-            new_nodes = (
-                (new_nodes.unsqueeze(-1) * attn_outs.unsqueeze(-2))
-                .flatten(start_dim=-2)
-                .sum(dim=-2)
-            )
+            attn_outs = attn_outs.unsqueeze(-1).expand(-1, -1, -1, self.head_dim).flatten(2)
+            new_nodes = (new_nodes * attn_outs).sum(dim=-2)
 
         ## For normal pooling methods
         else:
@@ -671,6 +678,7 @@ class GNBlock(nn.Module):
         inpt_dim: list,
         pers_edges: bool = True,
         do_glob: bool = True,
+        norm_new_features: bool = False,
         mgpl_blk_kwargs: dict = None,
         edge_blk_kwargs: dict = None,
         egpl_blk_kwargs: dict = None,
@@ -704,6 +712,7 @@ class GNBlock(nn.Module):
         self.inpt_dim = inpt_dim
         self.pers_edges = pers_edges
         self.do_glob = do_glob
+        self.norm_new_features = norm_new_features
 
         ## Initialise each of the blocks that make up this module
         self.mspl_block = MssgPoolBlock(inpt_dim, **mgpl_blk_kwargs)
@@ -740,6 +749,11 @@ class GNBlock(nn.Module):
             inpt_dim[-1],
         ]
 
+        if norm_new_features:
+            self.edge_norm = nn.LayerNorm(self.edge_block.e_outp_dim)
+            self.node_norm = nn.LayerNorm(self.node_block.n_outp_dim)
+            self.glob_norm = nn.LayerNorm(self.glob_block.g_outp_dim)
+
         ## Check that at least one of the blocks has a network
         if not any(
             [
@@ -762,26 +776,26 @@ class GNBlock(nn.Module):
 
         ## Update the edges of the graph and pool for each receiver node
         new_edges = self.edge_block(graph, pooled_mssgs)
+        if self.norm_new_features:
+           new_edges = self.edge_norm(new_edges)
         pooled_edges = self.egpl_block(new_edges, graph, pooled_mssgs)
         graph.edges = new_edges  ## Delay update due to attn needing old and new
-        del new_edges
         del pooled_mssgs
 
         ## Update the nodes of the graph
         new_nodes = self.node_block(graph, pooled_edges, locked_nodes)
+        if self.norm_new_features:
+           new_nodes = self.node_norm(new_nodes)
 
         ## If there are global outputs, pool the nodes and update globs
         if self.do_glob:
             pooled_nodes = self.ndpl_block(new_nodes, graph, pooled_edges)
             graph.nodes = new_nodes
             del pooled_edges
-            del new_nodes
             graph.globs = self.glob_block(graph, pooled_nodes)
-            del pooled_nodes
         else:
-            graph.nodes = new_nodes
             del pooled_edges
-            del new_nodes
+            graph.nodes = new_nodes
             graph.globs = empty_0dim_like(graph.globs)
 
         ## If we are not doing persistant edges, ensure they are empty
