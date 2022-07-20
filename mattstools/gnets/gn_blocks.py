@@ -229,7 +229,6 @@ class EdgePoolBlock(nn.Module):
         ## Specifically for attention pooling
         if self.pool_type == "attn":
 
-
             ## Attributes needed for attention pooling
             self.pooled_mssg_dim = pooled_mssg_dim
             self.attn_type = attn_type
@@ -245,7 +244,6 @@ class EdgePoolBlock(nn.Module):
             self.head_dim = self.outp_dim // self.attn_net.outp_dim
             if self.head_dim * self.attn_net.outp_dim != self.outp_dim:
                 raise ValueError("Output dimension must be divisible by # of heads!")
-
 
     def _get_dims(self) -> int:
         """Calculates the attention input and context sizes based on config"""
@@ -540,7 +538,9 @@ class NodePoolBlock(nn.Module):
                 attn_outs = F.softplus(attn_outs)
 
             ## Broadcast the attention to get the multiple poolings and sum
-            attn_outs = attn_outs.unsqueeze(-1).expand(-1, -1, -1, self.head_dim).flatten(2)
+            attn_outs = (
+                attn_outs.unsqueeze(-1).expand(-1, -1, -1, self.head_dim).flatten(2)
+            )
             new_nodes = (new_nodes * attn_outs).sum(dim=-2)
 
         ## For normal pooling methods
@@ -777,7 +777,7 @@ class GNBlock(nn.Module):
         ## Update the edges of the graph and pool for each receiver node
         new_edges = self.edge_block(graph, pooled_mssgs)
         if self.norm_new_features:
-           new_edges = self.edge_norm(new_edges)
+            new_edges = self.edge_norm(new_edges)
         pooled_edges = self.egpl_block(new_edges, graph, pooled_mssgs)
         graph.edges = new_edges  ## Delay update due to attn needing old and new
         del pooled_mssgs
@@ -785,7 +785,7 @@ class GNBlock(nn.Module):
         ## Update the nodes of the graph
         new_nodes = self.node_block(graph, pooled_edges, locked_nodes)
         if self.norm_new_features:
-           new_nodes = self.node_norm(new_nodes)
+            new_nodes = self.node_norm(new_nodes)
 
         ## If there are global outputs, pool the nodes and update globs
         if self.do_glob:

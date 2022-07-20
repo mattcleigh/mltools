@@ -251,16 +251,18 @@ class DenseNetwork(nn.Module):
             string += "LN>"
         string += str(self.inpt_dim) + ">"
         string += str(self.input_block.outp_dim) + ">"
-        string += ">".join(
-            [
-                str(layer.out_features)
-                for hidden in self.hidden_blocks
-                for layer in hidden.block
-                if isinstance(layer, nn.Linear)
-            ]
-        )
+        if self.num_blocks > 1:
+            string += ">".join(
+                [
+                    str(layer.out_features)
+                    for hidden in self.hidden_blocks
+                    for layer in hidden.block
+                    if isinstance(layer, nn.Linear)
+                ]
+            )
+            string += ">"
         if self.do_out:
-            string += ">" + str(self.outp_dim)
+            string += str(self.outp_dim)
         return string
 
 
@@ -313,7 +315,6 @@ class DeepSet(nn.Module):
         self.feat_net = DenseNetwork(
             self.inpt_dim, ctxt_dim=self.ctxt_dim, **feat_net_kwargs
         )
-        pooled_dim = self.feat_net.outp_dim
 
         ## For an attention deepset
         if self.pool_type == "attn":
@@ -323,12 +324,14 @@ class DeepSet(nn.Module):
                 self.inpt_dim, ctxt_dim=self.ctxt_dim, **attn_net_kwargs
             )
 
-            ## Pooled dimension increases with multiheaded attention
-            pooled_dim *= self.attn_net.outp_dim
+            ## Check that the dimension of each head makes internal sense
+            self.head_dim = self.feat_net.outp_dim // self.attn_net.outp_dim
+            if self.head_dim * self.attn_net.outp_dim != self.feat_net.outp_dim:
+                raise ValueError("Output dimension must be divisible by # of heads!")
 
         ## Create the post network to update the pooled features of the set
         self.post_net = DenseNetwork(
-            pooled_dim, outp_dim, ctxt_dim=self.ctxt_dim, **post_net_kwargs
+            self.feat_net.outp_dim, outp_dim, ctxt_dim=self.ctxt_dim, **post_net_kwargs
         )
 
     def forward(
@@ -364,11 +367,10 @@ class DeepSet(nn.Module):
                 attn_outs = F.softplus(attn_outs)
 
             ## Broadcast the attention to get the multiple poolings and sum
-            feat_outs = (
-                (feat_outs.unsqueeze(-1) * attn_outs.unsqueeze(-2))
-                .flatten(start_dim=-2)
-                .sum(dim=-2)
+            attn_outs = (
+                attn_outs.unsqueeze(-1).expand(-1, -1, -1, self.head_dim).flatten(2)
             )
+            feat_outs = (feat_outs * attn_outs).sum(dim=-2)
 
         ## For the other types of pooling use the masked pool method
         else:

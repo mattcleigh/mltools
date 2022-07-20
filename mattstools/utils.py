@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 from typing import Union, Tuple, Any
 from functools import reduce
+from dotmap import DotMap
 import operator
 import json
 import yaml
@@ -23,7 +24,7 @@ def get_standard_configs(
     def_train: str = "config/data.yaml",
     def_net: str = "config/net.yaml",
     def_data: str = "config/train.yaml",
-) -> Tuple[dict, dict, dict]:
+) -> Tuple[DotMap, DotMap, DotMap]:
     """Loads, modifies, and returns three configuration dictionaries using command
     line arguments for a basic training setup
     - For configuring the dataset, network and training scheme
@@ -82,6 +83,13 @@ def get_standard_configs(
         "--num_workers", type=int, help="Number of parellel threads to load the batches"
     )
     parser.add_argument(
+        "--patience", type=int, help="Number of bad epochs to allow before stopping"
+    )
+    parser.add_argument(
+        "--max_epochs", type=int, help="Max number of epochs to train for"
+    )
+
+    parser.add_argument(
         "--resume",
         type=str2bool,
         help="Resume the latest training checkpoint",
@@ -125,12 +133,20 @@ def get_standard_configs(
     args_into_conf(args, train_conf, "num_workers", "loader_kwargs/num_workers")
     args_into_conf(args, train_conf, "sched_name", "trainer_kwargs/sched_dict/name")
     args_into_conf(args, train_conf, "lr", "trainer_kwargs/optim_dict/lr")
+    args_into_conf(args, train_conf, "patience", "trainer_kwargs/patience")
+    args_into_conf(args, train_conf, "max_epochs", "trainer_kwargs/max_epochs")
+
     if args.resume:
         args_into_conf(args, train_conf, "resume", "trainer_kwargs/resume")
     if args.tqdm_quiet:
         args_into_conf(args, train_conf, "tqdm_quiet", "trainer_kwargs/tqdm_quiet")
 
-    return data_conf, net_conf, train_conf
+    ## Convert the configs to dotmaps for easier access
+    return (
+        DotMap(data_conf, _dynamic=False),
+        DotMap(net_conf, _dynamic=False),
+        DotMap(train_conf, _dynamic=False),
+    )
 
 
 def standardise(data, means, stds):

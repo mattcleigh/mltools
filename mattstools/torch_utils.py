@@ -1,6 +1,7 @@
 """
 Mix of utility functions specifically for pytorch
 """
+import os
 
 from typing import Iterable, List, Union, Tuple
 
@@ -226,7 +227,7 @@ def get_sched(
 
 
 def train_valid_split(
-    dataset: Dataset, v_frac: float, rand_split=False
+    dataset: Dataset, v_frac: float, split_type="interweave"
 ) -> Tuple[Subset, Subset]:
     """Split a pytorch dataset into a training and validation pytorch Subsets
 
@@ -234,20 +235,28 @@ def train_valid_split(
         dataset: The dataset to split
         v_frac: The validation fraction, reciprocals of whole numbers are best
     kwargs:
-        is_rand: If the splitting is random (seed 42), otherwise takes every
+        split_type: The type of splitting for the dataset
+            basic: Take the first x event for the validation
+            interweave: The every x events for the validation
+            rand: Use a random splitting method (seed 42)
     """
 
-    if rand_split:
+    if split_type == "rand":
         v_size = int(v_frac * len(dataset))
         t_size = len(dataset) - v_size
         return random_split(
             dataset, [t_size, v_size], generator=T.Generator().manual_seed(42)
         )
-    else:
+    elif split_type == "basic":
+        v_size = int(v_frac * len(dataset))
+        valid_indxs = np.arange(0, v_size)
+        train_indxs = np.arange(v_size, len(dataset))
+        return Subset(dataset, train_indxs), Subset(dataset, valid_indxs)
+    elif split_type == "interweave":
         v_every = int(1 / v_frac)
-        valid_idxs = np.arange(0, len(dataset), v_every)
+        valid_indxs = np.arange(0, len(dataset), v_every)
         train_indxs = np.delete(np.arange(len(dataset)), np.s_[::v_every])
-        return Subset(dataset, train_indxs), Subset(dataset, valid_idxs)
+        return Subset(dataset, train_indxs), Subset(dataset, valid_indxs)
 
 
 def masked_pool(
@@ -563,3 +572,16 @@ def decompress(cmprsed: T.Tensor, mask: T.BoolTensor):
     full[mask] = cmprsed
 
     return full
+
+
+def get_max_cpu_suggest():
+    """try to compute a suggested max number of worker based on system's resource"""
+    max_num_worker_suggest = None
+    if hasattr(os, "sched_getaffinity"):
+        try:
+            max_num_worker_suggest = len(os.sched_getaffinity(0))
+        except Exception:
+            pass
+    if max_num_worker_suggest is None:
+        max_num_worker_suggest = os.cpu_count()
+    return max_num_worker_suggest

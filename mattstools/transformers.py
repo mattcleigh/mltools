@@ -11,6 +11,7 @@ import torch.nn.functional as F
 from .modules import DenseNetwork
 from .torch_utils import pass_with_mask
 
+
 def merge_masks(
     q_mask: T.BoolTensor,
     kv_mask: T.BoolTensor,
@@ -286,9 +287,11 @@ class TransformerEncoderLayer(nn.Module):
         self, x: T.Tensor, mask: T.BoolTensor, edge_weights: T.BoolTensor = None
     ) -> T.Tensor:
         "Pass through the layer using residual connections and layer normalisation"
-        x = x + self.norm2(self.self_attn(
-            self.norm1(x), q_mask=mask, kv_mask=mask, edge_weights=edge_weights
-        ))
+        x = x + self.norm2(
+            self.self_attn(
+                self.norm1(x), q_mask=mask, kv_mask=mask, edge_weights=edge_weights
+            )
+        )
         x = x + pass_with_mask(self.norm3(x), self.feed_forward, mask)
         return x
 
@@ -320,9 +323,11 @@ class CrossAttentionLayer(TransformerEncoderLayer):
     ) -> T.Tensor:
         "Pass through the layers of cross attention"
         kv_seq = self.norm1(kv_seq)
-        q_seq = q_seq + self.norm2(self.self_attn(
-            self.norm0(q_seq), kv_seq, kv_seq, q_mask=q_mask, kv_mask=kv_mask
-        ))
+        q_seq = q_seq + self.norm2(
+            self.self_attn(
+                self.norm0(q_seq), kv_seq, kv_seq, q_mask=q_mask, kv_mask=kv_mask
+            )
+        )
         q_seq = q_seq + pass_with_mask(self.norm3(q_seq), self.feed_forward, q_mask)
 
         return q_seq
@@ -440,7 +445,7 @@ class TransformerVectorEncoder(nn.Module):
             class_token = layer(class_token, seq, q_mask=None, kv_mask=mask)
 
         ## Pop out the unneeded sequence dimension of 1
-        class_token = class_token.squeeze()
+        class_token = class_token.squeeze(1)
 
         ## Return the class token and optionally the sequence as well
         if return_seq:
@@ -500,6 +505,7 @@ class FullTransformerVectorEncoder(nn.Module):
 
         ## Initialise the TVE, the main part of this network
         self.tve = TransformerVectorEncoder(**tve_kwargs)
+        self.model_dim = self.tve.model_dim
 
         ## Initialise all embedding networks
         self.node_embd = DenseNetwork(
@@ -530,6 +536,7 @@ class FullTransformerVectorEncoder(nn.Module):
         mask: T.BoolTensor = None,
         ctxt: T.Tensor = None,
         edges: T.Tensor = None,
+        return_seq: bool = False,
     ) -> T.Tensor:
         """Pass the input through all layers sequentially"""
 
@@ -540,8 +547,13 @@ class FullTransformerVectorEncoder(nn.Module):
         if edges is not None:
             edges = self.edge_embd(edges, ctxt)
 
-        ## Pass through the main transformer (overwrite nodes to save space)
-        nodes = self.tve(nodes, mask, edges)
+        ## If we want the sequence and the output then return both
+        if return_seq:
+            outp, nodes = self.tve(nodes, mask, edges, return_seq)
+            outp = self.outp_embd(outp, ctxt)
+            return outp, nodes
 
-        ## Pass through the final embedding network and return
-        return self.outp_embd(nodes)
+        ## If we only want the output, then overwrite the nodes to save space
+        nodes = self.tve(nodes, mask, edges, return_seq)
+        nodes = self.outp_embd(nodes, ctxt)
+        return nodes

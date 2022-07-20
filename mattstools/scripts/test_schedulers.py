@@ -36,7 +36,6 @@ def main():
             "anneal_strategy": "linear",
             "three_phase": True,
         },
-
     ]
 
     ## Cycle through the different schedulers

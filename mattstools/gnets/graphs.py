@@ -249,7 +249,7 @@ class GraphBatch:
         )
 
 
-def graph_collate(batch: Iterable) -> Union[GraphBatch, tuple]:
+def gcoll(batch: Iterable) -> Union[GraphBatch, tuple]:
     """A custom collation function which allows us to batch together multiple graphs
     - Wraps the pytorch default collation function to allow for all the memory tricks
     - Looks at the first element of the batch for instructions on what to do
@@ -276,7 +276,7 @@ def graph_collate(batch: Iterable) -> Union[GraphBatch, tuple]:
 
     ## If we have a tuple, we must run the function for each object
     elif isinstance(elem, tuple):
-        return tuple(graph_collate(samples) for samples in zip(*batch))
+        return tuple(gcoll(samples) for samples in zip(*batch))
 
     ## If we are dealing with any other type we must run the normal collation function
     else:

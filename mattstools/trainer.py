@@ -188,7 +188,7 @@ class Trainer:
                 g["lr"] = lr
 
             ## Do one batch
-            self.epoch(is_train=True)
+            self.epoch(i, is_train=True)
 
             ## Store the norm of the gradients
             grad_norms.append(get_grad_norm(self.network))
@@ -229,9 +229,9 @@ class Trainer:
             print(f"\nEpoch: {epc}")
 
             ## Run the test/train cycle, update stats, and save
-            self.epoch(is_train=True)
+            self.epoch(epc, is_train=True)
             if self.has_v:
-                self.epoch(is_train=False)
+                self.epoch(epc, is_train=False)
             self.count_epochs()
             self.save_checkpoint()
             self.wandb_update()
@@ -245,11 +245,13 @@ class Trainer:
         print(" - maximum number of epochs exceeded")
         return 0
 
-    def epoch(self, is_train: bool = False) -> None:
+    def epoch(self, epoch_num: int, is_train: bool = False) -> None:
         """Perform a single epoch on either the train loader or the validation loader
         - Will update average loss during epoch
         - Will add average loss to loss history at end of epoch
 
+        args:
+            epoch_num:
         kwargs:
             is_train: Effects gradient tracking, network state, and data loader
         """
@@ -259,12 +261,20 @@ class Trainer:
             mode = "train"
             self.network.train()
             loader = self.train_loader
+            dataset = self.train_set
             T.set_grad_enabled(True)
+
         else:
             mode = "valid"
             self.network.eval()
             loader = self.valid_loader
+            dataset = self.valid_set
             T.set_grad_enabled(False)
+
+        ## Call the dataset/network's on_epoch_start method
+        if hasattr(self.valid_set, "on_epoch_start"):
+            dataset.on_epoch_start()
+        self.network.on_epoch_start()
 
         ## Cycle through the batches provided by the selected loader
         for batch_idx, batch in enumerate(tqdm(loader, desc=mode, ncols=80)):
@@ -273,7 +283,7 @@ class Trainer:
             batch = move_dev(batch, self.network.device)
 
             ## Pass through the network and get the loss dictionary
-            losses = self.network.get_losses(batch, batch_idx)
+            losses = self.network.get_losses(batch, batch_idx, epoch_num)
 
             ## For training epochs we perform gradient descent
             if is_train:
@@ -307,6 +317,11 @@ class Trainer:
             ## Update my own dict and reset
             self.loss_hist[lnm][mode].append(running.avg)
             running.reset()
+
+        ## Call the dataset/network's on_epoch_end method
+        if hasattr(self.valid_set, "on_epoch_end"):
+            dataset.on_epoch_end()
+        self.network.on_epoch_end()
 
     def count_epochs(self) -> None:
         """Update attributes counting number of bad and total epochs"""
@@ -459,3 +474,6 @@ class Trainer:
             },
             step=self.num_epochs,
         )
+
+        ## To ensure that wandb actually pushes now that the epoch is over we trick it
+        wandb.log({"trick_wandb": True}, step=self.num_epochs+1)

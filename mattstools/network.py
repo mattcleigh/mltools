@@ -8,6 +8,7 @@ from typing import Union
 
 import torch as T
 import torch.nn as nn
+import wandb
 
 from mattstools.torch_utils import sel_device, count_parameters
 from mattstools.utils import save_yaml_files
@@ -27,6 +28,7 @@ class MyNetBase(nn.Module):
         outp_dim: Union[int, list],
         device: str = "cpu",
         mkdir: bool = True,
+        **other_info,
     ) -> None:
         """
         kwargs:
@@ -36,6 +38,7 @@ class MyNetBase(nn.Module):
             outp_dim: The dimension of the output data
             device: The name of the device on which to load/save and store the network
             mkdir: If a directory for holding the model should be made
+            other_kwargs: These kwargs are saved as attributes on the object
         """
         super().__init__()
         print(f"\nCreating network: {name}")
@@ -55,6 +58,9 @@ class MyNetBase(nn.Module):
         if mkdir:
             self.full_name.mkdir(parents=True, exist_ok=True)
 
+        ## Any extra information
+        self.other_info = other_info
+
     def loss_dict_reset(self) -> dict:
         """Reset the loss dictionary
         - Returns a dictionary with 0 values for each of the loss names
@@ -72,7 +78,7 @@ class MyNetBase(nn.Module):
         for key, val in stat_dict.items():
             self.register_buffer(key, val.to(self.device))
 
-    def get_losses(self, _batch: tuple, _batch_idx: int) -> dict:
+    def get_losses(self, _batch: tuple, _batch_idx: int, _epoch_num: int) -> dict:
         """The function called by the trainer class to perform gradient descent
         by defualt the forward pass should have space for the sample and a get_loss
         flag
@@ -121,7 +127,7 @@ class MyNetBase(nn.Module):
         else:
             T.save(self, full_path)
 
-    def save_configs(self, data_conf, net_conf, train_conf):
+    def save_configs(self, data_conf, net_conf, train_conf, do_wandb=True):
         """Save the three config files that were used to build the network,
         supply the data and train the model
         """
@@ -131,6 +137,18 @@ class MyNetBase(nn.Module):
             [data_conf, net_conf, train_conf],
         )
 
+        ## Also save the configs to weights and biases
+        if do_wandb and wandb.run is not None:
+            wandb.config.update(
+                {
+                    "data_conf": data_conf,
+                    "net_conf": net_conf,
+                    "train_conf": train_conf,
+                    "num_params": count_parameters(self),
+                },
+                allow_val_change=True,
+            )
+
     def set_device(self, device):
         """Sets the device attribute and moves all parameters"""
         self.device = sel_device(device)
@@ -138,3 +156,17 @@ class MyNetBase(nn.Module):
 
     def __repr__(self):
         return super().__repr__() + "\nNum params: " + str(count_parameters(self))
+
+    def on_epoch_start(self, *_args, **__kwargs):
+        """This method is called by the trainer when an epoch begins"""
+        return
+
+    def on_epoch_end(self, *_args, **__kwargs):
+        """This method is called by the trainer when an epoch ends"""
+        return
+
+    def visualise(self, *_args, **__kwargs):
+        """This method should be overwritten by any inheriting network
+        - It is used to save certain plots using a batch of samples
+        """
+        print("This model has no visualise method")
