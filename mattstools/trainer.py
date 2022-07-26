@@ -264,12 +264,22 @@ class Trainer:
             dataset = self.train_set
             T.set_grad_enabled(True)
 
+            ## Call the dataset/network's on_train_start method
+            if hasattr(self.valid_set, "on_train_start"):
+                dataset.on_train_start()
+            self.network.on_train_start()
+
         else:
             mode = "valid"
             self.network.eval()
             loader = self.valid_loader
             dataset = self.valid_set
             T.set_grad_enabled(False)
+
+            ## Call the dataset/network's on_valid_start method
+            if hasattr(self.valid_set, "on_valid_start"):
+                dataset.on_valid_start()
+            self.network.on_valid_start()
 
         ## Call the dataset/network's on_epoch_start method
         if hasattr(self.valid_set, "on_epoch_start"):

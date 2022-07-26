@@ -676,9 +676,8 @@ class GNBlock(nn.Module):
     def __init__(
         self,
         inpt_dim: list,
-        pers_edges: bool = True,
         do_glob: bool = True,
-        norm_new_features: bool = False,
+        pers_edges: bool = True,
         mgpl_blk_kwargs: dict = None,
         edge_blk_kwargs: dict = None,
         egpl_blk_kwargs: dict = None,
@@ -689,8 +688,9 @@ class GNBlock(nn.Module):
         """
         args:
             inpt_dim: The dimensions of the input graph [e,n,g,c]
+        kwargs:
+            do_glob: Perform the global feature update
             pers_edges: If the GN block should save the edges of the graph
-            do_glob:  If there will be a global output tensor in this block
             mgpl_blk_kwargs: kwargs for the mssg pooling block
             edge_blk_kwargs: kwargs for the edge block
             egpl_blk_kwargs: kwargs for the edge pooling block
@@ -710,27 +710,28 @@ class GNBlock(nn.Module):
 
         ## Store the input dimension and other attributes
         self.inpt_dim = inpt_dim
-        self.pers_edges = pers_edges
         self.do_glob = do_glob
-        self.norm_new_features = norm_new_features
+        self.pers_edges = pers_edges
 
-        ## Initialise each of the blocks that make up this module
-        self.mspl_block = MssgPoolBlock(inpt_dim, **mgpl_blk_kwargs)
+        ## Blocks for edge updating
+        self.mspl_block = MssgPoolBlock(self.inpt_dim, **mgpl_blk_kwargs)
         self.edge_block = EdgeBlock(
-            inpt_dim, self.mspl_block.outp_dim, **edge_blk_kwargs
+            self.inpt_dim, self.mspl_block.outp_dim, **edge_blk_kwargs
         )
+
+        ## Blocks for node updating
         self.egpl_block = EdgePoolBlock(
-            inpt_dim,
+            self.inpt_dim,
             self.edge_block.e_outp_dim,
             self.mspl_block.outp_dim,
             **egpl_blk_kwargs,
         )
         self.node_block = NodeBlock(
-            inpt_dim, self.egpl_block.outp_dim, **node_blk_kwargs
+            self.inpt_dim, self.egpl_block.outp_dim, **node_blk_kwargs
         )
 
-        ## For the global updates
-        if do_glob:
+        ## Blocks for global upding (optional)
+        if self.do_glob:
             self.ndpl_block = NodePoolBlock(
                 inpt_dim,
                 self.node_block.n_outp_dim,
@@ -749,11 +750,6 @@ class GNBlock(nn.Module):
             inpt_dim[-1],
         ]
 
-        if norm_new_features:
-            self.edge_norm = nn.LayerNorm(self.edge_block.e_outp_dim)
-            self.node_norm = nn.LayerNorm(self.node_block.n_outp_dim)
-            self.glob_norm = nn.LayerNorm(self.glob_block.g_outp_dim)
-
         ## Check that at least one of the blocks has a network
         if not any(
             [
@@ -771,28 +767,36 @@ class GNBlock(nn.Module):
     ) -> GraphBatch:
         """Return an updated graph with the same structure, but new features"""
 
-        ## Pool the information from each send-recv nodes
+        ## Perform the message pooling (combine send-recv nodes)
         pooled_mssgs = self.mspl_block(graph)
 
-        ## Update the edges of the graph and pool for each receiver node
+        ## Update the edges of the graph (delay update as attn needs old and new)
         new_edges = self.edge_block(graph, pooled_mssgs)
-        if self.norm_new_features:
-            new_edges = self.edge_norm(new_edges)
+
+        ## Perform the edge pooling
         pooled_edges = self.egpl_block(new_edges, graph, pooled_mssgs)
-        graph.edges = new_edges  ## Delay update due to attn needing old and new
+
+        ## Apply update and clear memory
         del pooled_mssgs
+        graph.edges = new_edges
 
-        ## Update the nodes of the graph
+        ## Update the nodes of the graph (delay update as attn needs old and new)
         new_nodes = self.node_block(graph, pooled_edges, locked_nodes)
-        if self.norm_new_features:
-            new_nodes = self.node_norm(new_nodes)
 
-        ## If there are global outputs, pool the nodes and update globs
+        ## If there are global outputs
         if self.do_glob:
+
+            ## Perform the node pooling
             pooled_nodes = self.ndpl_block(new_nodes, graph, pooled_edges)
-            graph.nodes = new_nodes
+
+            ## Apply update and clear memory
             del pooled_edges
+            graph.nodes = new_nodes
+
+            ## Update the globals of the graph
             graph.globs = self.glob_block(graph, pooled_nodes)
+
+        ## If no global outputs, then remove required info for pooling
         else:
             del pooled_edges
             graph.nodes = new_nodes

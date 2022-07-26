@@ -50,6 +50,9 @@ class MyBCEWithLogit(nn.Module):
     consistant with pytorch's CrossEntropy loss
     - Automatically squeezes out the batch dimension to ensure same shape
     - Automatically changes targets to floats
+
+    Vanilla BCE wants identical shapes (batch x output)
+    While CE loss wants targets just as indices (batch)
     """
 
     def __init__(self, *args, **kwargs):
@@ -58,7 +61,7 @@ class MyBCEWithLogit(nn.Module):
 
     def forward(self, outputs, targets):
         """Return the loss"""
-        return self.loss_fn(outputs.squeeze(), targets.float())
+        return self.loss_fn(outputs.squeeze(dim=-1), targets.float())
 
 
 class ChampferLoss(nn.Module):

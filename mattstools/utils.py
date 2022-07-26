@@ -92,7 +92,15 @@ def get_standard_configs(
     parser.add_argument(
         "--resume",
         type=str2bool,
-        help="Resume the latest training checkpoint",
+        help="Resume a job by reloading the original configs and the latest checkpoint",
+        nargs="?",
+        const=True,
+        default=False,
+    )
+    parser.add_argument(
+        "--retry",
+        type=str2bool,
+        help="Retry a job using the original configs, does not load the checkpoint!",
         nargs="?",
         const=True,
         default=False,
@@ -110,7 +118,7 @@ def get_standard_configs(
     args, _ = parser.parse_known_args()
 
     ## Change the paths to previous configs if resuming, otherwise keep defaults
-    if args.resume:
+    if args.resume or args.retry:
         args.data_conf = Path(args.save_dir, args.name, "config/data.yaml")
         args.net_conf = Path(args.save_dir, args.name, "config/net.yaml")
         args.train_conf = Path(args.save_dir, args.name, "config/train.yaml")
@@ -319,14 +327,14 @@ def load_yaml_files(files: Union[list, tuple, str]) -> tuple:
     ## If the input is not a list then it returns a dict
     if isinstance(files, (str, Path)):
         with open(files, encoding="utf-8") as f:
-            return yaml.safe_load(f)
+            return yaml.load(f, Loader=yaml.Loader)
 
     opened = []
 
     ## Load each file using yaml
     for fnm in files:
         with open(fnm, encoding="utf-8") as f:
-            opened.append(yaml.safe_load(f))
+            opened.append(yaml.load(f, Loader=yaml.Loader))
 
     return tuple(opened)
 
@@ -341,7 +349,10 @@ def save_yaml_files(
     ## If the input is not a list then one file is saved
     if isinstance(file_names, (str, Path)):
         with open(f"{path}/{file_names}.yaml", "w", encoding="UTF-8") as f:
-            yaml.dump(dicts, f, sort_keys=False)
+            yaml.dump(
+                dicts.toDict() if isinstance(dicts, DotMap) else dicts,
+                f,
+                sort_keys=False)
         return
 
     ## Make the folder
@@ -350,7 +361,9 @@ def save_yaml_files(
     ## Save each file using yaml
     for f_nm, dic in zip(file_names, dicts):
         with open(f"{path}/{f_nm}.yaml", "w", encoding="UTF-8") as f:
-            yaml.dump(dic, f, sort_keys=False)
+            yaml.dump(
+                dic.toDict() if isinstance(dic, DotMap) else dic, f, sort_keys=False
+                )
 
 
 def get_scaler(name: str):

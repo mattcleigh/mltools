@@ -496,7 +496,6 @@ class GraphNetEncoder(nn.Module):
         self,
         inpt_dim: list,
         outp_dim: int,
-        is_gaussian: bool,
         gnn_kwargs: dict = None,
         dns_kwargs: dict = None,
     ) -> None:
@@ -506,7 +505,6 @@ class GraphNetEncoder(nn.Module):
             outp_dim: The size of the encoded output.
         kwargs:
             n_nodes: The max number of nodes used to train this graph.
-            is_gaussian: If the outputs should be samples using a gaussian
             gnn_kwargs: The keyword arguments to initialise GraphNetwork.
             dns_kwargs: The keyword arguments to initialise DenseNetwork.
         """
@@ -519,14 +517,13 @@ class GraphNetEncoder(nn.Module):
         ## Save the class attributes
         self.inpt_dim = inpt_dim
         self.outp_dim = outp_dim
-        self.is_gaussian = is_gaussian
 
         ## The series of modules that make up the network
         self.gnn = GraphNetwork(inpt_dim, **gnn_kwargs)
         self.dns = DenseNetwork(
             inpt_dim=self.gnn.outp_dim[2],
             ctxt_dim=self.gnn.outp_dim[3],
-            outp_dim=outp_dim + (outp_dim if is_gaussian else 0),
+            outp_dim=outp_dim,
             **dns_kwargs,
         )
 
@@ -534,12 +531,6 @@ class GraphNetEncoder(nn.Module):
         """Encode a graph batch"""
         inputs = self.gnn(inputs)
         inputs = self.dns(inputs.globs, ctxt=inputs.cndts)
-
-        ## Apply the trick and return the latents, means, and stdevs
-        if self.is_gaussian:
-            return reparam_trick(inputs)
-
-        ## Otherwise just return the deterministic latents
         return inputs
 
 

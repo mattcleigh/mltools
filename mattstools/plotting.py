@@ -205,6 +205,7 @@ def plot_multi_hists(
     do_step: bool = True,
     do_ratio_to_first: bool = False,
     as_pdf: bool = False,
+    return_fig: bool = False,
 ):
     """Plot multiple histograms given a list of 2D tensors/arrays
     - Performs the histogramming here
@@ -235,6 +236,7 @@ def plot_multi_hists(
         do_step: If the data should be represented as a step plot
         do_ratio_to_first: Include a ratio plot to the first histogram in the list
         as_pdf: Also save an additional image in pdf format
+        return_fig: Return the figure (DOES NOT CLOSE IT!)
     """
 
     ## Make sure we are using a pathlib type variable
@@ -413,6 +415,8 @@ def plot_multi_hists(
     fig.savefig(Path(path).with_suffix(".png"))
     if as_pdf:
         fig.savefig(path.with_suffix(".pdf"))
+    if return_fig:
+        return fig
     plt.close(fig)
 
 
@@ -695,7 +699,7 @@ def plot_2d_hists(path, hist_list, hist_labels, ax_labels, bins):
     plt.close(fig)
 
 
-def plot_latent_space(path, latents, labels=None, n_classes=None):
+def plot_latent_space(path, latents, labels=None, n_classes=None, return_fig: bool = False):
     """Plot the latent space marginal distributions of a VAE"""
 
     ## If there are labels then we do multiple lines per datapoint
@@ -743,4 +747,6 @@ def plot_latent_space(path, latents, labels=None, n_classes=None):
     fig.tight_layout()
     fig.subplots_adjust(wspace=0, hspace=0)
     fig.savefig(path.with_suffix(".png"))
+    if return_fig:
+        return fig
     plt.close(fig)

@@ -157,12 +157,20 @@ class MyNetBase(nn.Module):
     def __repr__(self):
         return super().__repr__() + "\nNum params: " + str(count_parameters(self))
 
-    def on_epoch_start(self, *_args, **__kwargs):
+    def on_epoch_start(self):
         """This method is called by the trainer when an epoch begins"""
         return
 
-    def on_epoch_end(self, *_args, **__kwargs):
+    def on_epoch_end(self):
         """This method is called by the trainer when an epoch ends"""
+        return
+
+    def on_train_start(self):
+        """This method is called by the trainer when a training epoch begins"""
+        return
+
+    def on_valid_start(self):
+        """This method is called by the trainer when a validation epoch begins"""
         return
 
     def visualise(self, *_args, **__kwargs):
