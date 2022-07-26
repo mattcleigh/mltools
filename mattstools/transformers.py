@@ -707,5 +707,5 @@ class FullTransformerVectorGenerator(nn.Module):
         """Pass the input through all layers sequentially"""
         vec = self.vec_embd(vec, ctxt=ctxt)
         nodes = self.tvg.forward(vec, mask)
-        nodes = pass_with_mask(nodes, self.outp_embd, mask, context=vec)
+        nodes = pass_with_mask(nodes, self.outp_embd, mask, context=ctxt)
         return nodes

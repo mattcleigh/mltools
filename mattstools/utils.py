@@ -315,6 +315,9 @@ def str2bool(mystring: str) -> bool:
     else:
         raise argparse.ArgumentTypeError("Boolean value expected.")
 
+def log_squash(data: np.ndarray):
+    """Apply a log squashing function for distributions with high tails"""
+    return np.sign(data) * np.log(np.abs(data) + 1)
 
 def signed_angle_diff(angle1, angle2):
     """Calculate diff between two angles reduced to the interval of [-pi, pi]"""

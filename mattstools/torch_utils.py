@@ -585,3 +585,7 @@ def get_max_cpu_suggest():
     if max_num_worker_suggest is None:
         max_num_worker_suggest = os.cpu_count()
     return max_num_worker_suggest
+
+def log_squash(data: T.Tensor)->T.Tensor:
+    """Apply a log squashing function for distributions with high tails"""
+    return T.sign(data) * T.log(T.abs(data) + 1)

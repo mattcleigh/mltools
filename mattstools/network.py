@@ -172,9 +172,3 @@ class MyNetBase(nn.Module):
     def on_valid_start(self):
         """This method is called by the trainer when a validation epoch begins"""
         return
-
-    def visualise(self, *_args, **__kwargs):
-        """This method should be overwritten by any inheriting network
-        - It is used to save certain plots using a batch of samples
-        """
-        print("This model has no visualise method")

@@ -413,6 +413,7 @@ class Trainer:
                 self.valid_loader if self.has_v else self.train_loader,
                 path=vis_folder,
                 flag=str(self.num_epochs),
+                epochs=self.num_epochs
             )
 
     def load_checkpoint(self, flag="latest") -> None:
