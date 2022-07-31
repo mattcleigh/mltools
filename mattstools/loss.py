@@ -22,9 +22,18 @@ class VAELoss(nn.Module):
         return kld_to_norm(means, log_stds)
 
 
-def kld_to_norm(means: T.Tensor, log_stds: T.Tensor) -> T.Tensor:
+def kld_to_norm(means: T.Tensor, log_stds: T.Tensor, reduce = "mean") -> T.Tensor:
     """Calculate the KL-divergence to a unit normal distribution"""
-    return 0.5 * T.mean(means * means + (2 * log_stds).exp() - 2 * log_stds - 1)
+    loss = 0.5 * (means * means + (2 * log_stds).exp() - 2 * log_stds - 1)
+    if reduce == "mean":
+        return loss.mean()
+    if reduce == "dim_mean":
+        return loss.mean(dim=-1)
+    if reduce == "sum":
+        return loss.sum()
+    if reduce == "none":
+        return loss
+    raise RuntimeError(f"Unrecognized reduction arguments: {reduce}")
 
 
 class GeomWrapper(nn.Module):

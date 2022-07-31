@@ -2,14 +2,48 @@
 Custom pytorch learning rate schedulers
 """
 
+from lib2to3.pgen2.token import OP
 import warnings
+from torch.optim import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler, OneCycleLR
+
+
+class LinearWarmupRootDecay(_LRScheduler):
+    def __init__(
+        self,
+        optimizer: Optimizer,
+        dim_model: int = 256,
+        warmup_steps: int = 10000,
+        last_epoch: int = -1,
+        verbose: bool = False,
+        use_max_lr: bool = False
+    ) -> None:
+
+        ## For calculating the learning rate profile
+        self.dim_model = dim_model
+        self.warmup_steps = warmup_steps
+        self.num_param_groups = len(optimizer.param_groups)
+
+        ## For overwritting the max learning rate (instead of using dim model)
+        self.use_max_lr = use_max_lr
+        self.max_lr_coef = (self.dim_model*self.warmup_steps) ** (0.5)
+
+        ## Super init at end for some reason
+        super().__init__(optimizer, last_epoch, verbose)
+
+    def get_lr(self) -> float:
+        lr = self.dim_model ** (-0.5) * min(
+            self._step_count ** (-0.5), self._step_count * self.warmup_steps ** (-1.5)
+        )
+        if self.use_max_lr:
+            lr *= self.base_lrs[0] * self.max_lr_coef
+        return [lr] * self.num_param_groups
 
 
 class WarmupToConstant(_LRScheduler):
     """Gradually warm-up learning rate in optimizer to a constant value"""
 
-    def __init__(self, optimizer, num_steps=100):
+    def __init__(self, optimizer: Optimizer, num_steps: int = 100):
         """
         args:
             optimizer (Optimizer): Wrapped optimizer.

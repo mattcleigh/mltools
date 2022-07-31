@@ -88,6 +88,10 @@ def get_standard_configs(
     parser.add_argument(
         "--max_epochs", type=int, help="Max number of epochs to train for"
     )
+    parser.add_argument(
+        "--quick_mode", type=int, help="For debugging, only pass X batches per epoch"
+    )
+
 
     parser.add_argument(
         "--resume",
@@ -117,10 +121,14 @@ def get_standard_configs(
     ## Load the arguments
     args, _ = parser.parse_known_args()
 
+    ## Raise an error if more than retume, retry
+    if args.resume and args.retry:
+        raise ValueError("Please only select one option for resume/retry/")
+
     ## Change the paths to previous configs if resuming, otherwise keep defaults
     if args.resume or args.retry:
-        args.data_conf = Path(args.save_dir, args.name, "config/data.yaml")
         args.net_conf = Path(args.save_dir, args.name, "config/net.yaml")
+        args.data_conf = Path(args.save_dir, args.name, "config/data.yaml")
         args.train_conf = Path(args.save_dir, args.name, "config/train.yaml")
 
     ## Load the config dictionaries
@@ -143,6 +151,7 @@ def get_standard_configs(
     args_into_conf(args, train_conf, "lr", "trainer_kwargs/optim_dict/lr")
     args_into_conf(args, train_conf, "patience", "trainer_kwargs/patience")
     args_into_conf(args, train_conf, "max_epochs", "trainer_kwargs/max_epochs")
+    args_into_conf(args, train_conf, "quick_mode", "trainer_kwargs/quick_mode")
 
     if args.resume:
         args_into_conf(args, train_conf, "resume", "trainer_kwargs/resume")

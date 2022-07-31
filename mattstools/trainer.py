@@ -3,8 +3,8 @@ Base class for training network
 """
 
 import json
-from pathlib import Path
 from functools import partialmethod
+from pathlib import Path
 
 import wandb
 import numpy as np
@@ -15,8 +15,9 @@ import torch as T
 import torch.nn as nn
 from torch.utils.data import DataLoader, Subset
 
-from mattstools.plotting import plot_multi_loss
-from mattstools.torch_utils import (
+from .network import MyNetBase
+from .plotting import plot_multi_loss
+from .torch_utils import (
     RunningAverage,
     get_optim,
     get_sched,
@@ -30,7 +31,7 @@ class Trainer:
 
     def __init__(
         self,
-        network: nn.Module,
+        network: MyNetBase,
         train_loader: DataLoader,
         valid_loader: DataLoader = None,
         patience: int = 100,
@@ -40,9 +41,9 @@ class Trainer:
         sched_dict: dict = None,
         vis_every: int = 10,
         chkp_every: int = 10,
-        resume: bool = False,
         tqdm_quiet: bool = False,
         quick_mode: int = 0,
+        resume: bool = False,
     ) -> None:
         """
         args:
@@ -58,9 +59,9 @@ class Trainer:
             sched_dict:   A dict used to select and configure the scheduler
             vis_every:    Run the network's visualisation function every X epochs
             chkp_every:   Save a checkpoint of the net/opt/schd/loss every X epochs
-            resume:       Load the 'latest' checkpoint of the trainer object
             tqdm_quiet:   Prevents tqdm loading bars, good for gridjobs writing to logs
             quick_mode:   Break the training epoch after X many batches, for debugging
+            resume:       Load the 'latest' checkpoint of the trainer object
         """
         print("\nInitialising the trainer")
 
@@ -107,15 +108,21 @@ class Trainer:
         self.vis_every = vis_every
         self.chkp_every = chkp_every
 
-        ## Load the optimiser and scheduler
+        ## Load the optimiser and scheduler if the network does not have its own
         self.optimiser = get_optim(self.optim_dict, self.network.parameters())
         self.scheduler = get_sched(
             self.sched_dict,
             self.optimiser,
             len(self.train_loader),
-            max_lr=self.optim_dict["lr"],  ## Only used for onecycle
+            max_lr=self.optim_dict["lr"],
             max_epochs=max_epochs,  ## Only used for onecycle
         )
+
+        ## If a scheduler is loaded make sure that the optimizer's learning rate is
+        ## set to the start (self.scheduler.step is only called after first minibatch)
+        if self.scheduler is not None:
+            for g in self.optimiser.param_groups:
+                g['lr'] = self.scheduler.get_last_lr()[0]
 
         ## Variables to keep track of stopping conditions
         self.max_epochs = max_epochs
@@ -194,25 +201,25 @@ class Trainer:
             grad_norms.append(get_grad_norm(self.network))
 
         ## Create the folder for the plots
-        test_folder = Path(self.network.full_name, "lr_test")
+        test_folder = self.network.full_name / "lr_test"
         test_folder.mkdir(parents=True, exist_ok=True)
 
         ## Plot the gradient norm
         plt.plot(grad_norms, label="gradient norm")
         plt.yscale("log")
         plt.legend()
-        plt.savefig(Path(test_folder, "gnorm_vs_epoch.png"))
+        plt.savefig(test_folder / "gnorm_vs_epoch.png")
         plt.close()
 
         ## Plot the lr vs epoch
         plt.plot(lrs, label="learning rate")
         plt.legend()
-        plt.savefig(Path(test_folder, "lr_vs_epoch.png"))
+        plt.savefig(test_folder / "lr_vs_epoch.png")
         plt.close()
 
         ## Plot the loss vs lr
         plot_multi_loss(
-            Path(test_folder, "loss_vs_lr.png"),
+            test_folder / "loss_vs_lr.png",
             self.loss_hist,
             xvals=lrs,
             xlabel="learning rate",
@@ -346,7 +353,7 @@ class Trainer:
         """
 
         ## Create checkpoint folder
-        chckpnt_folder = Path(self.network.full_name, "checkpoints")
+        chckpnt_folder = self.network.full_name / "checkpoints"
         chckpnt_folder.mkdir(parents=True, exist_ok=True)
 
         ## Save a checkpoint of the network/optimiser/loss (for reloading)
@@ -361,7 +368,7 @@ class Trainer:
             checkpoint["scheduler"] = self.scheduler.state_dict()
 
         ## Save using pytorch's pickle method and the save name
-        T.save(checkpoint, Path(chckpnt_folder, f"checkpoint_{sv_name}"))
+        T.save(checkpoint, chckpnt_folder / f"checkpoint_{sv_name}")
 
     def save_checkpoint(self) -> None:
         """Add folders to the network's save directory containing
@@ -378,11 +385,11 @@ class Trainer:
             # self.network.save("best", as_dict=True) ## Takes too long for large models
 
         ## Create loss folder
-        loss_folder = Path(self.network.full_name, "losses")
+        loss_folder = self.network.full_name / "losses"
         loss_folder.mkdir(parents=True, exist_ok=True)
 
         ## Save a plot and a json of the loss history
-        loss_file_name = Path(loss_folder, "losses.json")
+        loss_file_name = loss_folder / "losses.json"
         plot_multi_loss(loss_file_name, self.loss_hist)
         with open(loss_file_name, "w", encoding="utf-8") as l_file:
             json.dump(self.loss_hist, l_file, indent=2)
@@ -402,7 +409,7 @@ class Trainer:
             T.set_grad_enabled(False)
 
             ## Create the vis folder
-            vis_folder = Path(self.network.full_name, "visual")
+            vis_folder = self.network.full_name / "visual"
             vis_folder.mkdir(parents=True, exist_ok=True)
 
             ## The most general way I have found is to pass the dataloader itself!
@@ -422,14 +429,13 @@ class Trainer:
 
         ## Load the and unpack checkpoint object
         checkpoint = T.load(
-            Path(self.network.full_name, "checkpoints", f"checkpoint_{flag}")
+            self.network.full_name / "checkpoints" / f"checkpoint_{flag}"
         )
         self.network.load_state_dict(checkpoint["network"])
         self.optimiser.load_state_dict(checkpoint["optimiser"])
         self.loss_hist = checkpoint["losses"]
         if self.scheduler is not None:
             self.scheduler.load_state_dict(checkpoint["scheduler"])
-            checkpoint["scheduler"] = self.scheduler.state_dict()
 
         ## Update the epoch count
         self.count_epochs()

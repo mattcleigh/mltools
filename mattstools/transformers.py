@@ -244,7 +244,7 @@ class MultiHeadedAttentionBlock(nn.Module):
 
 
 class TransformerEncoderLayer(nn.Module):
-    """A transformer encoder layer based on the GPT-2 style arcitecture.
+    """A transformer encoder layer based on the GPT-2+Normformer style arcitecture.
 
     It contains:
     - self-attention-block

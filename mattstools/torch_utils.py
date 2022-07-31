@@ -17,7 +17,7 @@ from geomloss import SamplesLoss
 
 from .lookahead import Lookahead
 from .loss import GeomWrapper, MyBCEWithLogit, VAELoss, ChampferLoss
-from .schedulers import CyclicWithWarmup, WarmupToConstant
+from .schedulers import CyclicWithWarmup, WarmupToConstant, LinearWarmupRootDecay
 
 
 class RunningAverage:
@@ -220,6 +220,8 @@ def get_sched(
         return CyclicWithWarmup(
             opt, max_lr, total_steps=steps_per_epoch * epochs_per_cycle, **dict_copy
         )
+    elif name == "linearwarmuprootdecay":
+        return LinearWarmupRootDecay(opt, **dict_copy)
     elif name == "warmup":
         return WarmupToConstant(opt, **dict_copy)
     else:
