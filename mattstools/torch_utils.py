@@ -345,7 +345,8 @@ def ctxt_from_mask(context: Union[list, T.Tensor], mask: T.BoolTensor) -> T.Tens
     ## For multiple context tensors
     all_context = []
     for ctxt in context:
-        all_context.append(ctxt.view(veiw_size).expand(ex_size)[mask])
+        if ctxt is not None:
+            all_context.append(ctxt.view(veiw_size).expand(ex_size)[mask])
     return smart_cat(all_context)
 
 
@@ -588,6 +589,7 @@ def get_max_cpu_suggest():
         max_num_worker_suggest = os.cpu_count()
     return max_num_worker_suggest
 
-def log_squash(data: T.Tensor)->T.Tensor:
+
+def log_squash(data: T.Tensor) -> T.Tensor:
     """Apply a log squashing function for distributions with high tails"""
     return T.sign(data) * T.log(T.abs(data) + 1)

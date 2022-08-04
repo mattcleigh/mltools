@@ -15,7 +15,7 @@ def plot_scatter(
     real_mask: np.ndarray,
     gen_nodes: np.ndarray,
     gen_mask: np.ndarray,
-    return_fig: bool = False
+    return_fig: bool = False,
 ):
     """Plot scatter plots showing the original and generated point clouds
     args:
@@ -72,6 +72,7 @@ def plot_scatter(
         return fig
     plt.close(fig)
 
+
 def plot_bar_graphs(
     path: Path,
     real_nodes: list,
@@ -79,7 +80,7 @@ def plot_bar_graphs(
     gen_nodes: list,
     gen_mask: list,
     labels: list = None,
-    return_fig: bool = False
+    return_fig: bool = False,
 ):
     """Plot a series of scatter plots using batch of generated point clouds
     - Creates a multiplot with n_samples rows and n_stages columns
@@ -197,12 +198,13 @@ def main():
 
     shape = (4, 32, 3)
     plot_scatter(
-        path = Path("here"),
-        real_nodes = np.random.rand(*shape),
-        real_mask = np.random.rand(*shape[:-1])>0.5,
-        gen_nodes = np.random.rand(*shape),
-        gen_mask = np.random.rand(*shape[:-1])>0.5,
+        path=Path("here"),
+        real_nodes=np.random.rand(*shape),
+        real_mask=np.random.rand(*shape[:-1]) > 0.5,
+        gen_nodes=np.random.rand(*shape),
+        gen_mask=np.random.rand(*shape[:-1]) > 0.5,
     )
+
 
 if __name__ == "__main__":
     main()

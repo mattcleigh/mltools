@@ -92,7 +92,6 @@ def get_standard_configs(
         "--quick_mode", type=int, help="For debugging, only pass X batches per epoch"
     )
 
-
     parser.add_argument(
         "--resume",
         type=str2bool,
@@ -324,9 +323,11 @@ def str2bool(mystring: str) -> bool:
     else:
         raise argparse.ArgumentTypeError("Boolean value expected.")
 
+
 def log_squash(data: np.ndarray):
     """Apply a log squashing function for distributions with high tails"""
     return np.sign(data) * np.log(np.abs(data) + 1)
+
 
 def signed_angle_diff(angle1, angle2):
     """Calculate diff between two angles reduced to the interval of [-pi, pi]"""
@@ -364,7 +365,8 @@ def save_yaml_files(
             yaml.dump(
                 dicts.toDict() if isinstance(dicts, DotMap) else dicts,
                 f,
-                sort_keys=False)
+                sort_keys=False,
+            )
         return
 
     ## Make the folder
@@ -375,7 +377,7 @@ def save_yaml_files(
         with open(f"{path}/{f_nm}.yaml", "w", encoding="UTF-8") as f:
             yaml.dump(
                 dic.toDict() if isinstance(dic, DotMap) else dic, f, sort_keys=False
-                )
+            )
 
 
 def get_scaler(name: str):

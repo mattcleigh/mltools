@@ -16,7 +16,7 @@ class LinearWarmupRootDecay(_LRScheduler):
         warmup_steps: int = 10000,
         last_epoch: int = -1,
         verbose: bool = False,
-        use_max_lr: bool = False
+        use_max_lr: bool = False,
     ) -> None:
 
         ## For calculating the learning rate profile
@@ -26,7 +26,7 @@ class LinearWarmupRootDecay(_LRScheduler):
 
         ## For overwritting the max learning rate (instead of using dim model)
         self.use_max_lr = use_max_lr
-        self.max_lr_coef = (self.dim_model*self.warmup_steps) ** (0.5)
+        self.max_lr_coef = (self.dim_model * self.warmup_steps) ** (0.5)
 
         ## Super init at end for some reason
         super().__init__(optimizer, last_epoch, verbose)
@@ -59,6 +59,12 @@ class WarmupToConstant(_LRScheduler):
         return [
             (base_lr / self.num_steps) * self.last_epoch for base_lr in self.base_lrs
         ]
+
+
+# class WarmupThenCyclic(_LRScheduler):
+#     """
+#     """
+#     def __init__(self, optimizer: Optimizer, warmup_steps, **cyclic_kwargs):
 
 
 class CyclicWithWarmup(OneCycleLR):

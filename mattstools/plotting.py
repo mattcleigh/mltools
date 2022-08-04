@@ -699,7 +699,9 @@ def plot_2d_hists(path, hist_list, hist_labels, ax_labels, bins):
     plt.close(fig)
 
 
-def plot_latent_space(path, latents, labels=None, n_classes=None, return_fig: bool = False):
+def plot_latent_space(
+    path, latents, labels=None, n_classes=None, return_fig: bool = False
+):
     """Plot the latent space marginal distributions of a VAE"""
 
     ## If there are labels then we do multiple lines per datapoint

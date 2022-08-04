@@ -122,7 +122,7 @@ class Trainer:
         ## set to the start (self.scheduler.step is only called after first minibatch)
         if self.scheduler is not None:
             for g in self.optimiser.param_groups:
-                g['lr'] = self.scheduler.get_last_lr()[0]
+                g["lr"] = self.scheduler.get_last_lr()[0]
 
         ## Variables to keep track of stopping conditions
         self.max_epochs = max_epochs
@@ -420,7 +420,7 @@ class Trainer:
                 self.valid_loader if self.has_v else self.train_loader,
                 path=vis_folder,
                 flag=str(self.num_epochs),
-                epochs=self.num_epochs
+                epochs=self.num_epochs,
             )
 
     def load_checkpoint(self, flag="latest") -> None:
@@ -493,4 +493,4 @@ class Trainer:
         )
 
         ## To ensure that wandb actually pushes now that the epoch is over we trick it
-        wandb.log({"trick_wandb": True}, step=self.num_epochs+1)
+        wandb.log({"trick_wandb": True}, step=self.num_epochs + 1)
