@@ -395,20 +395,28 @@ def pass_with_mask(
         raise ValueError("Dont know how to infer the output dimension from the model")
 
     ## Create an output of the correct shape on the right device using the padval
+    exp_size = (*inputs.shape[:-1], outp_dim)
     outputs = T.full(
-        (*inputs.shape[:-1], outp_dim),
+        exp_size,
         padval,
         device=inputs.device,
         dtype=inputs.dtype,
     )
 
+    ## Needed for ONNX safety!
+    o_mask = mask.unsqueeze(-1).expand(exp_size)
+
     ## Pass only the masked elements through the network and use mask to place in out
     if context is None:
-        outputs[mask] = module(inputs[mask])
+        # outputs[mask] = module(inputs[mask])
+        outputs.masked_scatter_(o_mask, module(inputs[mask])) # ONNX Safe!
 
     ## My networks can take in conditional information, pytorch's can not
     else:
-        outputs[mask] = module(inputs[mask], ctxt=ctxt_from_mask(context, mask))
+        # outputs[mask] = module(inputs[mask], ctxt=ctxt_from_mask(context, mask))
+        outputs.masked_scatter_( # ONNX Safe!
+            o_mask, module(inputs[mask], ctxt=ctxt_from_mask(context, mask))
+        )
 
     return outputs
 
