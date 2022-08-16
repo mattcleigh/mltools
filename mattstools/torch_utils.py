@@ -298,17 +298,18 @@ def masked_pool(
 
 
 def smart_cat(inputs: Iterable, dim=-1):
-    """A concatenation option that ensures no memory is copied if tensors are empty"""
+    """A concatenation option that ensures no memory is copied if tensors are empty or
+    saved as None"""
 
     ## Check number of non-empty tensors in the dimension for pooling
-    n_nonempt = [bool(inpt.size(dim=dim)) for inpt in inputs]
+    n_nonempt = [0 if i is None else bool(i.size(dim=dim)) for i in inputs]
 
     ## If there is only one non-empty tensor then we just return it directly
     if sum(n_nonempt) == 1:
         return inputs[np.argmax(n_nonempt)]
 
-    ## Otherwise concatenate the rest
-    return T.cat(inputs, dim=dim)
+    ## Otherwise concatenate the not None variables
+    return T.cat([i for i in inputs if i is not None], dim=dim)
 
 
 def ctxt_from_mask(context: Union[list, T.Tensor], mask: T.BoolTensor) -> T.Tensor:
@@ -332,8 +333,8 @@ def ctxt_from_mask(context: Union[list, T.Tensor], mask: T.BoolTensor) -> T.Tens
         mask: A mask which determines the size and sampling of the context
     """
 
-    ## Get the expanded veiw sizes
-    b_size = len(mask)
+    ## Get the expanded veiw sizes (Use shape[0] not len as it is ONNX safe!)
+    b_size = mask.shape[0]
     new_dims = (len(mask.shape) - 1) * [1]
     veiw_size = (b_size, *new_dims, -1)  ## Must be: (b, 1, ..., 1, features)
     ex_size = (*mask.shape, -1)
@@ -542,8 +543,7 @@ def aggr_via_sparse(cmprsed: T.Tensor, mask: T.BoolTensor, reduction: str, dim: 
         return reduced.values() / mask_sum
     if reduction == "softmax":
         return T.sparse.softmax(sparse_rep, dim).coalesce().values()
-    else:
-        raise ValueError(f"Unknown sparse reduction method: {reduction}")
+    raise ValueError(f"Unknown sparse reduction method: {reduction}")
 
 
 def sparse_from_mask(inpt: T.Tensor, mask: T.BoolTensor, is_compressed: bool = False):

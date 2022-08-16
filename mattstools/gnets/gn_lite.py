@@ -1,111 +1,22 @@
 """
 Defines the lightweight and streamlined graph object and operations
 """
-
-from typing import Iterable, Union
+import math
 
 import torch as T
-from torch.utils.data._utils.collate import default_collate
 
-from mattstools.torch_utils import pass_with_mask, sel_device
-from mattstools.modules import DenseNetwork
+from .graphs import GraphBatch
+from ..torch_utils import (
+    ctxt_from_mask,
+    pass_with_mask,
+    aggr_via_sparse,
+    decompress,
+)
+from ..modules import DenseNetwork
 
 import torch as T
 import torch.nn as nn
 import torch.nn.functional as F
-
-
-
-class GraphLite:
-    """The base class for the custom graph lite object
-    - Without compressed edges
-    - Without conditional features
-
-    A collection of 6 tensors:
-    - 4 describe the attributes of the edges, nodes, globals
-    - 2 describe the structure, providing masks for the edges (adjmat) and nodes (mask)
-    """
-
-    def __init__(
-        self,
-        edges: T.Tensor,
-        nodes: T.Tensor,
-        globs: T.Tensor,
-        adjmat: T.BoolTensor,
-        mask: T.BoolTensor,
-        dev: str = "cpu",
-    ) -> None:
-        """
-        args:
-            edges: Compressed edge features (num_edges x Ef)
-            nodes: Node features (N x Nf)
-            globs: Global features (Gf)
-            adjmat: The adjacency matrix, a mask for the edge features (N x N)
-            mask: The node mask (N)
-        kwargs:
-            dev: A string indicating the device on which to store the tensors
-        """
-
-        ## Save the device where the graph will be stored
-        self.device = T.device(dev)
-
-        ## Save each of the component tensors onto the correct device
-        self.edges = edges.to(self.device)
-        self.nodes = nodes.to(self.device)
-        self.globs = globs.to(self.device)
-        self.adjmat = adjmat.to(self.device)
-        self.mask = mask.to(self.device)
-
-    @property
-    def dtype(self):
-        """Inherits the dtype from the node tensor"""
-        return self.nodes.dtype
-
-    def dim(self):
-        """Return the dimensions of the graph"""
-        return [self.edges.shape[-1], self.nodes.shape[-1], self.globs.shape[-1]]
-
-    def __len__(self):
-        """Return the masking length of the graph"""
-        return len(self.mask)
-
-    def to(self, dev: str):
-        """Move the graph to a selected device"""
-        return Graph(
-            self.edges, self.nodes, self.globs, self.adjmat, self.mask, dev=dev
-        )
-
-
-def gcoll_lite(batch: Iterable) -> Union[GraphLite, tuple]:
-    """A custom collation function which allows us to batch together multiple graphs
-    - Wraps the pytorch default collation function to allow for all the memory tricks
-    - Looks at the first element of the batch for instructions on what to do
-
-    args:
-        batch: An iterable list/tuple containing graphs or other iterables of graphs
-    returns:
-        Batched graph object
-    """
-
-    ## Get the first element object type
-    elem = batch[0]
-
-    ## If we are dealing with a graph object then we apply the customised collation
-    if isinstance(elem, GraphLite):
-        edges = default_collate([g.edges for g in batch])
-        nodes = default_collate([g.nodes for g in batch])
-        globs = default_collate([g.globs for g in batch])
-        adjmat = default_collate([g.adjmat for g in batch])
-        mask = default_collate([g.mask for g in batch])
-
-        return GraphLite(edges, nodes, globs, adjmat, mask, dev=mask.device)
-
-    ## If we have a tuple, we must run the function for each object
-    if isinstance(elem, tuple):
-        return tuple(gcoll_lite(samples) for samples in zip(*batch))
-
-    ## If we are dealing with any other type we must run the normal collation function
-    return default_collate(batch)
 
 
 class EdgeBlockLite(nn.Module):
@@ -132,15 +43,15 @@ class EdgeBlockLite(nn.Module):
         super().__init__()
 
         ## Number of attention heads must divide dimension
-        assert inpt_dim[0] % n_heads == 0
-        self.head_dim = inpt_dim[0] // n_heads
+        assert outp_dim[0] % n_heads == 0
+        self.head_dim = outp_dim[0] // n_heads
 
         ## Dict default kwargs
         feat_kwargs = feat_kwargs or {}
         attn_kwargs = attn_kwargs or {}
 
         ## Useful dimensions
-        edge_inpt_dim = inpt_dim[0] + 2 * inpt_dim[2]
+        edge_inpt_dim = inpt_dim[0] + 2 * inpt_dim[1]
         ctxt_inpt_dim = inpt_dim[2] + ctxt_dim
         self.same_size = inpt_dim[0] == outp_dim[0]
 
@@ -162,9 +73,8 @@ class EdgeBlockLite(nn.Module):
 
         ## The pre-post layernormalisation layer
         self.pre_ln = nn.LayerNorm(edge_inpt_dim)
-        self.post_ln = nn.LayerNorm(outp_dim[0])
 
-    def forward(self, graph: GraphLite, ctxt: T.Tensor = None) -> T.Tensor:
+    def forward(self, graph: GraphBatch, ctxt: T.Tensor = None) -> T.Tensor:
         """
         args:
             graph: The batched graph object
@@ -178,35 +88,39 @@ class EdgeBlockLite(nn.Module):
         ex_size = (*graph.adjmat.shape, -1)
         edges = T.cat(
             [
-                graph.nodes.unsqueeze(-2).expand(ex_size),
-                graph.nodes.unsqueeze(-3).expand(ex_size),
+                graph.nodes.unsqueeze(-2).expand(ex_size)[graph.adjmat],
+                graph.nodes.unsqueeze(-3).expand(ex_size)[graph.adjmat],
                 graph.edges,
             ],
             dim=-1,
         )
-        edges = pass_with_mask(edges, self.pre_ln, graph.adjmat)
+        edges = self.pre_ln(edges)
+
+        ## Pass them through the attention network (first allows overwrite)
+        edge_weights = self.attn_net(
+            edges, ctxt_from_mask([graph.globs, ctxt], graph.adjmat)
+        )
+        edge_weights = aggr_via_sparse(
+            edge_weights, graph.adjmat, reduction="softmax", dim=1
+        )
 
         ## Pass them through the feature network
-        new_edges = pass_with_mask(
-            edges, self.feat_net, graph.adjmat, context=[graph.globs, ctxt]
-        )
-        new_edges = pass_with_mask(new_edges, self.post_ln, graph.adjmat)
+        edges = self.feat_net(edges, ctxt_from_mask([graph.globs, ctxt], graph.adjmat))
         if self.same_size:
-            new_edges = new_edges + graph.edges
-
-        ## Pass them through the attention network
-        edge_weights = F.softmax(
-            pass_with_mask(
-                edges, self.attn_net, graph.adjmat, context=[graph.globs, ctxt]
-            ),
-            dim=-3,
-        )
+            edges = edges + graph.edges
 
         ## Broadcast the attention to get the multiple poolings and sum
-        edge_weights = edge_weights.expand(new_edges.shape)
-        edge_weights = (new_edges * edge_weights).sum(dim=-3)
+        edge_weights = (
+            edge_weights.unsqueeze(-1).expand(-1, -1, self.head_dim).flatten(1)
+        )
+        edge_weights = edges * edge_weights
+        edge_weights = aggr_via_sparse(
+            edge_weights, graph.adjmat, reduction="sum", dim=1
+        )
+        edge_weights = edge_weights / math.sqrt(self.feat_net.outp_dim)
+        edge_weights = decompress(edge_weights, graph.adjmat.any(1))
 
-        return new_edges, edge_weights
+        return edges, edge_weights
 
 
 class NodeBlockLite(nn.Module):
@@ -233,15 +147,15 @@ class NodeBlockLite(nn.Module):
         super().__init__()
 
         ## Number of attention heads must divide dimension
-        assert inpt_dim[0] % n_heads == 0
-        self.head_dim = inpt_dim[0] // n_heads
+        assert outp_dim[1] % n_heads == 0
+        self.head_dim = outp_dim[1] // n_heads
 
         ## Dict default kwargs
         feat_kwargs = feat_kwargs or {}
         attn_kwargs = attn_kwargs or {}
 
         ## Useful dimensions
-        node_inpt_dim = inpt_dim[0] + inpt_dim[1]
+        node_inpt_dim = outp_dim[0] + inpt_dim[1]
         ctxt_inpt_dim = inpt_dim[2] + ctxt_dim
         self.same_size = inpt_dim[1] == outp_dim[1]
 
@@ -263,10 +177,9 @@ class NodeBlockLite(nn.Module):
 
         ## The pre-post layernormalisation layer
         self.pre_ln = nn.LayerNorm(node_inpt_dim)
-        self.post_ln = nn.LayerNorm(outp_dim[1])
 
     def forward(
-        self, graph: GraphLite, pooled_edges: T.Tensor, ctxt: T.Tensor = None
+        self, graph: GraphBatch, pooled_edges: T.Tensor, ctxt: T.Tensor = None
     ) -> T.Tensor:
         """
         args:
@@ -280,29 +193,35 @@ class NodeBlockLite(nn.Module):
 
         ## Create the inputs for the node networks
         nodes = T.cat([graph.nodes, pooled_edges], dim=-1)
-        nodes = pass_with_mask(nodes, self.pre_ln, graph.mask)
+        nodes = self.pre_ln(nodes)
 
-        ## Pass them through the feature network
-        new_nodes = pass_with_mask(
-            nodes, self.feat_net, graph.mask, context=[graph.globs, ctxt]
-        )
-        new_nodes = pass_with_mask(new_nodes, self.pre_ln, graph.mask)
-        if self.same_size:
-            new_nodes = new_nodes + graph.nodes
-
-        ## Pass them through the attention network
+        ## Pass them through the attention network (first allows overwrite)
         node_weights = F.softmax(
             pass_with_mask(
-                nodes, self.attn_net, graph.mask, context=[graph.globs, ctxt]
+                nodes,
+                self.attn_net,
+                graph.mask,
+                context=[graph.globs, ctxt],
+                padval=-T.inf,
             ),
             dim=-2,
+        ) / math.sqrt(self.feat_net.outp_dim)
+        node_weights[~graph.mask] = 0  ## Get rid of nans for 0 node graphs (remove?)
+
+        ## Pass them through the feature network
+        nodes = pass_with_mask(
+            nodes, self.feat_net, graph.mask, context=[graph.globs, ctxt]
         )
+        if self.same_size:
+            nodes = nodes + graph.nodes
 
         ## Broadcast the attention to get the multiple poolings and sum
-        node_weights = node_weights.expand(new_nodes.shape)
-        node_weights = (new_nodes * node_weights).sum(dim=-2)
+        node_weights = (
+            node_weights.unsqueeze(-1).expand(-1, -1, -1, self.head_dim).flatten(-2)
+        )
+        node_weights = (nodes * node_weights).sum(dim=-2)
 
-        return new_nodes, node_weights
+        return nodes, node_weights
 
 
 class GlobBlockLite(nn.Module):
@@ -328,7 +247,8 @@ class GlobBlockLite(nn.Module):
         feat_kwargs = feat_kwargs or {}
 
         ## Useful dimensions
-        glob_inpt_dim = inpt_dim[1] + inpt_dim[2]
+        glob_inpt_dim = outp_dim[1] + inpt_dim[2]
+        self.same_size = inpt_dim[2] == outp_dim[2]
 
         ## The dense network to update messsages
         self.feat_net = DenseNetwork(
@@ -340,10 +260,9 @@ class GlobBlockLite(nn.Module):
 
         ## The pre-post layernormalisation layer
         self.pre_ln = nn.LayerNorm(glob_inpt_dim)
-        self.post_ln = nn.LayerNorm(outp_dim[2])
 
     def forward(
-        self, graph: GraphLite, pooled_nodes: T.Tensor, ctxt: T.Tensor = None
+        self, graph: GraphBatch, pooled_nodes: T.Tensor, ctxt: T.Tensor = None
     ) -> T.Tensor:
         """
         args:
@@ -354,20 +273,22 @@ class GlobBlockLite(nn.Module):
         returns:
             new_globs: The new global features of the graph
         """
-        return (
-            self.post_ln(
-                self.feat_net(
-                    self.pre_ln(T.cat[graph.globs, pooled_nodes], dim=-1), ctxt=ctxt
-                )
-            )
-            + graph.globs
-        )
+        globs = T.cat([graph.globs, pooled_nodes], dim=-1)
+        globs = self.pre_ln(globs)
+        globs = self.feat_net(globs, ctxt=ctxt)
+        if self.same_size:
+            globs = globs + graph.globs
+        return globs
 
 
 class GNBlockLite(nn.Module):
     """A message passing Graph Network Block
     - Lite implies that the coding and variability between models is minimal
-    - Does not use compressed edges
+    - Always applied additive residual connections if available
+    - Always uses attention pooling
+    - Always produces output edges
+    - Always produces output globals
+    - Always applies a pre and post LayerNormalisation
     """
 
     def __init__(
@@ -383,8 +304,6 @@ class GNBlockLite(nn.Module):
         args:
             inpt_dim: The dimensions of the input graph [e,n,g]
             outp_dim: The dimensions of the output graph [e,n,g]
-            has_edges: If the input graph already has edges
-            has_globs: If the input graph already has globals
         kwargs:
             edge_block_kwargs: kwargs for the edge block
             node_block_kwargs: kwargs for the node block
@@ -413,14 +332,12 @@ class GNBlockLite(nn.Module):
             inpt_dim, outp_dim, ctxt_dim, **glob_block_kwargs
         )
 
-    def forward(
-        self, graph: GraphLite, ctxt: T.Tensor = None
-    ) -> GraphLite:
+    def forward(self, graph: GraphBatch, ctxt: T.Tensor = None) -> GraphBatch:
         """Return an updated graph with the same structure, but new features"""
         graph.edges, pooled_edges = self.edge_block(graph, ctxt)
         graph.nodes, pooled_nodes = self.node_block(graph, pooled_edges, ctxt)
-        del pooled_edges ## Saves alot of memory if we delete right away
-        graph.globs = self.node_block(graph, pooled_nodes, ctxt)
+        del pooled_edges  ## Saves alot of memory if we delete right away
+        graph.globs = self.glob_block(graph, pooled_nodes, ctxt)
         return graph
 
     def __repr__(self):
@@ -428,15 +345,15 @@ class GNBlockLite(nn.Module):
         string = str(self.inpt_dim)
         string += f"->EdgeNet[{self.edge_block.feat_net.one_line_string()}]"
         if self.edge_block.same_size:
-            string += "(add)"
+            string += "(+)"
         string += f"->EdgePool[{self.edge_block.attn_net.one_line_string()}]"
         string += f"->NodeNet[{self.node_block.feat_net.one_line_string()}]"
         if self.node_block.same_size:
-            string += "(add)"
+            string += "(+)"
         string += f"->NodePool[{self.node_block.attn_net.one_line_string()}]"
         string += f"->GlobNet[{self.glob_block.feat_net.one_line_string()}]"
         if self.glob_block.same_size:
-            string += "(add)"
+            string += "(+)"
         return string
 
 
@@ -478,14 +395,15 @@ class GNBStack(nn.Module):
                     ctxt_dim,
                     edge_block_kwargs,
                     node_block_kwargs,
-                    glob_block_kwargs
+                    glob_block_kwargs,
                 )
                 for i in range(num_blocks)
             ]
         )
 
-    def forward(self, graph: GraphLite, ctxt: T.Tensor = None) -> T.Tensor:
+    def forward(self, graph: GraphBatch, ctxt: T.Tensor = None) -> T.Tensor:
         """Pass the input through all layers sequentially"""
+        graph._clone()
         for blocks in self.blocks:
             graph = blocks(graph, ctxt)
         return graph

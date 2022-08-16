@@ -1,60 +1,148 @@
 """
-The specific modules that make up the GNblock
+Defines the lightweight and streamlined graph object and operations
 """
-
-import wandb
+import math
 from typing import Tuple
+from dotmap import DotMap
+
+import torch as T
+
+from .graphs import GraphBatch
+from ..modules import DenseNetwork
+from ..torch_utils import (
+    ctxt_from_mask,
+    pass_with_mask,
+    aggr_via_sparse,
+    decompress,
+    smart_cat,
+    masked_pool,
+    empty_0dim_like
+)
 
 import torch as T
 import torch.nn as nn
 import torch.nn.functional as F
 
-from mattstools.modules import DenseNetwork
-from mattstools.torch_utils import (
-    smart_cat,
-    empty_0dim_like,
-    apply_residual,
-    ctxt_from_mask,
-    aggr_via_sparse,
-    masked_pool,
-    pass_with_mask,
-    decompress,
-    sparse_from_mask,
-)
 
-from mattstools.gnets.graphs import GraphBatch
+class EdgeBlock(nn.Module):
+    """The edge updating and pooling step of a graph network block
 
+    Generates input edge features:
+    - Existing edges (if present)
+    - Combined send, recv node features
+    - Applies a pre-LN step if desired (reccomended)
 
-class MssgPoolBlock(nn.Module):
-    """The message pooling step of the graph block
+    (Optional) Calculates new edges using a neural network
+    - Uses globals and ctxt tensor as conditional information
 
-    Pools together information from sender and receiver nodes and stacks them with the
-    current edge features
+    Updates the old edges with the new ones
+    - Can use a concatenation or additive residual layer
+    - Additive residual layer will only work if dim does not change
+
+    Pools the new edges by removing the sender dimension
+    - Can use average pooling, sum pooling, or attention pooling
     """
 
-    def __init__(self, inpt_dim: list, msg_type: str = "d"):
+    def __init__(
+        self,
+        inpt_dim: list,
+        ctxt_dim: int = 0,
+        msg_type: str = "sr",
+        do_ln: bool = True,
+        use_net: bool = True,
+        pool_type: str = "attn",
+        rsdl_type: str = "add",
+        feat_kwargs: DotMap = None,
+        attn_kwargs: DotMap = None,
+    ) -> None:
         """
         args:
-            inpt_dim: The dimensions of the input graph [e,n,g,c] of the gn block
-            msg_type: String on how nodes combine node features to create messages
-                -> "s(end)r(ecv)d(iff)"
+            inpt_dim: The dimensions of the input graph [e,n,g] of the gn block
+        kwargs:
+            ctxt_dim: The size of the contextual information
+            msg_type: How the send/receive messages are combined
+            do_ln: If the input features are going to be layer-normed
+            use_net: If the features are updated with a neural network
+            pool_type: The type of pooling operation to apply
+            feat_kwargs: The DotMapionary of kwargs for the feature dense network
+            attn_kwargs: The DotMapionary of kwargs for the attention dense network
         """
         super().__init__()
 
-        ## Configuration checking
-        if len(msg_type) > 3 or len(msg_type) == 0:
-            raise ValueError(
-                f"Unrecognised message passing type:{msg_type}\n"
-                + "Must be some subset of chars: s, r, d"
+        ## Check the configuration
+        assert all(m in "srd" for m in msg_type)
+        assert pool_type in ["sum", "mean", "attn"]
+        assert rsdl_type in ["none", "add", "cat"]
+
+        ## DotMap default kwargs
+        self.feat_kwargs = feat_kwargs or {}
+        self.attn_kwargs = attn_kwargs or {}
+
+        ## Set the attributes from the parameters
+        self.inpt_dim = inpt_dim
+        self.msg_type = msg_type
+        self.do_ln = do_ln
+        self.use_net = use_net
+        self.pool_type = pool_type
+        self.rsdl_type = rsdl_type
+        self.ctxt_dim = ctxt_dim
+
+        ## Useful dimensions
+        self.feat_inpt_dim, self.feat_outp_dim, self.ctxt_inpt_dim = self._get_dims()
+
+        ## Values dependant on the above dimensions
+        if pool_type == "attn":
+            self.n_heads = attn_kwargs.outp_dim
+            assert self.feat_outp_dim % self.n_heads == 0
+            self.head_dim = self.feat_outp_dim // self.n_heads
+
+        ## The pre layer normalisation layer
+        if do_ln:
+            self.pre_ln = nn.LayerNorm(self.feat_inpt_dim)
+
+        ## The dense network to update messsages
+        if use_net:
+            self.feat_net = DenseNetwork(
+                inpt_dim=self.feat_inpt_dim,
+                ctxt_dim=self.ctxt_inpt_dim,
+                **feat_kwargs,
             )
 
-        ## Save the input and output dimensions and the message passing type
-        self.inpt_dim = inpt_dim
-        self.outp_dim = self.inpt_dim[1] * len(msg_type)
-        self.msg_type = msg_type
+        ## The attention network for pooling
+        if pool_type == "attn":
+            self.attn_net = DenseNetwork(
+                inpt_dim=self.feat_inpt_dim,
+                ctxt_dim=self.ctxt_inpt_dim,
+                **attn_kwargs,
+            )
 
-    def forward(self, graph: GraphBatch) -> GraphBatch:
-        """Returns all messages passed along edges in compressed form"""
+        ## The residual update depends on setting and input/output size matching
+        self.do_rsdl = rsdl_type != "none" and inpt_dim[0]
+        if rsdl_type == "add" and inpt_dim[0] == self.feat_outp_dim:
+            self.do_rsdl = False
+
+    def _get_dims(self):
+        """Set some of the important dimensions needed for the block"""
+
+        ## Without a network the messages are made up of only pooled intormation
+        feat_inpt_dim = self.inpt_dim[0] + len(self.msg_type) * self.inpt_dim[1]
+        feat_outp_dim = feat_inpt_dim
+
+        ## With a network output can be anything
+        if self.use_net:
+            self.feat_inpt_dim = self.feat_kwargs.outp_dim
+
+        ## If using concat residual connections
+        if self.do_rsdl and self.rsdl_type == "cat":
+            feat_outp_dim += self.inpt_dim[0]
+
+        ## Full context dimension comes from global and ctxt information
+        ctxt_inpt_dim = self.inpt_dim[2] + self.ctxt_dim
+
+        return feat_inpt_dim, feat_outp_dim, ctxt_inpt_dim
+
+    def _build_messages(self, graph: GraphBatch):
+        """Create the messages passed between the two nodes"""
 
         ## Expand the node contributions (No mem is allocated in expand!)
         ex_size = (*graph.adjmat.shape, -1)
@@ -77,778 +165,560 @@ class MssgPoolBlock(nn.Module):
         ## Return all messages
         return smart_cat(pooled_mssgs, -1)
 
-
-class EdgeBlock(nn.Module):
-    """The edge updating step of a graph network block
-
-    Combines the edge information with the pooled messages from send-recv pairs
-
-    Can also contain a dense network to update the edges which take as inputs the:
-    - Pooled messages
-    - Current edge features (if present)
-    - Global features (if present)
-    - Conditional features (if present)
-
-    Block can update the edges through residual connection based on rsdl_type
-    - Can only apply residual update if previous graph edges existed
-    - Residual connection can either be concatenation or additive
-        - If addititve and dimensions change it will apply a linear resizing layer
-          to the old features
-    """
-
-    def __init__(
-        self,
-        inpt_dim: list,
-        pooled_mssg_dim: int,
-        use_net: bool = False,
-        rsdl_type: str = "none",
-        net_kwargs: dict = None,
-    ) -> None:
+    def forward(self, graph: GraphBatch, ctxt: T.Tensor = None) -> Tuple[T.Tensor, T.Tensor]:
         """
         args:
-            inpt_dim: The dimensions of the input graph [e,n,g,c] of the gn block
-            pooled_mssg_dim: The size of the pooled node contributions per edge
-            use_net: If a dense network will be used to update the edges
-            rsdl_type: The type of residual connection: none, add, or cat
-            net_kwargs: The dictionary of kwargs for the feature dense network
-        """
-        super().__init__()
-
-        ## Dict default kwargs
-        net_kwargs = net_kwargs or {}
-
-        ## Save the input dimension of the graph object
-        self.inpt_dim = inpt_dim
-        self.pooled_mssg_dim = pooled_mssg_dim
-
-        ## Save the options on how the edge features are combined/updated/pooled
-        self.use_net = use_net
-        self.rsdl_type = rsdl_type
-
-        ## Residual updates require both the option and existing input edges
-        self.do_rsdl = rsdl_type != "none" and inpt_dim[0]
-
-        ## Calculate the sizes of the messages being passed
-        self.e_inpt_dim, self.e_outp_dim, self.ctxt_dim = self._get_dims()
-
-        ## If using a dense network to update messsages
-        if self.use_net:
-            self.dense_net = DenseNetwork(
-                inpt_dim=self.e_inpt_dim, ctxt_dim=self.ctxt_dim, **net_kwargs
-            )
-            self.e_outp_dim += self.dense_net.outp_dim
-
-        ## Include a resizing layer if rsdl adding and change of dim
-        self.do_rsdl_lin = (
-            self.do_rsdl and rsdl_type == "add" and (inpt_dim[0] != self.e_outp_dim)
-        )
-        if self.do_rsdl_lin:
-            self.rsdl_lin = nn.Linear(inpt_dim[0], self.e_outp_dim)
-
-    def _get_dims(self) -> Tuple[int, int]:
-        """Calculates the edge input and output and context sizes based on config"""
-
-        ## Without a network the messages are made up of pooled message info
-        e_inpt_dim = self.pooled_mssg_dim
-        e_outp_dim = e_inpt_dim
-
-        ## With a network, input can include more info and output is set to 0 for now
-        if self.use_net:
-            e_inpt_dim += self.inpt_dim[0]
-            e_outp_dim = 0  ## Increased by net output and residual connection
-
-        ## If using shortcut residual connections, add the previous edge dimensions
-        if self.do_rsdl and self.rsdl_type == "cat":
-            e_outp_dim += self.inpt_dim[0]
-
-        ## Context dimensions come from global and conditional information
-        ctxt_dim = self.inpt_dim[2] + self.inpt_dim[3]
-
-        return e_inpt_dim, e_outp_dim, ctxt_dim
-
-    def forward(self, graph: GraphBatch, pooled_mssgs: T.Tensor) -> T.Tensor:
-        """
-        args:
-            graph: The batched graph object to pass through the block
-            pooled_mssgs: The combined info from sender and receiver nodes
-        returns:
-            pooled_mssgs: The new edge features for the graph
-        """
-
-        ## Get inputs and pass through the network (edges are already compressed)
-        if self.use_net:
-            pooled_mssgs = self.dense_net(
-                inputs=smart_cat([pooled_mssgs, graph.edges]),
-                ctxt=ctxt_from_mask([graph.globs, graph.cndts], graph.adjmat),
-            )
-
-        ## Add the old edges if residual updates (through a resizing layer if needed)
-        if self.do_rsdl:
-            rsdl = self.rsdl_lin(graph.edges) if self.do_rsdl_lin else graph.edges
-            pooled_mssgs = apply_residual(self.rsdl_type, rsdl, pooled_mssgs)
-
-        return pooled_mssgs
-
-
-class EdgePoolBlock(nn.Module):
-    """Applies pooling to the compressed edges in a graph across the receiver dimension.
-
-    Can apply attention pooling, but then additional information is required in the
-    forward pass to calculate the edge weights.
-    """
-
-    def __init__(
-        self,
-        inpt_dim: int,
-        new_edge_dim: int,
-        pooled_mssg_dim: int = 0,
-        pool_type: str = "sum",
-        attn_type: str = "sum",
-        net_kwargs: dict = None,
-    ) -> None:
-        """
-        args:
-            inpt_dim: The dimensions of the input graph [e,n,g,c] of the gn block
-            new_edge_dim: The size of the new edge features, this tensor is pooled
-            pooled_mssg_dim: The size of the pooled node contributions per edge
-            pool_type: The pooling method to apply (mean, sum, attn)
-            attn_type: The attention pooling method to apply (mean, sum, raw)
-            net_kwargs: The dictionary of kwargs for the attention dense network
-        """
-        super().__init__()
-
-        ## Dict default kwargs
-        net_kwargs = net_kwargs or {}
-
-        ## Store the attributes for basic pooling
-        self.inpt_dim = inpt_dim
-        self.new_edge_dim = new_edge_dim
-        self.pool_type = pool_type
-        self.outp_dim = new_edge_dim
-
-        ## Specifically for attention pooling
-        if self.pool_type == "attn":
-
-            ## Attributes needed for attention pooling
-            self.pooled_mssg_dim = pooled_mssg_dim
-            self.attn_type = attn_type
-
-            ## For the attention network the default output must be set to 1
-            if "outp_dim" not in net_kwargs:
-                net_kwargs["outp_dim"] = 1
-
-            attn_dim, ctxt_dim = self._get_dims()
-            self.attn_net = DenseNetwork(attn_dim, ctxt_dim=ctxt_dim, **net_kwargs)
-
-            ## Check that the dimension of each head makes internal sense
-            self.head_dim = self.outp_dim // self.attn_net.outp_dim
-            if self.head_dim * self.attn_net.outp_dim != self.outp_dim:
-                raise ValueError("Output dimension must be divisible by # of heads!")
-
-    def _get_dims(self) -> int:
-        """Calculates the attention input and context sizes based on config"""
-
-        ## Attention inputs are the pooled messages and the old edges
-        attn_dim = self.pooled_mssg_dim + self.inpt_dim[0]
-
-        ## Context dimensions come from global and conditional information
-        ctxt_dim = self.inpt_dim[2] + self.inpt_dim[3]
-
-        return attn_dim, ctxt_dim
-
-    def forward(
-        self, new_edges: T.Tensor, graph: GraphBatch, pooled_mssgs: T.Tensor = None
-    ):
-        """
-        args:
-            edges: The tensor to pool over
-            graph: The graph with old edges and adjmat, used for pooling and attn
+            graph: The batched graph object
         kwargs:
-            pooled_mssgs: Send and receive info to add to the attn network
+            ctxt: The extra context tensor
+        returns:
+            new_edges: The new edge features of the graph
+            pooled_edges: The pooled edges of the graph for the node update
         """
 
-        ## For attention pooling
+        ## Create the inputs for the edge networks
+        edges = smart_cat([graph.edges, self._build_messages(graph)])
+
+        ## Apply the pre_layer normalisation layer
+        if self.do_ln:
+            edges = self.pre_ln(edges)
+
+        ## Pass them through the attention network
+        ## (doing this first allows overrite and saves memory)
         if self.pool_type == "attn":
-
-            ## Build the input tensors for the attention network
-            attn_outs = self.attn_net(
-                inputs=smart_cat([pooled_mssgs, graph.edges]),
-                ctxt=ctxt_from_mask([graph.globs, graph.cndts], graph.adjmat),
+            pooled_edges = self.attn_net(
+                edges, ctxt_from_mask([graph.globs, ctxt], graph.adjmat)
+            ) / math.sqrt(self.feat_outp_dim)
+            pooled_edges = aggr_via_sparse(
+                pooled_edges, graph.adjmat, reduction="softmax", dim=1
+            )
+            pooled_edges = (
+                pooled_edges.unsqueeze(-1).expand(-1, -1, self.head_dim).flatten(1)
             )
 
-            ## Apply the softplus or softmax for weighted sum or mean
-            if self.attn_type == "sum":
-                attn_outs = F.softplus(attn_outs)
-            if self.attn_type == "mean":
-                attn_outs = aggr_via_sparse(
-                    attn_outs, graph.adjmat, reduction="softmax", dim=1
-                )
+        ## Pass the edges through the feature network
+        if self.use_net:
+            edges = self.feat_net(
+                edges, ctxt_from_mask([graph.globs, ctxt], graph.adjmat)
+            )
 
-            ## Broadcast the attention weights with the features and sum
-            attn_outs = attn_outs.unsqueeze(-1).expand(-1, -1, self.head_dim).flatten(1)
-            new_edges = new_edges * attn_outs
-            new_edges = aggr_via_sparse(new_edges, graph.adjmat, reduction="sum", dim=1)
+        ## Apply the residual update
+        if self.do_rsdl:
+            if self.rsdl_type == "cat":
+                edges = smart_cat([edges, graph.edges], dim=-1)
+            if self.rsdl_type == "add":
+                edges = edges + graph.edges
 
-        ## For normal pooling methods
+        ## Apply the pooling per node,
+        if self.pool_type == "attn":
+            pooled_edges = aggr_via_sparse(
+                edges * pooled_edges, graph.adjmat, reduction="sum", dim=1
+            )
         else:
-            new_edges = aggr_via_sparse(
-                new_edges, graph.adjmat, reduction=self.pool_type, dim=1
+            pooled_edges = aggr_via_sparse(
+                edges, graph.adjmat, reduction=self.pool_type, dim=1
             )
 
-        ## Since the pooled edges are per receiver node we must undo the compression
-        return decompress(new_edges, graph.adjmat.any(1))
+        ## Decompress the pooled information as nodes are not comp!
+        pooled_edges = decompress(pooled_edges, graph.adjmat.any(1))
+
+        ## Return the new edge features and the pooled edges (undo the compression)
+        return edges, pooled_edges
+
+    def __repr__(self):
+        """Sort string representation of the block"""
+        string = f"EdgeBock[{self.msg_type}"
+        if self.do_ln:
+            string += "-LN"
+        if self.use_net:
+            string += f"-FF({self.feat_net.one_line_string()})"
+        if self.do_rsdl:
+            string += f"-{self.rsdl_type}"
+        string += f"-{self.pool_type}"
+        if self.pool_type == "attn":
+            string += self.n_heads
+        string += "]"
+        return string
 
 
 class NodeBlock(nn.Module):
-    """The node undating step of a graph network block
+    """The node updating and pooling step of a graph network block
 
-    Combines the node information with the pooled edge information
+    Generates input node features:
+    - Existing nodes
+    - Pooled edge information
+    - Applies a pre-LN step if desired (reccomended)
 
-    Can also contain a dense network to update the nodes which take as inputs the:
-    - Pooled incomming edge information
-    - Current node features
-    - Global features (if present)
-    - Conditional features (if present)
+    (Optional) Calculates new edges using a neural network
+    - Uses globals and ctxt tensor as conditional information
 
-    Block can update the nodes through residual connection based on rsdl_type
-    - Residual connection can either be concatenation or additive
-        - If addititve and dimensions change it will apply a linear resizing layer
-          to the old features
+    Updates the old nodes with the new ones
+    - Can use a concatenation or additive residual layer
+    - Additive residual layer will only work if dim does not change
 
-    This block also allows LOCKING certain nodes in such that they do not get updated
-    even if they took part of the sending of information
+    Pools the new nodes over the entire graph
+    - Only happens if the graph is producing a global layer
+    - Can use average pooling, sum pooling, or attention pooling
     """
 
     def __init__(
         self,
         inpt_dim: list,
         pooled_edge_dim: int,
-        use_net: bool = False,
-        rsdl_type: str = "none",
-        net_kwargs: dict = None,
+        ctxt_dim: int = 0,
+        do_globs: bool = True,
+        do_ln: bool = True,
+        use_net: bool = True,
+        pool_type: str = "attn",
+        rsdl_type: str = "add",
+        feat_kwargs: DotMap = None,
+        attn_kwargs: DotMap = None,
     ) -> None:
         """
         args:
-            inpt_dim: The dimensions of the input graph [e,n,g,c] of the gn block
+            inpt_dim: The dimensions of the input graph [e,n,g] of the gn block
             pooled_edge_dim: The size of the pooled edge tensors per receiver node
-            use_net: If a dense network will be used to update the nodes
-            rsdl_type: The type of residual connection: none, add, or cat
-            net_kwargs: The dictionary of kwargs for the dense mlp
+        kwargs:
+            ctxt_dim: The size of the contextual information
+            do_globs: If the output graph has global features (if pooling is required)
+            do_ln: If the input features are going to be layer-normed
+            use_net: If the features are updated with a neural network
+            pool_type: The type of pooling operation to apply
+            rsdl_type: Type of residuel connection to apply
+            feat_kwargs: The DotMapionary of kwargs for the feature dense network
+            attn_kwargs: The DotMapionary of kwargs for the attention dense network
         """
         super().__init__()
 
-        ## Dict default kwargs
-        net_kwargs = net_kwargs or {}
+        ## Check the configuration
+        assert pool_type in ["sum", "mean", "attn"]
+        assert rsdl_type in ["none", "add", "cat"]
 
-        ## Save the input dimension of the graph object and the pooled edges
+        ## DotMap default kwargs
+        self.feat_kwargs = feat_kwargs or {}
+        self.attn_kwargs = attn_kwargs or {}
+
+        ## Set the attributes from the parameters
         self.inpt_dim = inpt_dim
         self.pooled_edge_dim = pooled_edge_dim
-
-        ## Save the configuration for how the nodes are to be updated
+        self.do_globs = do_globs
+        self.do_ln = do_ln
         self.use_net = use_net
+        self.pool_type = pool_type
         self.rsdl_type = rsdl_type
-        self.do_rsdl = rsdl_type != "none"
+        self.ctxt_dim = ctxt_dim
 
-        ## Calculate the size node input/output information
-        self.n_inpt_dim, self.n_outp_dim, self.ctxt_dim = self._get_dims()
+        ## Useful dimensions
+        self.feat_inpt_dim, self.feat_outp_dim, self.ctxt_inpt_dim = self._get_dims()
 
-        ## If using a dense netwok to update the nodes
-        if self.use_net:
-            self.dense_net = DenseNetwork(
-                inpt_dim=self.n_inpt_dim, ctxt_dim=self.ctxt_dim, **net_kwargs
+        ## Values dependant on the above dimensions
+        if pool_type == "attn" and self.do_globs:
+            self.n_heads = attn_kwargs.outp_dim
+            assert self.feat_inpt_dim % self.n_heads == 0
+            self.head_dim = self.feat_outp_dim // self.n_heads
+
+        ## The pre layer normalisation layer
+        if do_ln:
+            self.pre_ln = nn.LayerNorm(self.feat_inpt_dim)
+
+        ## The dense network to update features
+        if use_net:
+            self.feat_net = DenseNetwork(
+                inpt_dim=self.feat_inpt_dim,
+                ctxt_dim=self.ctxt_inpt_dim,
+                **feat_kwargs,
             )
-            self.n_outp_dim += self.dense_net.outp_dim
 
-        ## Include a resizing layer if rsdl adding and change of dim
-        self.do_rsdl_lin = rsdl_type == "add" and (inpt_dim[1] != self.n_outp_dim)
-        if self.do_rsdl_lin:
-            self.rsdl_lin = nn.Linear(inpt_dim[1], self.n_outp_dim)
+        ## The attention network for pooling
+        if pool_type == "attn" and do_globs:
+            self.attn_net = DenseNetwork(
+                inpt_dim=self.feat_inpt_dim,
+                ctxt_dim=self.ctxt_inpt_dim,
+                **attn_kwargs,
+            )
 
-    def _get_dims(self) -> Tuple[int, int]:
-        """Calculates the node input and output and context sizes sizes based on config"""
+        ## The residual update depends on setting and input/output size matching
+        self.do_rsdl = rsdl_type != "none" and inpt_dim[1]
+        if rsdl_type == "add" and inpt_dim[1] == self.feat_outp_dim:
+            self.do_rsdl = False
 
-        ## Without a network the node inputs are made up of just the pooled info
-        n_inpt_dim = self.pooled_edge_dim
-        n_outp_dim = n_inpt_dim
+    def _get_dims(self):
+        """Set some of the important dimensions needed for the block"""
 
-        ## With a network, input can include more info and output is set to 0 for now
+        ## Without a network the messages are made up of only pooled intormation
+        feat_inpt_dim = self.pooled_edge_dim + self.inpt_dim[1]
+        feat_outp_dim = feat_inpt_dim
+
+        ## With a network output can be anything
         if self.use_net:
-            n_inpt_dim += self.inpt_dim[1]
-            n_outp_dim = 0  ## Increased by net output and residual connection
+            self.feat_inpt_dim = self.feat_kwargs.outp_dim
 
-        ## If using shortcut residual connections, add the previous node dimensions
+        ## If using concat residual connections
         if self.do_rsdl and self.rsdl_type == "cat":
-            n_outp_dim += self.inpt_dim[1]
+            feat_outp_dim += self.inpt_dim[1]
 
-        ## Context dimensions come from global and conditional information
-        ctxt_dim = self.inpt_dim[2] + self.inpt_dim[3]
+        ## Full context dimension comes from global and ctxt information
+        ctxt_inpt_dim = self.inpt_dim[2] + self.ctxt_dim
 
-        return n_inpt_dim, n_outp_dim, ctxt_dim
+        return feat_inpt_dim, feat_outp_dim, ctxt_inpt_dim
 
     def forward(
-        self,
-        graph: GraphBatch,
-        pooled_edges: T.Tensor,
-        locked_nodes: T.Tensor = None,
+        self, graph: GraphBatch, pooled_nodes: T.Tensor, ctxt: T.Tensor = None
     ) -> Tuple[T.Tensor, T.Tensor]:
         """
         args:
-            graph: The batched graph object to be passed through the block
-            pooled_edges: The pooled information for each receiver node
+            graph: The batched graph object
+            pooled_edges: The pooled information per receiver node
         kwargs:
-            locked_nodes: A batched mask for the nodes nodes which may NOT be
-                          updated by this block
+            ctxt: The extra context tensor
         returns:
-            The new node features for the graph
+            new_nodes: The new node features of the graph
+            pooled_nodes: The pooled nodes across the graph
         """
 
-        ## Check if the block allows for locked nodes and create the masks
-        if locked_nodes is not None:
-            if locked_nodes.any() and (self.inpt_dim[1] != self.n_outp_dim):
-                raise ValueError(
-                    "Can not lock any nodes as the dimension changes: "
-                    + f"({self.inpt_dim[1]}->{self.n_outp_dim})"
-                )
+        ## Create the inputs for the node networks
+        nodes = smart_cat([graph.nodes, pooled_nodes])
 
-            ## Create a mask of which real nodes may be updated by this block
-            lock_mask = graph.mask * locked_nodes
-            free_mask = graph.mask * ~locked_nodes
+        ## Apply the pre_layer normalisation layer
+        if self.do_ln:
+            nodes = self.pre_ln(nodes)
 
-        else:
-            lock_mask = T.zeros_like(graph.mask).bool()
-            free_mask = graph.mask
+        ## Pass them through the attention network
+        ## (doing this first allows overrite and saves memory)
+        if self.pool_type == "attn" and self.do_globs:
+            pooled_nodes = pass_with_mask(
+                nodes,
+                self.attn_net,
+                graph.mask,
+                context=[graph.globs, ctxt],
+                padval=-T.inf,
+            ) / math.sqrt(self.feat_net.outp_dim)
+            pooled_nodes = F.softmax(pooled_nodes, dim=-2)
+            pooled_nodes[~graph.mask] = 0  ## Get rid of nans for 0 node graphs?
+            pooled_nodes = (
+                pooled_nodes.unsqueeze(-1).expand(-1, -1, -1, self.head_dim).flatten(-2)
+            )
 
-        ## Get inputs and pass through the network
+        ## Pass the nodes through the feature network
         if self.use_net:
-            pooled_edges = pass_with_mask(
-                inputs=T.cat([pooled_edges, graph.nodes], dim=-1),  ## No smart_cat
-                module=self.dense_net,
-                mask=free_mask,
-                context=[graph.globs, graph.cndts],
+            nodes = pass_with_mask(
+                nodes, self.feat_net, graph.mask, context=[graph.globs, ctxt]
             )
 
-        ## Add the old nodes if residual updates (through a resizing layer if needed)
+        ## Apply the residual update
         if self.do_rsdl:
-            if self.do_rsdl_lin:
-                rsdl = pass_with_mask(graph.nodes, self.rsdl_lin, free_mask)
+            if self.rsdl_type == "cat":
+                nodes = smart_cat([nodes, graph.nodes], dim=-1)
+            if self.rsdl_type == "add":
+                nodes = nodes + graph.nodes
+
+        ## Apply the pooling across the graph
+        if self.do_globs:
+            if self.pool_type == "attn":
+                pooled_nodes = (nodes * pooled_nodes).sum(dim=-2)
             else:
-                rsdl = graph.nodes
-            pooled_edges = apply_residual(self.rsdl_type, rsdl, pooled_edges)
-
-        ## Add the original-locked nodes back in (pass_with_mask made them all 0 padded)
-        if lock_mask.any():
-            pooled_edges[lock_mask] = graph.nodes[lock_mask]
-
-        return pooled_edges
-
-
-class NodePoolBlock(nn.Module):
-    """Applies pooling to the padded nodes in a graph.
-
-    Can apply attention pooling, but then additional information is required in the
-    forward pass to calculate the node weights.
-    """
-
-    def __init__(
-        self,
-        inpt_dim: int,
-        new_node_dim: int,
-        pooled_edge_dim: int = 0,
-        pool_type: str = "sum",
-        attn_type: str = "sum",
-        net_kwargs: dict = None,
-    ) -> None:
-        """
-        args:
-            inpt_dim: The dimensions of the input graph [e,n,g,c] of the gn block
-            new_node_dim: The size of the new edge features, this tensor is pooled
-            pooled_edge_dim: The size of the pooled edge features, for the attn net
-            pool_type: The pooling method to apply (mean, sum, attn)
-            attn_type: The attention pooling method to apply (mean, sum, raw)
-            net_kwargs: The dictionary of kwargs for the attention dense network
-        """
-        super().__init__()
-
-        ## Dict default kwargs
-        net_kwargs = net_kwargs or {}
-
-        ## Store the attributes for basic pooling
-        self.inpt_dim = inpt_dim
-        self.new_edge_dim = new_node_dim
-        self.pool_type = pool_type
-        self.outp_dim = new_node_dim
-
-        ## Specifically for attention pooling
-        if self.pool_type == "attn":
-
-            ## Attributes needed for attention pooling
-            self.pooled_edge_dim = pooled_edge_dim
-            self.attn_type = attn_type
-
-            ## For the attention network the default output must be set to 1
-            if "outp_dim" not in net_kwargs:
-                net_kwargs["outp_dim"] = 1
-
-            attn_dim, ctxt_dim = self._get_dims()
-            self.attn_net = DenseNetwork(attn_dim, ctxt_dim=ctxt_dim, **net_kwargs)
-
-            ## Check that the dimension of each head makes internal sense
-            self.head_dim = self.outp_dim // self.attn_net.outp_dim
-            if self.head_dim * self.attn_net.outp_dim != self.outp_dim:
-                raise ValueError("Output dimension must be divisible by # of heads!")
-
-    def _get_dims(self) -> int:
-        """Calculates the attention input and context sizes based on config"""
-
-        ## Attention inputs are the pooled edges and the old nodes
-        attn_dim = self.pooled_edge_dim + self.inpt_dim[1]
-
-        ## Context dimensions come from global and conditional information
-        ctxt_dim = self.inpt_dim[2] + self.inpt_dim[3]
-
-        return attn_dim, ctxt_dim
-
-    def forward(
-        self, new_nodes: T.Tensor, graph: GraphBatch, pooled_edges: T.Tensor = None
-    ):
-        """
-        args:
-            new_nodes: The tensor to pool over
-            graph: The graph with old edges and adjmat, used for pooling and attn
-        kwargs:
-            pooled_edges: Send and receive info to add to the attn network
-        """
-
-        ## For attention pooling
-        if self.pool_type == "attn":
-
-            ## Build the input tensors for the attention network
-            attn_outs = pass_with_mask(
-                inputs=smart_cat([pooled_edges, graph.nodes]),
-                module=self.attn_net,
-                mask=graph.mask,
-                context=[graph.globs, graph.cndts],
-                padval=0 if self.attn_type == "raw" else -T.inf,
-            )
-
-            ## Apply either a softmax for weighted mean or softplus for weighted sum
-            if self.attn_type == "mean":
-                attn_outs = F.softmax(attn_outs, dim=-2)
-            elif self.attn_type == "sum":
-                attn_outs = F.softplus(attn_outs)
-
-            ## Broadcast the attention to get the multiple poolings and sum
-            attn_outs = (
-                attn_outs.unsqueeze(-1).expand(-1, -1, -1, self.head_dim).flatten(2)
-            )
-            new_nodes = (new_nodes * attn_outs).sum(dim=-2)
-
-        ## For normal pooling methods
+                pooled_nodes = masked_pool(self.pool_type, nodes, graph.mask)
         else:
-            new_nodes = masked_pool(self.pool_type, new_nodes, graph.mask)
+            pooled_nodes = None
 
-        return new_nodes
+        return nodes, pooled_nodes
+
+    def __repr__(self):
+        """Sort string representation of the block"""
+        string = "NodeBock["
+        if self.do_ln:
+            string += "LN-"
+        if self.use_net:
+            string += f"FF({self.feat_net.one_line_string()})-"
+        if self.do_rsdl:
+            string += f"{self.rsdl_type}-"
+        if self.do_globs:
+            string += f"{self.pool_type}"
+            if self.pool_type == "attn":
+                string += self.n_heads
+        if string[-1] == "-":
+            string = string[:-1]
+        string += "]"
+        return string
 
 
 class GlobBlock(nn.Module):
-    """The global vector updating step in a graph network block
+    """The global updating step of a graph network block
 
-    Combines the global information with the pooled node information
+    Generates input global features:
+    - Existing globals (if present)
+    - Pooled node informatio
+    - Applies a pre-LN step if desired (reccomended)
 
-    Can also contain a dense network to update the globals which take as inputs the:
-    - Pooled node information
-    - Current global features (if present)
-    - Current conditional features (if present)
+    (Optional) Calculates new globals using a neural network
+    - Uses ctxt tensor as conditional information
 
-    Block can update the globals through residual connection based on rsdl_type
-    - Residual connection can either be concatenation or additive
-        - If addititve and dimensions change it will apply a linear resizing layer
-          to the old features
+    Updates the old globals with the new ones
+    - Can use a concatenation or additive residual layer
+    - Additive residual layer will only work if dim does not change
     """
 
     def __init__(
         self,
         inpt_dim: list,
-        pooled_node_dim: list,
-        use_net: bool = False,
-        rsdl_type: str = "none",
-        net_kwargs: dict = None,
+        pooled_node_dim: int,
+        ctxt_dim: int = 0,
+        do_ln: bool = True,
+        use_net: bool = True,
+        rsdl_type: str = "add",
+        feat_kwargs: DotMap = None,
     ) -> None:
         """
         args:
-            inpt_dim: The dimensions of the input graph [e,n,g,c] of the gn block
-            pooled_node_dim: The size of the pooled node tensors across the graph
-            use_net: If a dense network will be used to update the globals
-            rsdl_type: The type of residual connection: none, add, or cat
-            net_kwargs: The dictionary of kwargs for the dense mlp
+            inpt_dim: The dimensions of the input graph [e,n,g] of the gn block
+            pooled_edge_dim: The size of the pooled node tensors over the graph
+        kwargs:
+            ctxt_dim: The size of the contextual information
+            do_ln: If the input features are going to be layer-normed
+            use_net: If the features are updated with a neural network
+            rsdl_type: Type of residuel connection to apply
+            feat_kwargs: The DotMapionary of kwargs for the feature dense network
         """
         super().__init__()
 
-        ## Dict default kwargs
-        net_kwargs = net_kwargs or {}
+        ## Check the configuration
+        assert rsdl_type in ["none", "add", "cat"]
 
-        ## Save the input and output dimensions of the entire graph block
+        ## DotMap default kwargs
+        self.feat_kwargs = feat_kwargs or {}
+
+        ## Useful dimensions
         self.inpt_dim = inpt_dim
         self.pooled_node_dim = pooled_node_dim
-
-        ## Save the configuration for how the globals are to be updated
+        self.ctxt_dim = ctxt_dim
+        self.do_ln = do_ln
         self.use_net = use_net
         self.rsdl_type = rsdl_type
+        self.feat_kwargs = feat_kwargs
 
-        ## Residual updates require both the option and existing input globals
-        self.do_rsdl = rsdl_type != "none" and inpt_dim[2]
+        ## Useful dimensions
+        self.feat_inpt_dim, self.feat_outp_dim = self._get_dims()
 
-        ## Calculate the size global input/output information
-        self.g_inpt_dim, self.g_outp_dim, self.ctxt_dim = self._get_dims()
+        ## The pre layer normalisation layer
+        if do_ln:
+            self.pre_ln = nn.LayerNorm(self.feat_inpt_dim)
 
-        ## If using a dense netwok to update the globals
-        if self.use_net:
-            self.dense_net = DenseNetwork(
-                inpt_dim=self.g_inpt_dim, ctxt_dim=self.ctxt_dim, **net_kwargs
+        ## The dense network to update features
+        if use_net:
+            self.feat_net = DenseNetwork(
+                inpt_dim=self.feat_inpt_dim,
+                ctxt_dim=self.ctxt_dim,
+                **feat_kwargs,
             )
-            self.g_outp_dim += self.dense_net.outp_dim
 
-        ## Include a resizing layer if rsdl adding and change of dim
-        self.do_rsdl_lin = (
-            self.do_rsdl and rsdl_type == "add" and (inpt_dim[2] != self.g_outp_dim)
-        )
-        if self.do_rsdl_lin:
-            self.rsdl_lin = nn.Linear(inpt_dim[2], self.g_outp_dim)
+        ## The residual update depends on setting and input/output size matching
+        self.do_rsdl = rsdl_type != "none" and inpt_dim[2]
+        if rsdl_type == "add" and inpt_dim[2] == self.feat_outp_dim:
+            self.do_rsdl = False
 
-    def _get_dims(self) -> Tuple[int, int]:
-        """Calculates the global input and output and context sizes based on config"""
+    def _get_dims(self):
+        """Set some of the important dimensions needed for the block"""
 
-        ## Without a network the global inputs are made up of just pooled info
-        g_inpt_dim = self.pooled_node_dim
-        g_outp_dim = g_inpt_dim
+        ## Without a network the messages are made up of only pooled intormation
+        feat_inpt_dim = self.pooled_node_dim + self.inpt_dim[2]
+        feat_outp_dim = feat_inpt_dim
 
-        ## With a network, input can include more info and output is set to 0 for now
+        ## With a network output can be anything
         if self.use_net:
-            g_inpt_dim += self.inpt_dim[2]
-            g_outp_dim = 0  ## Increased by net output and residual connection
+            self.feat_inpt_dim = self.feat_kwargs.outp_dim
 
-        ## If using the shortcut method for residual connections add the previous global dimensions
+        ## If using concat residual connections
         if self.do_rsdl and self.rsdl_type == "cat":
-            g_outp_dim += self.inpt_dim[2]
+            feat_outp_dim += self.inpt_dim[2]
 
-        ## Context dimensions come frrom and conditional information only
-        ctxt_dim = self.inpt_dim[3]
+        return feat_inpt_dim, feat_outp_dim
 
-        return g_inpt_dim, g_outp_dim, ctxt_dim
-
-    def forward(self, graph: GraphBatch, pooled_nodes: T.Tensor) -> T.Tensor:
+    def forward(
+        self, graph: GraphBatch, pooled_nodes: T.Tensor, ctxt: T.Tensor = None
+    ) -> Tuple[T.Tensor, T.Tensor]:
         """
         args:
-            graph: The batched graph object to be passed through the block
-            pooled_nodes: The pooled information from all nodes in the graph
-
+            graph: The batched graph object
+            pooled_nodes: The pooled information across the graph
+        kwargs:
+            ctxt: The extra context tensor
         returns:
-            The new global tensor for the graph
+            new_globs: The new global features of the graph
         """
 
-        ## If using a network the pooled info is combined with others and processed
+        ## Create the inputs for the feature networks
+        globs = smart_cat([graph.globs, pooled_nodes])
+
+        ## Apply the pre_layer normalisation layer
+        if self.do_ln:
+            globs = self.pre_ln(globs)
+
+        ## Pass through the feature network
         if self.use_net:
-            pooled_nodes = self.dense_net.forward(
-                inputs=smart_cat([pooled_nodes, graph.globs], dim=-1), ctxt=graph.cndts
-            )
+            globs = self.feat_net(globs, ctxt=ctxt)
 
-        ## Add the old globs if using residual updates (through a resizing layer if needed)
+        ## Apply the residual update
         if self.do_rsdl:
-            rsdl = self.rsdl_lin(graph.globs) if self.do_rsdl_lin else graph.globs
-            pooled_nodes = apply_residual(self.rsdl_type, rsdl, pooled_nodes)
+            if self.rsdl_type == "cat":
+                globs = smart_cat([globs, graph.globs], dim=-1)
+            if self.rsdl_type == "add":
+                globs = globs + graph.nodes
 
-        return pooled_nodes
+        return globs
+
+    def __repr__(self):
+        """Short string representation of the block"""
+        string = "GlobBock["
+        if self.do_ln:
+            string += "LN-"
+        if self.use_net:
+            string += f"FF({self.feat_net.one_line_string()})-"
+        if self.do_rsdl:
+            string += f"{self.rsdl_type}"
+        string += "]"
+        return string
 
 
 class GNBlock(nn.Module):
     """A message passing Graph Network Block
-
-    Comprised of an several blocks which act in sequence
-    - MssgPoolBlock: Combines current node features to get edge contributions
-    - EdgeBlock: Updates graph.edges using pooled messages and graph info
-    - EdgePoolBlock: Pools the edges over the sender node dimension (can use attention)
-    - NodeBlock: Updates graph.nodes using pooled edges and graph info
-    - NodePoolBlock: Pools the nodes over the whole graph (can use attention)
-    - GlobBlock: Updates graph.globs using pooled nodes and graph info
-        - These last two only exist if the argument do_glob is true
+    Updates the edges, nodes and globals in turn and returns a new graph batch
     """
 
     def __init__(
         self,
         inpt_dim: list,
-        do_glob: bool = True,
+        ctxt_dim: int = 0,
+        do_globs: bool = True,
         pers_edges: bool = True,
-        mgpl_blk_kwargs: dict = None,
-        edge_blk_kwargs: dict = None,
-        egpl_blk_kwargs: dict = None,
-        node_blk_kwargs: dict = None,
-        ndpl_blk_kwargs: dict = None,
-        glob_blk_kwargs: dict = None,
+        edge_block_kwargs: DotMap = None,
+        node_block_kwargs: DotMap = None,
+        glob_block_kwargs: DotMap = None,
     ) -> None:
         """
         args:
-            inpt_dim: The dimensions of the input graph [e,n,g,c]
+            inpt_dim: The dimensions of the input graph [e,n,g]
+            ctxt_dim: The dimension of the conditioning tensor
         kwargs:
-            do_glob: Perform the global feature update
-            pers_edges: If the GN block should save the edges of the graph
-            mgpl_blk_kwargs: kwargs for the mssg pooling block
-            edge_blk_kwargs: kwargs for the edge block
-            egpl_blk_kwargs: kwargs for the edge pooling block
-            node_blk_kwargs: kwargs for the node block
-            ndpl_blk_kwargs: kwargs for the node pooling block
-            glob_blk_kwargs: kwargs for the glob block
+            do_globs: If this block will produce new global values
+            pers_edges: If this block keeps edge features, or if they are dropped
+            edge_block_kwargs: kwargs for the edge block
+            node_block_kwargs: kwargs for the node block
+            glob_block_kwargs: kwargs for the glob block
         """
         super().__init__()
 
-        ## Dict default kwargs
-        mgpl_blk_kwargs = mgpl_blk_kwargs or {}
-        edge_blk_kwargs = edge_blk_kwargs or {}
-        egpl_blk_kwargs = egpl_blk_kwargs or {}
-        node_blk_kwargs = node_blk_kwargs or {}
-        ndpl_blk_kwargs = ndpl_blk_kwargs or {}
-        glob_blk_kwargs = glob_blk_kwargs or {}
+        ## DotMap default kwargs
+        edge_block_kwargs = edge_block_kwargs or {}
+        node_block_kwargs = node_block_kwargs or {}
+        glob_block_kwargs = glob_block_kwargs or {}
 
-        ## Store the input dimension and other attributes
+        ## Store the params
         self.inpt_dim = inpt_dim
-        self.do_glob = do_glob
+        self.ctxt_dim = ctxt_dim
+        self.do_globs = do_globs
         self.pers_edges = pers_edges
 
-        ## Blocks for edge updating
-        self.mspl_block = MssgPoolBlock(self.inpt_dim, **mgpl_blk_kwargs)
+        ## The module's edge block
         self.edge_block = EdgeBlock(
-            self.inpt_dim, self.mspl_block.outp_dim, **edge_blk_kwargs
+            inpt_dim=inpt_dim,
+            ctxt_dim=ctxt_dim,
+            **edge_block_kwargs
         )
 
-        ## Blocks for node updating
-        self.egpl_block = EdgePoolBlock(
-            self.inpt_dim,
-            self.edge_block.e_outp_dim,
-            self.mspl_block.outp_dim,
-            **egpl_blk_kwargs,
-        )
+        ## The module's node block
         self.node_block = NodeBlock(
-            self.inpt_dim, self.egpl_block.outp_dim, **node_blk_kwargs
+            inpt_dim=inpt_dim,
+            pooled_edge_dim=self.edge_block.feat_outp_dim,
+            ctxt_dim=ctxt_dim,
+            do_globs=do_globs,
+            **node_block_kwargs,
         )
 
-        ## Blocks for global upding (optional)
-        if self.do_glob:
-            self.ndpl_block = NodePoolBlock(
-                inpt_dim,
-                self.node_block.n_outp_dim,
-                self.egpl_block.outp_dim,
-                **ndpl_blk_kwargs,
-            )
+        ## (optional) The module's global block
+        if do_globs:
             self.glob_block = GlobBlock(
-                inpt_dim, self.ndpl_block.outp_dim, **glob_blk_kwargs
+                inpt_dim=inpt_dim,
+                pooled_node_dim=self.node_block.feat_outp_dim,
+                ctxt_dim=ctxt_dim,
+                **glob_block_kwargs
             )
 
-        ## Calculate the output dimension of the final graph
+        ## Calculate the output size of this graph
         self.outp_dim = [
-            self.edge_block.e_outp_dim if pers_edges else 0,
-            self.node_block.n_outp_dim,
-            self.glob_block.g_outp_dim if do_glob else 0,
-            inpt_dim[-1],
+            self.edge_block.feat_outp_dim if pers_edges else 0,
+            self.node_block.feat_outp_dim,
+            self.glob_block.feat_outp_dim if do_globs else 0,
         ]
 
-        ## Check that at least one of the blocks has a network
-        if not any(
-            [
-                self.edge_block.use_net,
-                self.node_block.use_net,
-                do_glob and self.glob_block.use_net,
-            ]
-        ):
-            raise ValueError(
-                "None of the submodules in this GN block have any learnable parameters!"
-            )
-
-    def forward(
-        self, graph: GraphBatch, locked_nodes: T.BoolTensor = None
-    ) -> GraphBatch:
+    def forward(self, graph: GraphBatch, ctxt: T.Tensor = None) -> GraphBatch:
         """Return an updated graph with the same structure, but new features"""
-
-        ## Perform the message pooling (combine send-recv nodes)
-        pooled_mssgs = self.mspl_block(graph)
-
-        ## Update the edges of the graph (delay update as attn needs old and new)
-        new_edges = self.edge_block(graph, pooled_mssgs)
-
-        ## Perform the edge pooling
-        pooled_edges = self.egpl_block(new_edges, graph, pooled_mssgs)
-
-        ## Apply update and clear memory
-        del pooled_mssgs
-        graph.edges = new_edges
-
-        ## Update the nodes of the graph (delay update as attn needs old and new)
-        new_nodes = self.node_block(graph, pooled_edges, locked_nodes)
-
-        ## If there are global outputs
-        if self.do_glob:
-
-            ## Perform the node pooling
-            pooled_nodes = self.ndpl_block(new_nodes, graph, pooled_edges)
-
-            ## Apply update and clear memory
-            del pooled_edges
-            graph.nodes = new_nodes
-
-            ## Update the globals of the graph
-            graph.globs = self.glob_block(graph, pooled_nodes)
-
-        ## If no global outputs, then remove required info for pooling
+        graph.edges, pooled_edges = self.edge_block(graph, ctxt)
+        graph.nodes, pooled_nodes = self.node_block(graph, pooled_edges, ctxt)
+        del pooled_edges  ## Saves alot of memory if we delete right away
+        if self.do_globs:
+            graph.globs = self.glob_block(graph, pooled_nodes, ctxt)
         else:
-            del pooled_edges
-            graph.nodes = new_nodes
             graph.globs = empty_0dim_like(graph.globs)
-
-        ## If we are not doing persistant edges, ensure they are empty
-        if not self.pers_edges:
-            graph.edges = empty_0dim_like(graph.edges)
-
-        ## Return the graph
         return graph
 
     def __repr__(self):
-        """A way to print the block config on one line for quick review
-
-        We DONT overload a repr method for each block as the default print method
-        is clean and verbose enough when looking at them individually!!!
-        """
+        """A way to print the block config on one line for quick review"""
         string = str(self.inpt_dim)
-
-        ## Message Pooling
-        string += f"->MssPool({self.mspl_block.msg_type})"
-
-        ## Edge updating
-        if self.edge_block.use_net:
-            string += f"->EdgeNet[{self.edge_block.dense_net.one_line_string()}]"
-        if self.edge_block.do_rsdl:
-            string += f"({self.edge_block.rsdl_type})"
-
-        ## Edge pooling
-        string += f"->{self.egpl_block.pool_type}"
-        if self.egpl_block.pool_type == "attn":
-            string += f"({self.egpl_block.attn_net.outp_dim})"
-
-        ## Node updating
-        if self.node_block.use_net:
-            string += f"->NodeNet[{self.node_block.dense_net.one_line_string()}]"
-        if self.node_block.do_rsdl:
-            string += f"({self.node_block.rsdl_type})"
-
-        if self.do_glob:
-
-            ## Node pooling
-            string += f"->{self.ndpl_block.pool_type}"
-            if self.ndpl_block.pool_type == "attn":
-                string += f"({self.ndpl_block.attn_net.outp_dim})"
-
-            ## Global updating
-            if self.glob_block.use_net:
-                string += f"->GlobNet[{self.glob_block.dense_net.one_line_string()}]"
-            if self.glob_block.do_rsdl:
-                string += f"({self.glob_block.rsdl_type})"
-
-        string += f"->{self.outp_dim}"
+        string += "->" + repr(self.edge_block)
+        string += "->" + repr(self.node_block)
+        if self.do_globs:
+            string += "->" + repr(self.glob_block)
+        string += "->" + self.outp_dim
         return string
+
+
+class GNBStack(nn.Module):
+    """A stack of N many identical GNBlockLite(s)
+    Graph to Graph
+    """
+
+    def __init__(
+        self,
+        inpt_dim: list,
+        model_dim: list,
+        num_blocks: int,
+        ctxt_dim: int = 0,
+        edge_block_kwargs: DotMap = None,
+        node_block_kwargs: DotMap = None,
+        glob_block_kwargs: DotMap = None,
+    ) -> None:
+        """
+        args:
+            num_blocks: The number of blocks in the stack
+            inpt_dim: The dimensions of the input graph [e,n,g] (unchanging)
+        kwargs:
+            edge_block_kwargs: kwargs for the edge block
+            node_block_kwargs: kwargs for the node block
+            glob_block_kwargs: kwargs for the glob block
+        """
+        super().__init__()
+
+        self.num_blocks = num_blocks
+        self.inpt_dim = inpt_dim
+        self.model_dim = model_dim
+        self.ctxt_dim = ctxt_dim
+        self.blocks = nn.ModuleList(
+            [
+                GNBlockLite(
+                    inpt_dim if i == 0 else model_dim,
+                    model_dim,
+                    ctxt_dim,
+                    edge_block_kwargs,
+                    node_block_kwargs,
+                    glob_block_kwargs,
+                )
+                for i in range(num_blocks)
+            ]
+        )
+
+    def forward(self, graph: GraphBatch, ctxt: T.Tensor = None) -> GraphBatch:
+        """Pass the input through all layers sequentially"""
+        graph._clone()
+        for blocks in self.blocks:
+            graph = blocks(graph, ctxt)
+        return graph

@@ -1,7 +1,7 @@
 """
 Defines the graph object type and other operations specific to handing them
 """
-
+from __future__ import annotations
 from typing import Iterable, Union
 
 import torch as T
@@ -13,8 +13,8 @@ from mattstools.torch_utils import sel_device
 class Graph:
     """The base class for the custom graph object
 
-    A collection of 6 tensors:
-    - 4 describe the attributes of the edges, nodes, globals and conditionals
+    A collection of 5 tensors:
+    - 3 describe the attributes of the edges, nodes, globals
     - 2 describe the structure, providing masks for the edges (adjmat) and nodes (mask)
     """
 
@@ -23,33 +23,31 @@ class Graph:
         edges: T.Tensor,
         nodes: T.Tensor,
         globs: T.Tensor,
-        cndts: T.Tensor,
         adjmat: T.BoolTensor,
         mask: T.BoolTensor,
-        dev: str = "cpu",
+        dev: str = "same",
     ) -> None:
         """
         args:
             edges: Compressed edge features (num_edges x Ef)
             nodes: Node features (N x Nf)
             globs: Global features (Gf)
-            cndts: Conditional features (Cf)
             adjmat: The adjacency matrix, a mask for the edge features (N x N)
             mask: The node mask (N)
         kwargs:
             dev: A string indicating the device on which to store the tensors
         """
 
-        ## Save the device where the graph will be stored
-        self.device = T.device(dev)
-
         ## Save each of the component tensors onto the correct device
-        self.edges = edges.to(self.device)
-        self.nodes = nodes.to(self.device)
-        self.globs = globs.to(self.device)
-        self.cndts = cndts.to(self.device)
-        self.adjmat = adjmat.to(self.device)
-        self.mask = mask.to(self.device)
+        self.edges = edges
+        self.nodes = nodes
+        self.globs = globs
+        self.adjmat = adjmat
+        self.mask = mask
+
+        ## Save the device where the graph will be stored
+        dev = dev if dev != "same" else nodes.device
+        self.to(dev)
 
     @property
     def dtype(self):
@@ -58,74 +56,44 @@ class Graph:
 
     def dim(self):
         """Return the dimensions of the graph"""
-        return [
-            self.edges.shape[-1],
-            self.nodes.shape[-1],
-            self.globs.shape[-1],
-            self.cndts.shape[-1],
-        ]
+        return [self.edges.shape[-1], self.nodes.shape[-1], self.globs.shape[-1]]
 
     def __len__(self):
         """Return the masking length of the graph"""
         return len(self.mask)
 
+    def max_n(self):
+        """Return the number of nodes that the graph can hold"""
+        return self.mask.shape[-1]
+
     def to(self, dev: str):
         """Move the graph to a selected device"""
-        return Graph(
-            self.edges,
-            self.nodes,
-            self.globs,
-            self.cndts,
-            self.adjmat,
-            self.mask,
-            dev=dev,
-        )
+        self.edges = self.edges.to(dev)
+        self.nodes = self.nodes.to(dev)
+        self.globs = self.globs.to(dev)
+        self.adjmat = self.adjmat.to(dev)
+        self.mask = self.mask.to(dev)
+        self.device = T.device(dev)
+
+    def _clone(self):
+        """Create an inplace clone of its tensors"""
+        self.edges = self.edges.clone()
+        self.nodes = self.nodes.clone()
+        self.globs = self.globs.clone()
+        self.adjmat = self.adjmat.clone()
+        self.mask = self.mask.clone()
 
 
-class GraphBatch:
+class GraphBatch(Graph):
     """A batch of graph objects
 
-    Batching the nodes, globs, cndts, adjmat and mask are simple as they just
+    Batching the nodes, globs, adjmat and mask are simple as they just
     receive an extra batch dimension.
 
     Batching the edges however requires more steps as the edges are in compressed form
     This means that only the nonzero edges in the graph are stored such that
     full_edges[adjmat] = edges
-
     """
-
-    def __init__(
-        self,
-        edges: T.Tensor,
-        nodes: T.Tensor,
-        globs: T.Tensor,
-        cndts: T.Tensor,
-        adjmat: T.BoolTensor,
-        mask: T.BoolTensor,
-        dev: str = "cpu",
-    ) -> None:
-        """
-        args:
-            edges: Compressed edge features (Num_edges x Ef)
-            nodes: Node features (B x N x Nf)
-            globs: Global features (B x Gf)
-            cndts: Conditional features (B x Cf)
-            adjmat: The adjacency matrix, a mask for the edge features (B x N x N)
-            mask: The node mask (B x N)
-        kwargs:
-            dev: A string indicating the device on which to store the tensors
-        """
-
-        ## Save the device where the graph will be stored
-        self.device = sel_device(dev)
-
-        ## Save each of the component tensors onto the correct device
-        self.edges = edges.to(self.device)
-        self.nodes = nodes.to(self.device)
-        self.globs = globs.to(self.device)
-        self.cndts = cndts.to(self.device)
-        self.adjmat = adjmat.to(self.device)
-        self.mask = mask.to(self.device)
 
     @property
     def dtype(self):
@@ -143,19 +111,10 @@ class GraphBatch:
             self.edges[start:end],
             self.nodes[idx],
             self.globs[idx],
-            self.cndts[idx],
             self.adjmat[idx],
             self.mask[idx],
             dev=self.device,
         )
-
-    def __len__(self):
-        """Return the length of the graph batch"""
-        return len(self.mask)
-
-    def max_n(self):
-        """Return the number of nodes that the batch can hold"""
-        return self.mask.shape[-1]
 
     def dim(self):
         """Return the dimensions of the graph object starting with the batch length"""
@@ -165,20 +124,7 @@ class GraphBatch:
                 self.edges.shape[-1],
                 self.nodes.shape[-1],
                 self.globs.shape[-1],
-                self.cndts.shape[-1],
             ],
-        )
-
-    def to(self, dev: str):
-        """Move the graph to a selected device"""
-        return GraphBatch(
-            self.edges,
-            self.nodes,
-            self.globs,
-            self.cndts,
-            self.adjmat,
-            self.mask,
-            dev=dev,
         )
 
     def has_nan(self):
@@ -187,7 +133,6 @@ class GraphBatch:
             T.isnan(self.edges).any().item(),
             T.isnan(self.nodes).any().item(),
             T.isnan(self.globs).any().item(),
-            T.isnan(self.cndts).any().item(),
             T.isnan(self.adjmat).any().item(),
             T.isnan(self.mask).any().item(),
         ]
@@ -207,12 +152,11 @@ class GraphBatch:
             self.edges[b_mask.repeat_interleave(self.adjmat.sum((-1, -2))).bool()],
             self.nodes[b_mask],
             self.globs[b_mask],
-            self.cndts[b_mask],
             self.adjmat[b_mask],
             self.mask[b_mask],
         )
 
-    def batch_replace(self, graph_2, b_mask: T.BoolTensor) -> None:
+    def batch_replace(self, graph_2: GraphBatch, b_mask: T.BoolTensor) -> None:
         """Replace samples with those from graph_2 following a mask
         Number of graphs in graph_2 must be smaller!
         Operation modifies the current graph batch
@@ -220,7 +164,6 @@ class GraphBatch:
         self.adjmat[b_mask] = graph_2.adjmat
         self.nodes[b_mask] = graph_2.nodes
         self.globs[b_mask] = graph_2.globs
-        self.cndts[b_mask] = graph_2.cndts
         self.mask[b_mask] = graph_2.mask
 
         ## This step kills all persistant edges until I work out how to do this
@@ -234,19 +177,6 @@ class GraphBatch:
     def __repr__(self):
         """Return the name of the graph and its dimension for printing"""
         return f"GraphBatch({self.dim()})"
-
-    def clone(self):
-        """Returns a copy of itself so the GNBlock does not make inplace changes"""
-
-        return GraphBatch(
-            self.edges,
-            self.nodes,
-            self.globs,
-            self.cndts,
-            self.adjmat,
-            self.mask,
-            dev=self.device,
-        )
 
 
 def gcoll(batch: Iterable) -> Union[GraphBatch, tuple]:
@@ -268,11 +198,10 @@ def gcoll(batch: Iterable) -> Union[GraphBatch, tuple]:
         edges = T.cat([g.edges for g in batch])  ## Input edges should be compressed
         nodes = default_collate([g.nodes for g in batch])
         globs = default_collate([g.globs for g in batch])
-        cndts = default_collate([g.cndts for g in batch])
         adjmat = default_collate([g.adjmat for g in batch])
         mask = default_collate([g.mask for g in batch])
 
-        return GraphBatch(edges, nodes, globs, cndts, adjmat, mask, dev=mask.device)
+        return GraphBatch(edges, nodes, globs, adjmat, mask, dev=mask.device)
 
     ## If we have a tuple, we must run the function for each object
     elif isinstance(elem, tuple):
@@ -291,7 +220,7 @@ def blank_graph_batch(
     - All masks/adjmats are false
 
     args:
-        dim: The dimensions of the desired graph [e,n,g,c]
+        dim: The dimensions of the desired graph [e,n,g]
         max_nodes: The max number of nodes to allow for
         b_size: The batch dimension
     kwargs:
@@ -303,8 +232,7 @@ def blank_graph_batch(
     edges = T.zeros((0, dim[0]), device=dev)
     nodes = T.zeros((b_size, max_nodes, dim[1]), device=dev)
     globs = T.zeros((b_size, dim[2]), device=dev)
-    cndts = T.zeros((b_size, dim[3]), device=dev)
     adjmat = T.zeros((b_size, max_nodes, max_nodes), device=dev).bool()
     mask = T.zeros((b_size, max_nodes), device=dev).bool()
 
-    return GraphBatch(edges, nodes, globs, cndts, adjmat, mask, dev=dev)
+    return GraphBatch(edges, nodes, globs, adjmat, mask, dev=dev)

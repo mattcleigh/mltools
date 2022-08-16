@@ -11,6 +11,8 @@ import torch.nn.functional as F
 from .modules import DenseNetwork
 from .torch_utils import pass_with_mask
 
+##TODO Support attention masks in the larger layers
+
 
 def merge_masks(
     q_mask: T.BoolTensor,
@@ -22,7 +24,7 @@ def merge_masks(
 ):
     """Create a full attention mask which incoporates the padding information"""
 
-    ## Create the full mask which combines the attention and padding masks!
+    ## Create the full mask which combines the attention and padding masks
     full_mask = None
 
     ## If either pad mask exists, create
@@ -37,11 +39,11 @@ def merge_masks(
             if kv_mask is not None
             else T.ones(k_shape[:-1], dtype=T.bool, device=device)
         )
-        full_mask = q_mask.unsqueeze(-1) * kv_mask.unsqueeze(-2)
+        full_mask = q_mask.unsqueeze(-1) & kv_mask.unsqueeze(-2)
 
     ## If attention mask exists, create
     if attn_mask is not None:
-        full_mask = attn_mask if full_mask is None else attn_mask * full_mask
+        full_mask = attn_mask if full_mask is None else attn_mask & full_mask
 
     return full_mask
 
@@ -206,7 +208,7 @@ class MultiHeadedAttentionBlock(nn.Module):
         v = v if v is not None else q
 
         ## Store the batch size, useful for reshaping
-        b_size = q.size(0)
+        b_size = q.shape[0]
 
         ## First work out the masking situation, with padding, no peaking etc
         attn_mask = merge_masks(q_mask, kv_mask, attn_mask, q.shape, k.shape, q.device)
@@ -297,6 +299,86 @@ class TransformerEncoderLayer(nn.Module):
         return x
 
 
+class TransformerDecoderLayer(nn.Module):
+    """A transformer dencoder layer based on the GPT-2+Normformer style arcitecture.
+
+    It contains:
+    - self-attention-block
+    - cross-attention block
+    - feedforward network
+
+    Layer norm is applied before each layer
+    Residual connections are used, bypassing each layer
+    """
+
+    def __init__(
+        self,
+        model_dim: int,
+        mha_kwargs: dict = None,
+        ff_kwargs: dict = None,
+    ) -> None:
+        """Init method for TransformerEncoderLayer
+
+        args:
+            mha_kwargs: Keyword arguments for multiheaded-attention block
+            ff_kwargs: Keyword arguments for feed forward network
+        """
+        super().__init__()
+
+        ## Default dict arguments
+        mha_kwargs = mha_kwargs or {}
+        ff_kwargs = ff_kwargs or {}
+
+        ## Save the model dim as an attribute
+        self.model_dim = model_dim
+
+        ## The basic blocks
+        self.self_attn = MultiHeadedAttentionBlock(model_dim, **mha_kwargs)
+        self.cross_attn = MultiHeadedAttentionBlock(model_dim, **mha_kwargs)
+        self.feed_forward = DenseNetwork(model_dim, outp_dim=model_dim, **ff_kwargs)
+
+        ## The normalisation layers (lots from NormFormer)
+        self.norm_preSA = nn.LayerNorm(model_dim)
+        self.norm_pstSA = nn.LayerNorm(model_dim)
+        self.norm_preC1 = nn.LayerNorm(model_dim)
+        self.norm_preC2 = nn.LayerNorm(model_dim)
+        self.norm_pstCA = nn.LayerNorm(model_dim)
+        self.norm_preNN = nn.LayerNorm(model_dim)
+
+    def forward(
+        self,
+        q_seq: T.Tensor,
+        kv_seq: T.Tensor,
+        q_mask: T.BoolTensor = None,
+        kv_mask: T.BoolTensor = None,
+    ) -> T.Tensor:
+        "Pass through the layer using residual connections and layer normalisation"
+        kv_seq = self.norm_preC2(kv_seq)  ## Apply this now
+
+        ## Apply the self attention residual update
+        q_seq = q_seq + self.norm_pstSA(
+            self.self_attn(self.norm_preSA(q_seq), q_mask=q_mask, kv_mask=q_mask)
+        )
+
+        ## Apply the cross attention residual update
+        q_seq = q_seq + self.norm_pstCA(
+            self.cross_attn(
+                self.norm_preC1(q_seq),
+                k=kv_seq,
+                v=kv_seq,
+                q_mask=q_mask,
+                kv_mask=kv_mask,
+            )
+        )
+
+        ## Apply the FF residual update
+        q_seq = q_seq + pass_with_mask(
+            self.norm_preNN(q_seq), self.feed_forward, q_mask
+        )
+
+        return q_seq
+
+
 class CrossAttentionLayer(TransformerEncoderLayer):
     """A transformer cross attention block
 
@@ -323,10 +405,10 @@ class CrossAttentionLayer(TransformerEncoderLayer):
         kv_mask: T.BoolTensor = None,
     ) -> T.Tensor:
         "Pass through the layers of cross attention"
-        kv_seq = self.norm1(kv_seq)
+        kv_seq = self.norm0(kv_seq)
         q_seq = q_seq + self.norm2(
             self.self_attn(
-                self.norm0(q_seq), kv_seq, kv_seq, q_mask=q_mask, kv_mask=kv_mask
+                self.norm1(q_seq), kv_seq, kv_seq, q_mask=q_mask, kv_mask=kv_mask
             )
         )
         q_seq = q_seq + pass_with_mask(self.norm3(q_seq), self.feed_forward, q_mask)
@@ -374,6 +456,52 @@ class TransformerEncoder(nn.Module):
         return self.final_norm(sequence)
 
 
+class TransformerDecoder(nn.Module):
+    """A stack of N transformer dencoder layers followed by a final normalisation step
+    Sequence-Sequence to Sequence
+    """
+
+    def __init__(
+        self,
+        model_dim: int,
+        num_layers: int = 3,
+        mha_kwargs: dict = None,
+        ff_kwargs: dict = None,
+    ) -> None:
+        """Init function for the TransformerEncoder
+
+        args:
+            model_dim: Feature sieze for input, output, and all intermediate layers
+        kwargs:
+            num_layers: Number of encoder layers used
+            mha_kwargs: Keyword arguments for the mha block
+            ff_kwargs: Keyword arguments for the ff network in each layer
+        """
+        super().__init__()
+
+        self.layers = nn.ModuleList(
+            [
+                TransformerDecoderLayer(model_dim, mha_kwargs, ff_kwargs)
+                for _ in range(num_layers)
+            ]
+        )
+        self.model_dim = model_dim
+        self.num_layers = num_layers
+        self.final_norm = nn.LayerNorm(model_dim)
+
+    def forward(
+        self,
+        q_seq: T.Tensor,
+        kv_seq: T.Tensor,
+        q_mask: T.BoolTensor = None,
+        kv_mask: T.BoolTensor = None,
+    ) -> T.Tensor:
+        """Pass the input through all layers sequentially"""
+        for layer in self.layers:
+            q_seq = layer(q_seq, kv_seq, q_mask, kv_mask)
+        return self.final_norm(q_seq)
+
+
 class TransformerVectorEncoder(nn.Module):
     """A type of transformer encoder which procudes a single vector for the whole seq
     Sequence to Vector
@@ -381,6 +509,7 @@ class TransformerVectorEncoder(nn.Module):
     Then the nodes (and optionally edges) are passed through several MHSA layers.
     Then a learnable class token is updated using cross attention.
     This results in a single element sequence.
+    Contains a final normalisation layer
 
     It is non resizing, so model_dim must be used for inputs and outputs
     """
@@ -400,7 +529,6 @@ class TransformerVectorEncoder(nn.Module):
         kwargs:
             num_sa_blocks: Number of self attention encoder layers
             num_ca_blocks: Number of cross/class attention encoder layers
-            ctxt_dim: Dimension of context tensor introduced before final net
             mha_kwargs: Keyword arguments for all multiheaded attention layers
             trans_ff_kwargs: Keyword arguments for the ff network in each layer
         """
@@ -424,6 +552,7 @@ class TransformerVectorEncoder(nn.Module):
                 for _ in range(num_ca_blocks)
             ]
         )
+        self.final_norm = nn.LayerNorm(model_dim)
 
         ## Initialise the class token embedding as a learnable parameter
         self.class_token = nn.Parameter(T.randn((1, 1, self.model_dim)))
@@ -442,11 +571,15 @@ class TransformerVectorEncoder(nn.Module):
             seq = layer(seq, mask, edge_weights=edge_weights)
 
         ## Get the learned class token and expand to the batch size
-        class_token = self.class_token.expand(len(seq), 1, self.model_dim)
+        ## Use shape[0] not len as it is ONNX safe!
+        class_token = self.class_token.expand(seq.shape[0], 1, self.model_dim)
 
         ## Pass through the class attention blocks
         for layer in self.ca_blocks:
             class_token = layer(class_token, seq, q_mask=None, kv_mask=mask)
+
+        ## Pass through the final normalisation layer
+        class_token = self.final_norm(class_token)
 
         ## Pop out the unneeded sequence dimension of 1
         class_token = class_token.squeeze(1)
@@ -455,6 +588,67 @@ class TransformerVectorEncoder(nn.Module):
         if return_seq:
             return class_token, seq
         return class_token
+
+
+class TransformerVectorDecoder(nn.Module):
+    """A type of transformer decoder which creates a sequence given a starting
+    vector and a desired mask
+    Vector to Sequence
+
+    Randomly initialises the q-sequence using the mask shape and a gaussian
+    Uses the input vector as 1-long kv-sequence in decoder layers
+
+    It is non resizing, so model_dim must be used for inputs and outputs
+    """
+
+    def __init__(
+        self,
+        model_dim: int,
+        num_layers: int = 3,
+        mha_kwargs: dict = None,
+        ff_kwargs: dict = None,
+    ) -> None:
+        """Init function for the TransformerEncoder
+
+        args:
+            model_dim: Feature sieze for input, output, and all intermediate layers
+        kwargs:
+            num_layers: Number of decoder layers used
+            mha_kwargs: Keyword arguments for the mha block
+            ff_kwargs: Keyword arguments for the ff network in each layer
+        """
+        super().__init__()
+
+        self.layers = nn.ModuleList(
+            [
+                TransformerDecoderLayer(model_dim, mha_kwargs, ff_kwargs)
+                for _ in range(num_layers)
+            ]
+        )
+        self.model_dim = model_dim
+        self.num_layers = num_layers
+        self.final_norm = nn.LayerNorm(model_dim)
+
+    def forward(
+        self,
+        vec: T.Tensor,
+        mask: T.BoolTensor = None,
+    ) -> T.Tensor:
+        """Pass the input through all layers sequentially"""
+
+        ## Initialise the q-sequence randomly (adhere to mask)
+        q_seq = (
+            T.randn((*mask.shape, self.model_dim), device=vec.device, dtype=vec.dtype)
+            * mask
+        )
+
+        ## Reshape the vector from batch x features to batch x seq=1 x features
+        vec = vec.unsqueeze(1)
+
+        ## Pass through the decoder
+        for layer in self.layers:
+            q_seq = layer(q_seq, vec, q_mask=mask, kv_mask=None)
+        return self.final_norm(q_seq)
 
 
 class FullTransformerVectorEncoder(nn.Module):
@@ -467,7 +661,7 @@ class FullTransformerVectorEncoder(nn.Module):
             This is a very optional step which most will want to ignore but it is what
             ParT used! https://arxiv.org/abs/2202.03772
     3)  Then it passes these through a TVE to get a single vector output
-    4)  Finally is passes the vector through en embedding network
+    4)  Finally is passes the vector through an embedding network
     """
 
     def __init__(
@@ -564,82 +758,8 @@ class FullTransformerVectorEncoder(nn.Module):
         return nodes
 
 
-class TransformerVectorGenerator(nn.Module):
-    """A type of transformer generator which creates a sequence given a starting
-    vector and a desired mask
-    Vector to Sequence
-
-    Randomly initialises the sequence using the mask shape
-    Uses the vector as the "class token" in cross attention
-    Updates the sequence using self attention
-    Alternates layers of self and cross attention to result in a final sequence
-    which derives its values based on the original vector
-
-    It is non resizing, so model_dim must be used for inputs and outputs
-    """
-
-    def __init__(
-        self,
-        model_dim: int = 64,
-        num_casa_blocks: int = 4,
-        mha_kwargs: dict = None,
-        trans_ff_kwargs: dict = None,
-    ) -> None:
-        """Init function for the TransformerVectorEncoder
-
-        kwargs:
-            inpt_dim: The input size of the vector
-            model_dim: Feature size for input, output, and all intermediate sequences
-            num_ca_blocks: Number of cross/class attention encoder layers
-            num_sa_blocks: Number of self attention encoder layers
-            ctxt_dim: Dimension of context tensor introduced before final net
-            mha_kwargs: Keyword arguments for all multiheaded attention layers
-            trans_ff_kwargs: Keyword arguments for the ff network in each layer
-        """
-        super().__init__()
-
-        ## Create the class attributes
-        self.model_dim = model_dim
-        self.num_casa_blocks = num_casa_blocks
-
-        ## Initialise the models
-        self.ca_blocks = nn.ModuleList(
-            [
-                CrossAttentionLayer(model_dim, mha_kwargs, trans_ff_kwargs)
-                for _ in range(num_casa_blocks)
-            ]
-        )
-        self.sa_blocks = nn.ModuleList(
-            [
-                TransformerEncoderLayer(model_dim, mha_kwargs, trans_ff_kwargs)
-                for _ in range(num_casa_blocks)
-            ]
-        )
-
-    def forward(
-        self,
-        vec: T.Tensor,
-        mask: T.BoolTensor = None,
-    ) -> T.Tensor:
-        """Pass the input through all layers sequentially"""
-
-        ## Initialise the sequence randomly
-        seq = T.randn((*mask.shape, self.model_dim), device=vec.device, dtype=vec.dtype)
-
-        ## Reshape the vecor from batch x features to batch x seq(1) x features
-        vec = vec.unsqueeze(1)
-
-        ## Pass through the class attention blocks
-        for ca_layer, sa_layer in zip(self.ca_blocks, self.sa_blocks):
-            seq = ca_layer(seq, vec, q_mask=mask, kv_mask=None)
-            seq = sa_layer(seq, mask)
-
-        ## Return the sequence
-        return seq
-
-
-class FullTransformerVectorGenerator(nn.Module):
-    """A TVG with added input and output embedding networks
+class FullTransformerVectorDecoder(nn.Module):
+    """A TVD with added input and output embedding networks
     Vector to Sequence
 
     1)  Embeds the input vector into a higher dimensional space based on model_dim
@@ -681,7 +801,7 @@ class FullTransformerVectorGenerator(nn.Module):
         self.ctxt_dim = ctxt_dim
 
         ## Initialise the TVE, the main part of this network
-        self.tvg = TransformerVectorGenerator(**tvg_kwargs)
+        self.tvg = TransformerVectorDecoder(**tvg_kwargs)
         self.model_dim = self.tvg.model_dim
 
         ## Initialise all embedding networks
@@ -706,6 +826,6 @@ class FullTransformerVectorGenerator(nn.Module):
     ) -> T.Tensor:
         """Pass the input through all layers sequentially"""
         vec = self.vec_embd(vec, ctxt=ctxt)
-        nodes = self.tvg.forward(vec, mask)
+        nodes = self.tvg(vec, mask)
         nodes = pass_with_mask(nodes, self.outp_embd, mask, context=ctxt)
         return nodes

@@ -102,7 +102,7 @@ class MLPBlock(nn.Module):
 
         ## Add the original inputs again for the residual connection
         if self.do_res:
-            temp += inpt
+            temp = temp + inpt
 
         return temp
 
@@ -128,7 +128,7 @@ class DenseNetwork(nn.Module):
         outp_dim: int = 0,
         ctxt_dim: int = 0,
         hddn_dim: Union[int, list] = 32,
-        num_blocks: int = 2,
+        num_blocks: int = 1,
         n_lyr_pbk: int = 1,
         act_h: str = "lrlu",
         act_o: str = "none",
@@ -249,7 +249,10 @@ class DenseNetwork(nn.Module):
         string = ""
         if self.inpt_nrm != "none":
             string += "LN>"
-        string += str(self.inpt_dim) + ">"
+        string += str(self.inpt_dim)
+        if self.ctxt_dim:
+            string += f"({self.ctxt_dim})"
+        string += ">"
         string += str(self.input_block.outp_dim) + ">"
         if self.num_blocks > 1:
             string += ">".join(

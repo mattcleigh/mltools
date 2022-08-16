@@ -27,6 +27,7 @@ class MyNetBase(nn.Module):
         inpt_dim: Union[int, list],
         outp_dim: Union[int, list],
         device: str = "cpu",
+        use_half: bool = False,
         mkdir: bool = True,
         **other_info,
     ) -> None:
@@ -37,6 +38,7 @@ class MyNetBase(nn.Module):
             inpt_dim: The dimension of the input data
             outp_dim: The dimension of the output data
             device: The name of the device on which to load/save and store the network
+            use_half: Use only half precision for the model parameters
             mkdir: If a directory for holding the model should be made
             other_kwargs: These kwargs are saved as attributes on the object
         """
@@ -50,6 +52,7 @@ class MyNetBase(nn.Module):
         self.inpt_dim = inpt_dim
         self.outp_dim = outp_dim
         self.device = sel_device(device)
+        self.use_half = use_half
 
         ## A list of all the loss names, all classes need a total loss!
         self.loss_names = ["total"]
@@ -60,6 +63,14 @@ class MyNetBase(nn.Module):
 
         ## Any extra information
         self.other_info = other_info
+
+    def _setup(self) -> None:
+        """Finish setting up the model this should be called at the end of the init"""
+        if self.use_half:
+            print(" - switching to half precision!")
+            self.half()
+        self.to(self.device)
+        print(self)
 
     def loss_dict_reset(self) -> dict:
         """Reset the loss dictionary
