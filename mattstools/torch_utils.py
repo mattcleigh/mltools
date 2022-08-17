@@ -19,6 +19,8 @@ from .lookahead import Lookahead
 from .loss import GeomWrapper, MyBCEWithLogit, VAELoss, ChampferLoss
 from .schedulers import CyclicWithWarmup, WarmupToConstant, LinearWarmupRootDecay
 
+## An onnx save argument which is for the pass with mask function (makes it slower)
+ONNX_SAFE = False
 
 class RunningAverage:
     """A class which tracks the sum and data count so can calculate
@@ -403,20 +405,22 @@ def pass_with_mask(
         dtype=inputs.dtype,
     )
 
-    ## Needed for ONNX safety!
-    # o_mask = mask.unsqueeze(-1).expand(exp_size)
+    ## Onnx safe operation, but slow, use only for exporting
+    if ONNX_SAFE:
+        o_mask = mask.unsqueeze(-1).expand(exp_size)
+        if context is None:
+            outputs.masked_scatter_(o_mask, module(inputs[mask]))
+        else:
+            outputs.masked_scatter_(
+                o_mask, module(inputs[mask], ctxt=ctxt_from_mask(context, mask))
+            )
 
-    ## Pass only the masked elements through the network and use mask to place in out
-    if context is None:
-        outputs[mask] = module(inputs[mask])
-        # outputs.masked_scatter_(o_mask, module(inputs[mask])) # ONNX Safe!
-
-    ## My networks can take in conditional information, pytorch's can not
+    ## Inplace allocation, not onnx safe but quick
     else:
-        outputs[mask] = module(inputs[mask], ctxt=ctxt_from_mask(context, mask))
-        # outputs.masked_scatter_( # ONNX Safe!
-        #     o_mask, module(inputs[mask], ctxt=ctxt_from_mask(context, mask))
-        # )
+        if context is None:
+            outputs[mask] = module(inputs[mask])
+        else:
+            outputs[mask] = module(inputs[mask], ctxt=ctxt_from_mask(context, mask))
 
     return outputs
 
