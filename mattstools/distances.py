@@ -165,7 +165,7 @@ def masked_fc_adjmat(
 
         ## Remove diagonal elements
         if not allow_self:
-            adjmat *= ~T.diag_embed(T.full_like(mask_a, True))
+            adjmat = adjmat & ~T.diag_embed(T.full_like(mask_a, True))
 
     return adjmat.detach()
 
