@@ -404,19 +404,19 @@ def pass_with_mask(
     )
 
     ## Needed for ONNX safety!
-    o_mask = mask.unsqueeze(-1).expand(exp_size)
+    # o_mask = mask.unsqueeze(-1).expand(exp_size)
 
     ## Pass only the masked elements through the network and use mask to place in out
     if context is None:
-        # outputs[mask] = module(inputs[mask])
-        outputs.masked_scatter_(o_mask, module(inputs[mask])) # ONNX Safe!
+        outputs[mask] = module(inputs[mask])
+        # outputs.masked_scatter_(o_mask, module(inputs[mask])) # ONNX Safe!
 
     ## My networks can take in conditional information, pytorch's can not
     else:
-        # outputs[mask] = module(inputs[mask], ctxt=ctxt_from_mask(context, mask))
-        outputs.masked_scatter_( # ONNX Safe!
-            o_mask, module(inputs[mask], ctxt=ctxt_from_mask(context, mask))
-        )
+        outputs[mask] = module(inputs[mask], ctxt=ctxt_from_mask(context, mask))
+        # outputs.masked_scatter_( # ONNX Safe!
+        #     o_mask, module(inputs[mask], ctxt=ctxt_from_mask(context, mask))
+        # )
 
     return outputs
 

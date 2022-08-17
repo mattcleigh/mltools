@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setuptools.setup(
     name="mattstools",
-    version="0.0.3",
+    version="0.0.4",
     author="Matthew Leigh",
     author_email="mattcleigh@gmail.com",
     description="Some common utilities used in my DL projects",
@@ -16,6 +16,7 @@ setuptools.setup(
     license="MIT",
     packages=["mattstools"],
     install_requires=[
+        "dotmap",
         "geomloss",
         "matplotlib",
         "numpy",
