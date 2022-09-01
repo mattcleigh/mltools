@@ -22,6 +22,7 @@ from .schedulers import CyclicWithWarmup, WarmupToConstant, LinearWarmupRootDeca
 ## An onnx save argument which is for the pass with mask function (makes it slower)
 ONNX_SAFE = False
 
+
 class RunningAverage:
     """A class which tracks the sum and data count so can calculate
     the running average on demand
