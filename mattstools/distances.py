@@ -127,7 +127,10 @@ def masked_dist_matrix(
         dist_matrix = F.cosine_similarity(a_info, b_info, -1, EPS)
 
     ## Ensure the distances between fake nodes take the padding value
-    dist_matrix[~matrix_mask] = pad_val
+    if track_grad:
+        T.masked_fill(dist_matrix, ~matrix_mask, pad_val)
+    else:
+        dist_matrix[~matrix_mask] = pad_val
 
     ## Revert the gradient tracking to the previous setting
     T.set_grad_enabled(has_grad)
