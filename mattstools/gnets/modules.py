@@ -28,7 +28,9 @@ class EmbeddingLayer(nn.Module):
     - The embedding is conditioned on the graph globs and cndts
     """
 
-    def __init__(self, inpt_dim: list, ctxt_dim: int = 0, net_kwargs: dict = None) -> None:
+    def __init__(
+        self, inpt_dim: list, ctxt_dim: int = 0, net_kwargs: dict = None
+    ) -> None:
         """
         args:
             inpt_dim: The dimensions of the input graph [e,n,g]
@@ -60,8 +62,8 @@ class EmbeddingLayer(nn.Module):
         graph.nodes = pass_with_mask(
             graph.nodes,
             self.dense_net,
-            mask = graph.mask,
-            context = smart_cat([graph.globs, ctxt]),
+            mask=graph.mask,
+            context=smart_cat([graph.globs, ctxt]),
         )
         return graph
 
@@ -149,7 +151,7 @@ class EdgeBuilder(nn.Module):
         if strip:
             self.outp_dim[1] = self.outp_dim[1] - self.n_crd
 
-    def forward(self, graph: GraphBatch) -> GraphBatch:
+    def forward(self, graph: GraphBatch, ctxt=None) -> GraphBatch:
         """Forward pass for EdgeBuilder"""
 
         ## Get the subset of node features to use as coordinates
@@ -222,7 +224,7 @@ class GraphNeuralNetwork(nn.Module):
         inpt_dim: list,
         num_blocks: int = 1,
         ebl_every: int = 0,
-        start_with_ebl: bool = True,
+        start_with_ebl: bool = False,
         ebl_kwargs: Union[dict, list] = None,
         gnb_kwargs: Union[dict, list] = None,
     ) -> None:
@@ -292,7 +294,7 @@ class GraphNeuralNetwork(nn.Module):
         ## Calculate the output dimension using the final layer
         self.outp_dim = self.blocks[-1].outp_dim
 
-    def forward(self, graph: GraphBatch) -> GraphBatch:
+    def forward(self, graph: GraphBatch, ctxt=None) -> GraphBatch:
         """Forward pass for GraphNetwork"""
 
         ## This must happen so that the GNB's do not change the original inplace!
@@ -300,60 +302,9 @@ class GraphNeuralNetwork(nn.Module):
 
         ## Pass through each of the submodules
         for module in self.blocks:
-            graph = module(graph)
+            graph = module(graph, ctxt=ctxt)
 
         return graph
-
-
-class GraphVectorEncoder(nn.Module):
-    """A graph network encoder which produces a vector representation
-    graph to vector
-    """
-
-    def __init__(
-        self,
-        inpt_dim: list,
-        outp_dim: int,
-        ctxt_dim: int = 0,
-        gnn_kwargs: dict = None,
-        dns_kwargs: dict = None,
-    ) -> None:
-        """
-        args:
-            inpt_dim: The dimensions of the input graph [e,n,g].
-            outp_dim: The size of the encoded output.
-        kwargs:
-            ctxt_dim: The number of
-            gnn_kwargs: The keyword arguments to initialise GraphNetwork.
-            dns_kwargs: The keyword arguments to initialise DenseNetwork.
-        """
-        super().__init__()
-
-        ## Dict default kwargs, copy makes it safe when we change output
-        gnn_kwargs = gnn_kwargs.copy() or {}
-        dns_kwargs = dns_kwargs.copy() or {}
-
-        ## Save the class attributes
-        self.inpt_dim = inpt_dim
-        self.outp_dim = outp_dim
-        self.ctxt_dim = ctxt_dim
-
-        ## The series of modules that make up the network
-        self.gnn = GraphNeuralNetwork(inpt_dim, **gnn_kwargs)
-        self.dns = DenseNetwork(
-            inpt_dim=self.gnn.outp_dim[2],
-            ctxt_dim=ctxt_dim,
-            outp_dim=outp_dim,
-            **dns_kwargs,
-        )
-
-    def forward(self, inputs: GraphBatch, ctxt: T.Tensor = None, return_nodes: bool = False) -> T.Tensor:
-        """Encode a graph batch"""
-        inputs = self.gnn(inputs)
-        vec = self.dns(inputs.globs, ctxt=ctxt)
-        if return_nodes:
-            return vec, inputs.nodes
-        return vec
 
 
 class GraphVectorGenerator(nn.Module):
@@ -365,7 +316,7 @@ class GraphVectorGenerator(nn.Module):
        - gaussian noise for nodes
        - no globals
        - pre-determined mask (passed in forward call)
-       - fully connected adjmat (can be overwritten by GNUpdates layer)
+       - fully connected adjmat (can be overwritten by GNN layers)
     Applies GN updates to the graph using the vector and any other context as ctxt
     """
 
@@ -398,9 +349,8 @@ class GraphVectorGenerator(nn.Module):
 
         ## Create the graph network, takes initial vec and ctxt as conditioning
         self.gnn = GraphNeuralNetwork(
-            inpt_dim = [0, self.node_init_dim, 0],
-            ctxt_dim = inpt_dim + ctxt_dim
-            **gnn_kwargs
+            inpt_dim=[0, self.node_init_dim, 0],
+            ctxt_dim=inpt_dim + ctxt_dim**gnn_kwargs,
         )
 
         ## Set the final output dimension of this module
@@ -409,13 +359,12 @@ class GraphVectorGenerator(nn.Module):
     def _create_init_graph(
         self, inputs: T.Tensor, target_mask: T.BoolTensor, ctxt: T.Tensor
     ) -> GraphBatch:
-        """Returns the initial random graph
-        """
+        """Returns the initial random graph"""
 
         ## Get the sizes and kwargs for the graph batch
         b_size = len(inputs)
         n_nodes = target_mask.shape[-1]
-        edge_size = (n_nodes*n_nodes, 0)
+        edge_size = (n_nodes * n_nodes, 0)
         node_size = (b_size, n_nodes, self.node_init_dim)
         glob_size = (b_size, 0)
         adjm_size = (b_size, n_nodes, n_nodes)
@@ -501,23 +450,17 @@ class FullGraphVectorGenerator(nn.Module):
 
         ## The initial dense network
         self.vec_embd = DenseNetwork(
-            inpt_dim=inpt_dim,
-            ctxt_dim=ctxt_dim,
-            **vect_embd_kwargs
+            inpt_dim=inpt_dim, ctxt_dim=ctxt_dim, **vect_embd_kwargs
         )
 
         ## The graph generator
         self.gvg = GraphVectorGenerator(
-            inpt_dim=self.vec_embd.outp_dim,
-            ctxt_dim=ctxt_dim,
-            **gvg_kwargs
+            inpt_dim=self.vec_embd.outp_dim, ctxt_dim=ctxt_dim, **gvg_kwargs
         )
 
         ## The output embedding network
         self.outp_embd = EmbeddingLayer(
-            inpt_dim = self.gvg.outp_dim,
-            ctxt_dim = ctxt_dim
-            **outp_embd_kwargs
+            inpt_dim=self.gvg.outp_dim, ctxt_dim=ctxt_dim**outp_embd_kwargs
         )
 
     def forward(
@@ -531,6 +474,60 @@ class FullGraphVectorGenerator(nn.Module):
         graph = self.gvg(vec, mask, ctxt=ctxt)
         graph = self.outp_embd(graph, ctxt=ctxt)
         return graph
+
+
+class FullGraphVectorEncoder(nn.Module):
+    """A graph network encoder which produces a vector representation passed through dns
+    graph to vector
+    """
+
+    def __init__(
+        self,
+        inpt_dim: list,
+        outp_dim: int,
+        ctxt_dim: int = 0,
+        gnn_kwargs: dict = None,
+        dns_kwargs: dict = None,
+    ) -> None:
+        """
+        args:
+            inpt_dim: The dimensions of the input graph [e,n,g]
+            outp_dim: The size of the encoded output
+        kwargs:
+            ctxt_dim: Dim. of the context vector to pass to all nets
+            gnn_kwargs: The keyword arguments for the GraphNeuralNetwork
+            dns_kwargs: The keyword arguments to for the output dense network
+        """
+        super().__init__()
+
+        ## Dict default kwargs, copy makes it safe when we change output
+        gnn_kwargs = gnn_kwargs.copy() or {}
+        dns_kwargs = dns_kwargs.copy() or {}
+
+        ## Save the class attributes
+        self.inpt_dim = inpt_dim
+        self.outp_dim = outp_dim
+        self.ctxt_dim = ctxt_dim
+
+        ## The series of modules that make up the network
+        self.gnn = GraphNeuralNetwork(inpt_dim, **gnn_kwargs)
+        print(self.gnn)
+        self.dns = DenseNetwork(
+            inpt_dim=self.gnn.outp_dim[2],
+            ctxt_dim=ctxt_dim,
+            outp_dim=outp_dim,
+            **dns_kwargs,
+        )
+
+    def forward(
+        self, inputs: GraphBatch, ctxt: T.Tensor = None, return_nodes: bool = False
+    ) -> T.Tensor:
+        """Encode a graph batch"""
+        inputs = self.gnn(inputs, ctxt=ctxt)
+        vec = self.dns(inputs.globs, ctxt=ctxt)
+        if return_nodes:
+            return vec, inputs.nodes
+        return vec
 
 
 # class Graph2Vec(nn.Module):

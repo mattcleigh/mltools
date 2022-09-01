@@ -73,7 +73,7 @@ class Graph:
         self.globs = self.globs.to(dev)
         self.adjmat = self.adjmat.to(dev)
         self.mask = self.mask.to(dev)
-        self.device = T.device(dev)
+        self.device = self.mask.device
 
     def _clone(self):
         """Create an inplace clone of its tensors"""

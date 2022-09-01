@@ -16,7 +16,7 @@ from ..torch_utils import (
     decompress,
     smart_cat,
     masked_pool,
-    empty_0dim_like
+    empty_0dim_like,
 )
 
 import torch as T
@@ -86,6 +86,7 @@ class EdgeBlock(nn.Module):
         self.pool_type = pool_type
         self.rsdl_type = rsdl_type
         self.ctxt_dim = ctxt_dim
+        self.do_rsdl = rsdl_type != "none" and inpt_dim[0]
 
         ## Useful dimensions
         self.feat_inpt_dim, self.feat_outp_dim, self.ctxt_inpt_dim = self._get_dims()
@@ -116,9 +117,8 @@ class EdgeBlock(nn.Module):
                 **attn_kwargs,
             )
 
-        ## The residual update depends on setting and input/output size matching
-        self.do_rsdl = rsdl_type != "none" and inpt_dim[0]
-        if rsdl_type == "add" and inpt_dim[0] == self.feat_outp_dim:
+        ## Turn off residual additive connections if the sizes dont line up
+        if rsdl_type == "add" and inpt_dim[0] != self.feat_outp_dim:
             self.do_rsdl = False
 
     def _get_dims(self):
@@ -130,7 +130,7 @@ class EdgeBlock(nn.Module):
 
         ## With a network output can be anything
         if self.use_net:
-            self.feat_inpt_dim = self.feat_kwargs.outp_dim
+            feat_outp_dim = self.feat_kwargs.outp_dim
 
         ## If using concat residual connections
         if self.do_rsdl and self.rsdl_type == "cat":
@@ -165,7 +165,9 @@ class EdgeBlock(nn.Module):
         ## Return all messages
         return smart_cat(pooled_mssgs, -1)
 
-    def forward(self, graph: GraphBatch, ctxt: T.Tensor = None) -> Tuple[T.Tensor, T.Tensor]:
+    def forward(
+        self, graph: GraphBatch, ctxt: T.Tensor = None
+    ) -> Tuple[T.Tensor, T.Tensor]:
         """
         args:
             graph: The batched graph object
@@ -236,7 +238,7 @@ class EdgeBlock(nn.Module):
             string += f"-{self.rsdl_type}"
         string += f"-{self.pool_type}"
         if self.pool_type == "attn":
-            string += self.n_heads
+            string += f"({self.n_heads})"
         string += "]"
         return string
 
@@ -307,6 +309,7 @@ class NodeBlock(nn.Module):
         self.pool_type = pool_type
         self.rsdl_type = rsdl_type
         self.ctxt_dim = ctxt_dim
+        self.do_rsdl = rsdl_type != "none" and inpt_dim[1]
 
         ## Useful dimensions
         self.feat_inpt_dim, self.feat_outp_dim, self.ctxt_inpt_dim = self._get_dims()
@@ -314,7 +317,7 @@ class NodeBlock(nn.Module):
         ## Values dependant on the above dimensions
         if pool_type == "attn" and self.do_globs:
             self.n_heads = attn_kwargs.outp_dim
-            assert self.feat_inpt_dim % self.n_heads == 0
+            assert self.feat_outp_dim % self.n_heads == 0
             self.head_dim = self.feat_outp_dim // self.n_heads
 
         ## The pre layer normalisation layer
@@ -337,9 +340,8 @@ class NodeBlock(nn.Module):
                 **attn_kwargs,
             )
 
-        ## The residual update depends on setting and input/output size matching
-        self.do_rsdl = rsdl_type != "none" and inpt_dim[1]
-        if rsdl_type == "add" and inpt_dim[1] == self.feat_outp_dim:
+        ## Turn off residual additive connections if the sizes dont line up
+        if rsdl_type == "add" and inpt_dim[1] != self.feat_outp_dim:
             self.do_rsdl = False
 
     def _get_dims(self):
@@ -351,7 +353,7 @@ class NodeBlock(nn.Module):
 
         ## With a network output can be anything
         if self.use_net:
-            self.feat_inpt_dim = self.feat_kwargs.outp_dim
+            feat_outp_dim= self.feat_kwargs.outp_dim
 
         ## If using concat residual connections
         if self.do_rsdl and self.rsdl_type == "cat":
@@ -435,7 +437,7 @@ class NodeBlock(nn.Module):
         if self.do_globs:
             string += f"{self.pool_type}"
             if self.pool_type == "attn":
-                string += self.n_heads
+                string += f"({self.n_heads})"
         if string[-1] == "-":
             string = string[:-1]
         string += "]"
@@ -495,6 +497,7 @@ class GlobBlock(nn.Module):
         self.use_net = use_net
         self.rsdl_type = rsdl_type
         self.feat_kwargs = feat_kwargs
+        self.do_rsdl = rsdl_type != "none" and inpt_dim[2]
 
         ## Useful dimensions
         self.feat_inpt_dim, self.feat_outp_dim = self._get_dims()
@@ -511,9 +514,8 @@ class GlobBlock(nn.Module):
                 **feat_kwargs,
             )
 
-        ## The residual update depends on setting and input/output size matching
-        self.do_rsdl = rsdl_type != "none" and inpt_dim[2]
-        if rsdl_type == "add" and inpt_dim[2] == self.feat_outp_dim:
+        ## Turn off residual additive connections if the sizes dont line up
+        if rsdl_type == "add" and inpt_dim[2] != self.feat_outp_dim:
             self.do_rsdl = False
 
     def _get_dims(self):
@@ -525,7 +527,7 @@ class GlobBlock(nn.Module):
 
         ## With a network output can be anything
         if self.use_net:
-            self.feat_inpt_dim = self.feat_kwargs.outp_dim
+            feat_outp_dim= self.feat_kwargs.outp_dim
 
         ## If using concat residual connections
         if self.do_rsdl and self.rsdl_type == "cat":
@@ -620,9 +622,7 @@ class GNBlock(nn.Module):
 
         ## The module's edge block
         self.edge_block = EdgeBlock(
-            inpt_dim=inpt_dim,
-            ctxt_dim=ctxt_dim,
-            **edge_block_kwargs
+            inpt_dim=inpt_dim, ctxt_dim=ctxt_dim, **edge_block_kwargs
         )
 
         ## The module's node block
@@ -640,7 +640,7 @@ class GNBlock(nn.Module):
                 inpt_dim=inpt_dim,
                 pooled_node_dim=self.node_block.feat_outp_dim,
                 ctxt_dim=ctxt_dim,
-                **glob_block_kwargs
+                **glob_block_kwargs,
             )
 
         ## Calculate the output size of this graph
@@ -668,7 +668,7 @@ class GNBlock(nn.Module):
         string += "->" + repr(self.node_block)
         if self.do_globs:
             string += "->" + repr(self.glob_block)
-        string += "->" + self.outp_dim
+        string += "->" + str(self.outp_dim)
         return string
 
 
