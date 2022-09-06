@@ -3,6 +3,7 @@ Base class for training network
 """
 
 import json
+from contextlib import contextmanager
 from functools import partialmethod
 from pathlib import Path
 
@@ -14,6 +15,7 @@ import matplotlib.pyplot as plt
 import torch as T
 import torch.nn as nn
 from torch.utils.data import DataLoader, Subset
+from torch import autocast
 
 from .network import MyNetBase
 from .plotting import plot_multi_loss
@@ -24,6 +26,15 @@ from .torch_utils import (
     move_dev,
     get_grad_norm,
 )
+
+
+@contextmanager
+def opt_ctxt(condition, context_manager):
+    if condition:
+        with context_manager:
+            yield
+    else:
+        yield
 
 
 class Trainer:
@@ -41,6 +52,7 @@ class Trainer:
         sched_dict: dict = None,
         vis_every: int = 10,
         chkp_every: int = 10,
+        do_autocast: bool = False,
         tqdm_quiet: bool = False,
         quick_mode: int = 0,
         resume: bool = False,
@@ -59,6 +71,7 @@ class Trainer:
             sched_dict:   A dict used to select and configure the scheduler
             vis_every:    Run the network's visualisation function every X epochs
             chkp_every:   Save a checkpoint of the net/opt/schd/loss every X epochs
+            do_autocast:  Perform mixed precision training
             tqdm_quiet:   Prevents tqdm loading bars, good for gridjobs writing to logs
             quick_mode:   Break the training epoch after X many batches, for debugging
             resume:       Load the 'latest' checkpoint of the trainer object
@@ -104,6 +117,7 @@ class Trainer:
         }
 
         ## Gradient clipping settings and saving settings
+        self.do_autocast = do_autocast
         self.grad_clip = grad_clip
         self.vis_every = vis_every
         self.chkp_every = chkp_every
@@ -300,6 +314,7 @@ class Trainer:
             batch = move_dev(batch, self.network.device)
 
             ## Pass through the network and get the loss dictionary
+            # with opt_ctxt(self.do_autocast, autocast(self.network.device.type)):
             losses = self.network.get_losses(batch, batch_idx, epoch_num)
 
             ## For training epochs we perform gradient descent
