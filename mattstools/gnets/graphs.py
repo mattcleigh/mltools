@@ -73,7 +73,8 @@ class Graph:
         self.globs = self.globs.to(dev)
         self.adjmat = self.adjmat.to(dev)
         self.mask = self.mask.to(dev)
-        self.device = self.mask.device
+        self.device = self.nodes.device
+        return self  ## Needed for the pytorch move dev
 
     def _clone(self):
         """Create an inplace clone of its tensors"""
@@ -178,6 +179,17 @@ class GraphBatch(Graph):
         """Return the name of the graph and its dimension for printing"""
         return f"GraphBatch({self.dim()})"
 
+    def clone(self):
+        """Return an out of place clone of its tensors"""
+        return GraphBatch(
+            self.edges.clone(),
+            self.nodes.clone(),
+            self.globs.clone(),
+            self.adjmat.clone(),
+            self.mask.clone(),
+            "same",
+        )
+
 
 def gcoll(batch: Iterable) -> Union[GraphBatch, tuple]:
     """A custom collation function which allows us to batch together multiple graphs
@@ -200,7 +212,6 @@ def gcoll(batch: Iterable) -> Union[GraphBatch, tuple]:
         globs = default_collate([g.globs for g in batch])
         adjmat = default_collate([g.adjmat for g in batch])
         mask = default_collate([g.mask for g in batch])
-
         return GraphBatch(edges, nodes, globs, adjmat, mask, dev=mask.device)
 
     ## If we have a tuple, we must run the function for each object

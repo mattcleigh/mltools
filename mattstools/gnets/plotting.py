@@ -58,9 +58,9 @@ def plot_scatter(
         axes[i].xaxis.set_ticks_position("none")
         axes[i].yaxis.set_ticks_position("none")
         if n_dim == 3:
-            axes[i].set_xlim([-3, 3])
-            axes[i].set_ylim([-3, 3])
-            axes[i].set_zlim([-3, 3])
+            # axes[i].set_xlim([-3, 3])
+            # axes[i].set_ylim([-3, 3])
+            # axes[i].set_zlim([0, 500])
             axes[i].zaxis.set_ticklabels([])
             axes[i].zaxis.set_ticks_position("none")
         else:

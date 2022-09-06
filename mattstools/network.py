@@ -26,6 +26,7 @@ class MyNetBase(nn.Module):
         save_dir: str,
         inpt_dim: Union[int, list],
         outp_dim: Union[int, list],
+        ctxt_dim: Union[int, list] = 0,
         device: str = "cpu",
         use_half: bool = False,
         mkdir: bool = True,
@@ -37,6 +38,7 @@ class MyNetBase(nn.Module):
             save_dir: The save directory for the model
             inpt_dim: The dimension of the input data
             outp_dim: The dimension of the output data
+            ctxt_dim: The dimension of the context data, optional
             device: The name of the device on which to load/save and store the network
             use_half: Use only half precision for the model parameters
             mkdir: If a directory for holding the model should be made
@@ -51,6 +53,7 @@ class MyNetBase(nn.Module):
         self.full_name = Path(save_dir, name)
         self.inpt_dim = inpt_dim
         self.outp_dim = outp_dim
+        self.ctxt_dim = ctxt_dim
         self.device = sel_device(device)
         self.use_half = use_half
 

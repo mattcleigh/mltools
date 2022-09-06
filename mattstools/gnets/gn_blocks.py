@@ -353,7 +353,7 @@ class NodeBlock(nn.Module):
 
         ## With a network output can be anything
         if self.use_net:
-            feat_outp_dim= self.feat_kwargs.outp_dim
+            feat_outp_dim = self.feat_kwargs.outp_dim
 
         ## If using concat residual connections
         if self.do_rsdl and self.rsdl_type == "cat":
@@ -365,7 +365,7 @@ class NodeBlock(nn.Module):
         return feat_inpt_dim, feat_outp_dim, ctxt_inpt_dim
 
     def forward(
-        self, graph: GraphBatch, pooled_nodes: T.Tensor, ctxt: T.Tensor = None
+        self, graph: GraphBatch, pooled_edges: T.Tensor, ctxt: T.Tensor = None
     ) -> Tuple[T.Tensor, T.Tensor]:
         """
         args:
@@ -379,7 +379,7 @@ class NodeBlock(nn.Module):
         """
 
         ## Create the inputs for the node networks
-        nodes = smart_cat([graph.nodes, pooled_nodes])
+        nodes = T.cat([graph.nodes, pooled_edges], dim=-1)
 
         ## Apply the pre_layer normalisation layer
         if self.do_ln:
@@ -388,15 +388,17 @@ class NodeBlock(nn.Module):
         ## Pass them through the attention network
         ## (doing this first allows overrite and saves memory)
         if self.pool_type == "attn" and self.do_globs:
-            pooled_nodes = pass_with_mask(
-                nodes,
-                self.attn_net,
-                graph.mask,
-                context=[graph.globs, ctxt],
-                padval=-T.inf,
-            ) / math.sqrt(self.feat_net.outp_dim)
-            pooled_nodes = F.softmax(pooled_nodes, dim=-2)
-            pooled_nodes[~graph.mask] = 0  ## Get rid of nans for 0 node graphs?
+            pooled_nodes = F.softmax(
+                pass_with_mask(
+                    nodes,
+                    self.attn_net,
+                    graph.mask,
+                    context=[graph.globs, ctxt],
+                    padval=-T.inf,
+                )
+                / math.sqrt(self.feat_net.outp_dim),
+                dim=-2,
+            )
             pooled_nodes = (
                 pooled_nodes.unsqueeze(-1).expand(-1, -1, -1, self.head_dim).flatten(-2)
             )
@@ -527,7 +529,7 @@ class GlobBlock(nn.Module):
 
         ## With a network output can be anything
         if self.use_net:
-            feat_outp_dim= self.feat_kwargs.outp_dim
+            feat_outp_dim = self.feat_kwargs.outp_dim
 
         ## If using concat residual connections
         if self.do_rsdl and self.rsdl_type == "cat":
@@ -564,7 +566,7 @@ class GlobBlock(nn.Module):
             if self.rsdl_type == "cat":
                 globs = smart_cat([globs, graph.globs], dim=-1)
             if self.rsdl_type == "add":
-                globs = globs + graph.nodes
+                globs = globs + graph.globs
 
         return globs
 
@@ -670,55 +672,3 @@ class GNBlock(nn.Module):
             string += "->" + repr(self.glob_block)
         string += "->" + str(self.outp_dim)
         return string
-
-
-class GNBStack(nn.Module):
-    """A stack of N many identical GNBlockLite(s)
-    Graph to Graph
-    """
-
-    def __init__(
-        self,
-        inpt_dim: list,
-        model_dim: list,
-        num_blocks: int,
-        ctxt_dim: int = 0,
-        edge_block_kwargs: DotMap = None,
-        node_block_kwargs: DotMap = None,
-        glob_block_kwargs: DotMap = None,
-    ) -> None:
-        """
-        args:
-            num_blocks: The number of blocks in the stack
-            inpt_dim: The dimensions of the input graph [e,n,g] (unchanging)
-        kwargs:
-            edge_block_kwargs: kwargs for the edge block
-            node_block_kwargs: kwargs for the node block
-            glob_block_kwargs: kwargs for the glob block
-        """
-        super().__init__()
-
-        self.num_blocks = num_blocks
-        self.inpt_dim = inpt_dim
-        self.model_dim = model_dim
-        self.ctxt_dim = ctxt_dim
-        self.blocks = nn.ModuleList(
-            [
-                GNBlockLite(
-                    inpt_dim if i == 0 else model_dim,
-                    model_dim,
-                    ctxt_dim,
-                    edge_block_kwargs,
-                    node_block_kwargs,
-                    glob_block_kwargs,
-                )
-                for i in range(num_blocks)
-            ]
-        )
-
-    def forward(self, graph: GraphBatch, ctxt: T.Tensor = None) -> GraphBatch:
-        """Pass the input through all layers sequentially"""
-        graph._clone()
-        for blocks in self.blocks:
-            graph = blocks(graph, ctxt)
-        return graph

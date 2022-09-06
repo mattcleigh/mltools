@@ -4,8 +4,11 @@ Custom loss functions and methods to calculate them
 
 import torch as T
 import torch.nn as nn
+import torch.nn.functional as F
 
 from mattstools.distances import masked_dist_matrix
+
+from geomloss import SamplesLoss
 
 
 class VAELoss(nn.Module):
@@ -71,6 +74,33 @@ class MyBCEWithLogit(nn.Module):
     def forward(self, outputs, targets):
         """Return the loss"""
         return self.loss_fn(outputs.squeeze(dim=-1), targets.float())
+
+
+class EMDSinkhorn(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.snk = GeomWrapper(SamplesLoss(loss="sinkhorn"))
+        self.mmd = GeomWrapper(SamplesLoss(loss="energy"))
+
+    def forward(self, a_mask, pc_a, b_mask, pc_b):
+        a_pt = a_mask * pc_a[..., -1]
+        b_pt = b_mask * pc_b[..., -1]
+        a_etaphi = pc_a[..., :-1]
+        b_etaphi = pc_b[..., :-1]
+        return (
+            self.mmd(a_mask, pc_a, b_mask, pc_b) ## Extra guide loss on the full set
+            + self.snk(
+                a_pt / a_pt.detach().sum(dim=-1, keepdim=True),
+                a_etaphi,
+                b_pt / b_pt.detach().sum(dim=-1, keepdim=True),
+                b_etaphi,
+            )
+            + F.huber_loss(
+                a_pt.sum(dim=-1) / a_mask.sum(dim=-1),
+                b_pt.sum(dim=-1) / b_mask.sum(dim=-1),
+                reduction="none",
+            )
+        )
 
 
 class ChampferLoss(nn.Module):

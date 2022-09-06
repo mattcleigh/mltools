@@ -379,8 +379,8 @@ class TransformerDecoderLayer(nn.Module):
         return q_seq
 
 
-class CrossAttentionLayer(TransformerEncoderLayer):
-    """A transformer cross attention block
+class TransformerCrossAttentionLayer(TransformerEncoderLayer):
+    """A transformer cross attention layer
 
     It contains:
     - cross-attention-block
@@ -517,39 +517,39 @@ class TransformerVectorEncoder(nn.Module):
     def __init__(
         self,
         model_dim: int = 64,
-        num_sa_blocks: int = 3,
-        num_ca_blocks: int = 2,
+        num_sa_layers: int = 3,
+        num_ca_layers: int = 2,
         mha_kwargs: dict = None,
-        trans_ff_kwargs: dict = None,
+        ff_kwargs: dict = None,
     ) -> None:
         """Init function for the TransformerVectorEncoder
 
         args:
             model_dim: Feature size for input, output, and all intermediate sequences
         kwargs:
-            num_sa_blocks: Number of self attention encoder layers
-            num_ca_blocks: Number of cross/class attention encoder layers
+            num_sa_layers: Number of self attention encoder layers
+            num_ca_layers: Number of cross/class attention encoder layers
             mha_kwargs: Keyword arguments for all multiheaded attention layers
-            trans_ff_kwargs: Keyword arguments for the ff network in each layer
+            ff_kwargs: Keyword arguments for the ff network in each layer
         """
         super().__init__()
 
         ## Create the class attributes
         self.model_dim = model_dim
-        self.num_sa_blocks = num_sa_blocks
-        self.num_ca_blocks = num_ca_blocks
+        self.num_sa_layers = num_sa_layers
+        self.num_ca_layers = num_ca_layers
 
         ## Initialise the models
-        self.sa_blocks = nn.ModuleList(
+        self.sa_layers = nn.ModuleList(
             [
-                TransformerEncoderLayer(model_dim, mha_kwargs, trans_ff_kwargs)
-                for _ in range(num_sa_blocks)
+                TransformerEncoderLayer(model_dim, mha_kwargs, ff_kwargs)
+                for _ in range(num_sa_layers)
             ]
         )
-        self.ca_blocks = nn.ModuleList(
+        self.ca_layers = nn.ModuleList(
             [
-                CrossAttentionLayer(model_dim, mha_kwargs, trans_ff_kwargs)
-                for _ in range(num_ca_blocks)
+                TransformerCrossAttentionLayer(model_dim, mha_kwargs, ff_kwargs)
+                for _ in range(num_ca_layers)
             ]
         )
         self.final_norm = nn.LayerNorm(model_dim)
@@ -567,15 +567,15 @@ class TransformerVectorEncoder(nn.Module):
         """Pass the input through all layers sequentially"""
 
         ## Pass through the self attention encoder
-        for layer in self.sa_blocks:
+        for layer in self.sa_layers:
             seq = layer(seq, mask, edge_weights=edge_weights)
 
         ## Get the learned class token and expand to the batch size
         ## Use shape[0] not len as it is ONNX safe!
         class_token = self.class_token.expand(seq.shape[0], 1, self.model_dim)
 
-        ## Pass through the class attention blocks
-        for layer in self.ca_blocks:
+        ## Pass through the class attention layers
+        for layer in self.ca_layers:
             class_token = layer(class_token, seq, q_mask=None, kv_mask=mask)
 
         ## Pass through the final normalisation layer
@@ -637,10 +637,9 @@ class TransformerVectorDecoder(nn.Module):
         """Pass the input through all layers sequentially"""
 
         ## Initialise the q-sequence randomly (adhere to mask)
-        q_seq = (
-            T.randn((*mask.shape, self.model_dim), device=vec.device, dtype=vec.dtype)
-            * mask
-        )
+        q_seq = T.randn(
+            (*mask.shape, self.model_dim), device=vec.device, dtype=vec.dtype
+        ) * mask.unsqueeze(-1)
 
         ## Reshape the vector from batch x features to batch x seq=1 x features
         vec = vec.unsqueeze(1)
@@ -724,7 +723,7 @@ class FullTransformerVectorEncoder(nn.Module):
         if self.edge_dim:
             self.edge_embd = DenseNetwork(
                 inpt_dim=self.edge_dim,
-                outp_dim=self.tve.sa_blocks[0].self_attn.num_heads,
+                outp_dim=self.tve.sa_layers[0].self_attn.num_heads,
                 ctxt_dim=self.ctxt_dim,
                 **edge_embd_kwargs
             )
@@ -773,7 +772,7 @@ class FullTransformerVectorDecoder(nn.Module):
         inpt_dim: int,
         outp_dim: int,
         ctxt_dim: int = 0,
-        tvg_kwargs: dict = None,
+        tvd_kwargs: dict = None,
         vect_embd_kwargs: dict = None,
         outp_embd_kwargs: dict = None,
     ) -> None:
@@ -784,14 +783,14 @@ class FullTransformerVectorDecoder(nn.Module):
             outp_dim: Dim. of each element of the output sequence
         kwargs:
             ctxt_dim: Dim. of the context vector to pass to the embedding nets
-            tve_kwargs: Keyword arguments to pass to the TVE constructor
+            tvd_kwargs: Keyword arguments to pass to the TVD constructor
             vec_embd_kwargs: Keyword arguments for vector ff embedder
             out_embd_kwargs: Keyword arguments for output node ff embedder
         """
         super().__init__()
 
         ## Safe default dict arguments
-        tvg_kwargs = tvg_kwargs or {}
+        tvd_kwargs = tvd_kwargs or {}
         vect_embd_kwargs = vect_embd_kwargs or {}
         outp_embd_kwargs = outp_embd_kwargs or {}
 
@@ -801,7 +800,7 @@ class FullTransformerVectorDecoder(nn.Module):
         self.ctxt_dim = ctxt_dim
 
         ## Initialise the TVE, the main part of this network
-        self.tvg = TransformerVectorDecoder(**tvg_kwargs)
+        self.tvg = TransformerVectorDecoder(**tvd_kwargs)
         self.model_dim = self.tvg.model_dim
 
         ## Initialise all embedding networks

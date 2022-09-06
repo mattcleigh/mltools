@@ -45,9 +45,9 @@ def masked_diff_matrix(
     has_grad = T.is_grad_enabled()
     T.set_grad_enabled(track_grad)
 
-    ## Initialise a self distance matrix
-    allow_self = allow_self and tensor_b is None
-    if tensor_b is None:
+    ## Check if this is a self distance matrix
+    is_self_dist = tensor_b is None
+    if is_self_dist:
         tensor_b = tensor_a
         mask_b = mask_a
 
@@ -55,7 +55,7 @@ def masked_diff_matrix(
     matrix_mask = mask_a.unsqueeze(-1) * mask_b.unsqueeze(-2)
 
     ## Remove diagonal (loops) from the mask for self connections
-    if not allow_self:
+    if not allow_self and is_self_dist:
         matrix_mask *= ~T.eye(len(mask_a)).bool()
 
     ## Calculate the distance matrix as normal

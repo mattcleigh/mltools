@@ -297,9 +297,6 @@ class GraphNeuralNetwork(nn.Module):
     def forward(self, graph: GraphBatch, ctxt=None) -> GraphBatch:
         """Forward pass for GraphNetwork"""
 
-        ## This must happen so that the GNB's do not change the original inplace!
-        graph = graph.clone()
-
         ## Pass through each of the submodules
         for module in self.blocks:
             graph = module(graph, ctxt=ctxt)
@@ -511,7 +508,6 @@ class FullGraphVectorEncoder(nn.Module):
 
         ## The series of modules that make up the network
         self.gnn = GraphNeuralNetwork(inpt_dim, **gnn_kwargs)
-        print(self.gnn)
         self.dns = DenseNetwork(
             inpt_dim=self.gnn.outp_dim[2],
             ctxt_dim=ctxt_dim,

@@ -16,7 +16,7 @@ from torch.utils.data import Dataset, Subset, random_split
 from geomloss import SamplesLoss
 
 from .lookahead import Lookahead
-from .loss import GeomWrapper, MyBCEWithLogit, VAELoss, ChampferLoss
+from .loss import GeomWrapper, MyBCEWithLogit, VAELoss, ChampferLoss, EMDSinkhorn
 from .schedulers import CyclicWithWarmup, WarmupToConstant, LinearWarmupRootDecay
 
 ## An onnx save argument which is for the pass with mask function (makes it slower)
@@ -168,6 +168,8 @@ def get_loss_fn(name: str) -> nn.Module:
         return GeomWrapper(SamplesLoss("sinkhorn", p=1, blur=0.01))
     if name == "champfer":
         return ChampferLoss()
+    if name == "emdsinkhorn":
+        return EMDSinkhorn()
 
     ## Encoding losses
     if name == "vaeloss":
