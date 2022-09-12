@@ -125,11 +125,12 @@ class EdgeBlock(nn.Module):
         """Set some of the important dimensions needed for the block"""
 
         ## Without a network the messages are made up of only pooled intormation
-        feat_inpt_dim = self.inpt_dim[0] + len(self.msg_type) * self.inpt_dim[1]
+        feat_inpt_dim = len(self.msg_type) * self.inpt_dim[1]
         feat_outp_dim = feat_inpt_dim
 
-        ## With a network output can be anything
+        ## With a network output can be anything and the inputs also take old edges
         if self.use_net:
+            feat_inpt_dim += self.inpt_dim[0]
             feat_outp_dim = self.feat_kwargs.outp_dim
 
         ## If using concat residual connections
@@ -179,7 +180,10 @@ class EdgeBlock(nn.Module):
         """
 
         ## Create the inputs for the edge networks
-        edges = smart_cat([graph.edges, self._build_messages(graph)])
+        if self.use_net:
+            edges = smart_cat([graph.edges, self._build_messages(graph)])
+        else:
+            edges = self._build_messages(graph)
 
         ## Apply the pre_layer normalisation layer
         if self.do_ln:
@@ -348,11 +352,12 @@ class NodeBlock(nn.Module):
         """Set some of the important dimensions needed for the block"""
 
         ## Without a network the messages are made up of only pooled intormation
-        feat_inpt_dim = self.pooled_edge_dim + self.inpt_dim[1]
+        feat_inpt_dim = self.pooled_edge_dim
         feat_outp_dim = feat_inpt_dim
 
-        ## With a network output can be anything
+        ## With a network output can be anything and the inputs also take the old nodes
         if self.use_net:
+            feat_inpt_dim += self.inpt_dim[1]
             feat_outp_dim = self.feat_kwargs.outp_dim
 
         ## If using concat residual connections
@@ -379,7 +384,10 @@ class NodeBlock(nn.Module):
         """
 
         ## Create the inputs for the node networks
-        nodes = T.cat([graph.nodes, pooled_edges], dim=-1)
+        if self.use_net:
+            nodes = T.cat([graph.nodes, pooled_edges], dim=-1)
+        else:
+            nodes = pooled_edges
 
         ## Apply the pre_layer normalisation layer
         if self.do_ln:
@@ -396,7 +404,7 @@ class NodeBlock(nn.Module):
                     context=[graph.globs, ctxt],
                     padval=-T.inf,
                 )
-                / math.sqrt(self.feat_net.outp_dim),
+                / math.sqrt(self.feat_outp_dim),
                 dim=-2,
             )
             pooled_nodes = (
@@ -524,11 +532,12 @@ class GlobBlock(nn.Module):
         """Set some of the important dimensions needed for the block"""
 
         ## Without a network the messages are made up of only pooled intormation
-        feat_inpt_dim = self.pooled_node_dim + self.inpt_dim[2]
+        feat_inpt_dim = self.pooled_node_dim
         feat_outp_dim = feat_inpt_dim
 
-        ## With a network output can be anything
+        ## With a network output can be anything and the inputs also take the old globs
         if self.use_net:
+            feat_inpt_dim += self.inpt_dim[2]
             feat_outp_dim = self.feat_kwargs.outp_dim
 
         ## If using concat residual connections
@@ -550,8 +559,11 @@ class GlobBlock(nn.Module):
             new_globs: The new global features of the graph
         """
 
-        ## Create the inputs for the feature networks
-        globs = smart_cat([graph.globs, pooled_nodes])
+        ## Create the inputs for the global networks
+        if self.use_net:
+            globs = T.cat([graph.globs, pooled_nodes], dim=-1)
+        else:
+            globs = pooled_nodes
 
         ## Apply the pre_layer normalisation layer
         if self.do_ln:
@@ -572,14 +584,14 @@ class GlobBlock(nn.Module):
 
     def __repr__(self):
         """Short string representation of the block"""
-        string = "GlobBock["
+        string = []
         if self.do_ln:
-            string += "LN-"
+            string.append("LN")
         if self.use_net:
-            string += f"FF({self.feat_net.one_line_string()})-"
+            string.append(f"FF({self.feat_net.one_line_string()})")
         if self.do_rsdl:
-            string += f"{self.rsdl_type}"
-        string += "]"
+            string.append(f"{self.rsdl_type}")
+        string = f"GlobBock[{'-'.join(string)}]"
         return string
 
 
@@ -657,6 +669,8 @@ class GNBlock(nn.Module):
         graph.edges, pooled_edges = self.edge_block(graph, ctxt)
         graph.nodes, pooled_nodes = self.node_block(graph, pooled_edges, ctxt)
         del pooled_edges  ## Saves alot of memory if we delete right away
+        if not self.pers_edges:
+            graph.edges = empty_0dim_like(graph.edges)
         if self.do_globs:
             graph.globs = self.glob_block(graph, pooled_nodes, ctxt)
         else:

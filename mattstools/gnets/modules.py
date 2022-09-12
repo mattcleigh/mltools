@@ -222,6 +222,7 @@ class GraphNeuralNetwork(nn.Module):
     def __init__(
         self,
         inpt_dim: list,
+        ctxt_dim: int = 0,
         num_blocks: int = 1,
         ebl_every: int = 0,
         start_with_ebl: bool = False,
@@ -230,8 +231,9 @@ class GraphNeuralNetwork(nn.Module):
     ) -> None:
         """
         args:
-            inpt_dim: The dimensions of the input graph [e,n,g,c]
+            inpt_dim: The dimensions of the input graph [e,n,g]
         kwargs:
+            ctxt_dim: The size of the contect tensor
             depth: The number of GNBlocks to use
             ebl_every: How often an edge building layer is inserted inbetween GNBlocks
             start_with_ebl: If the stack begins with an edge building layer
@@ -277,7 +279,7 @@ class GraphNeuralNetwork(nn.Module):
             cur_dim = self.inpt_dim
 
         ## The first (and sometimes only) GN block
-        self.blocks.append(GNBlock(cur_dim, **gnb_list[0]))
+        self.blocks.append(GNBlock(cur_dim, ctxt_dim=ctxt_dim, **gnb_list[0]))
 
         ## The extra blocks
         for layer in range(1, num_blocks):
@@ -289,7 +291,9 @@ class GraphNeuralNetwork(nn.Module):
                 )
 
             ## Add a GN block
-            self.blocks.append(GNBlock(self.blocks[-1].outp_dim, **gnb_list[layer]))
+            self.blocks.append(
+                GNBlock(self.blocks[-1].outp_dim, ctxt_dim=ctxt_dim, **gnb_list[layer])
+            )
 
         ## Calculate the output dimension using the final layer
         self.outp_dim = self.blocks[-1].outp_dim
