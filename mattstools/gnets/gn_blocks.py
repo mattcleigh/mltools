@@ -75,8 +75,8 @@ class EdgeBlock(nn.Module):
         assert rsdl_type in ["none", "add", "cat"]
 
         ## DotMap default kwargs
-        self.feat_kwargs = feat_kwargs or {}
-        self.attn_kwargs = attn_kwargs or {}
+        self.feat_kwargs = feat_kwargs or DotMap({"outp_dim": 4})
+        self.attn_kwargs = attn_kwargs or DotMap({"outp_dim": 1})
 
         ## Set the attributes from the parameters
         self.inpt_dim = inpt_dim
@@ -93,7 +93,7 @@ class EdgeBlock(nn.Module):
 
         ## Values dependant on the above dimensions
         if pool_type == "attn":
-            self.n_heads = attn_kwargs.outp_dim
+            self.n_heads = self.attn_kwargs.outp_dim
             assert self.feat_outp_dim % self.n_heads == 0
             self.head_dim = self.feat_outp_dim // self.n_heads
 
@@ -106,7 +106,7 @@ class EdgeBlock(nn.Module):
             self.feat_net = DenseNetwork(
                 inpt_dim=self.feat_inpt_dim,
                 ctxt_dim=self.ctxt_inpt_dim,
-                **feat_kwargs,
+                **self.feat_kwargs,
             )
 
         ## The attention network for pooling
@@ -114,7 +114,7 @@ class EdgeBlock(nn.Module):
             self.attn_net = DenseNetwork(
                 inpt_dim=self.feat_inpt_dim,
                 ctxt_dim=self.ctxt_inpt_dim,
-                **attn_kwargs,
+                **self.attn_kwargs,
             )
 
         ## Turn off residual additive connections if the sizes dont line up
@@ -301,8 +301,8 @@ class NodeBlock(nn.Module):
         assert rsdl_type in ["none", "add", "cat"]
 
         ## DotMap default kwargs
-        self.feat_kwargs = feat_kwargs or {}
-        self.attn_kwargs = attn_kwargs or {}
+        self.feat_kwargs = feat_kwargs or DotMap({"outp_dim": 4})
+        self.attn_kwargs = attn_kwargs or DotMap({"outp_dim": 1})
 
         ## Set the attributes from the parameters
         self.inpt_dim = inpt_dim
@@ -320,7 +320,7 @@ class NodeBlock(nn.Module):
 
         ## Values dependant on the above dimensions
         if pool_type == "attn" and self.do_globs:
-            self.n_heads = attn_kwargs.outp_dim
+            self.n_heads = self.attn_kwargs.outp_dim
             assert self.feat_outp_dim % self.n_heads == 0
             self.head_dim = self.feat_outp_dim // self.n_heads
 
@@ -333,7 +333,7 @@ class NodeBlock(nn.Module):
             self.feat_net = DenseNetwork(
                 inpt_dim=self.feat_inpt_dim,
                 ctxt_dim=self.ctxt_inpt_dim,
-                **feat_kwargs,
+                **self.feat_kwargs,
             )
 
         ## The attention network for pooling
@@ -341,7 +341,7 @@ class NodeBlock(nn.Module):
             self.attn_net = DenseNetwork(
                 inpt_dim=self.feat_inpt_dim,
                 ctxt_dim=self.ctxt_inpt_dim,
-                **attn_kwargs,
+                **self.attn_kwargs,
             )
 
         ## Turn off residual additive connections if the sizes dont line up
@@ -407,6 +407,7 @@ class NodeBlock(nn.Module):
                 / math.sqrt(self.feat_outp_dim),
                 dim=-2,
             )
+            T.nan_to_num(pooled_nodes), ## Prevents Nans in 0 node graphs
             pooled_nodes = (
                 pooled_nodes.unsqueeze(-1).expand(-1, -1, -1, self.head_dim).flatten(-2)
             )
@@ -497,7 +498,7 @@ class GlobBlock(nn.Module):
         assert rsdl_type in ["none", "add", "cat"]
 
         ## DotMap default kwargs
-        self.feat_kwargs = feat_kwargs or {}
+        self.feat_kwargs = feat_kwargs or DotMap({"outp_dim": 4})
 
         ## Useful dimensions
         self.inpt_dim = inpt_dim
@@ -506,7 +507,6 @@ class GlobBlock(nn.Module):
         self.do_ln = do_ln
         self.use_net = use_net
         self.rsdl_type = rsdl_type
-        self.feat_kwargs = feat_kwargs
         self.do_rsdl = rsdl_type != "none" and inpt_dim[2]
 
         ## Useful dimensions
@@ -521,7 +521,7 @@ class GlobBlock(nn.Module):
             self.feat_net = DenseNetwork(
                 inpt_dim=self.feat_inpt_dim,
                 ctxt_dim=self.ctxt_dim,
-                **feat_kwargs,
+                **self.feat_kwargs,
             )
 
         ## Turn off residual additive connections if the sizes dont line up
