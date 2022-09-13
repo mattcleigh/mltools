@@ -166,7 +166,7 @@ class Trainer:
     def explode_learning(
         self,
         init_lr: float = 1e-5,
-        finl_lr: float = 1,
+        final_lr: float = 1,
         n_iter: int = 200,
         scheme: str = "exp",
     ):
@@ -181,7 +181,7 @@ class Trainer:
             n_iter: The number of batch passes to test
             scheme: The lr increase scheme, either 'lin' or 'exp'
         """
-        print(f"\nExploding the learning rate from {init_lr} to {finl_lr}")
+        print(f"\nExploding the learning rate from {init_lr} to {final_lr}")
 
         ## Turn off the scheduler and turn on quick mode silence tqdm
         self.scheduler = None
@@ -191,10 +191,11 @@ class Trainer:
         ## Create the list of learning rates to try
         ## Calculate the new learning rate
         if scheme == "lin":
-            lrs = [(finl_lr - init_lr) / n_iter * e + init_lr for e in range(n_iter)]
+            lrs = [(final_lr - init_lr) / n_iter * e + init_lr for e in range(n_iter)]
         elif scheme == "exp":
             lrs = [
-                init_lr * np.power(finl_lr / init_lr, e / n_iter) for e in range(n_iter)
+                init_lr * np.power(final_lr / init_lr, e / n_iter)
+                for e in range(n_iter)
             ]
         else:
             raise ValueError(f"Unrecognised lr increase sheme: {scheme}")

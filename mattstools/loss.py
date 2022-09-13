@@ -6,9 +6,12 @@ import torch as T
 import torch.nn as nn
 import torch.nn.functional as F
 
-from mattstools.distances import masked_dist_matrix
+from energyflow.emd import emd
+import numpy as np
 
 from geomloss import SamplesLoss
+
+from .distances import masked_dist_matrix
 
 
 class VAELoss(nn.Module):
@@ -80,27 +83,47 @@ class EMDSinkhorn(nn.Module):
     def __init__(self) -> None:
         super().__init__()
         self.snk = GeomWrapper(SamplesLoss(loss="sinkhorn"))
-        self.mmd = GeomWrapper(SamplesLoss(loss="energy"))
 
     def forward(self, a_mask, pc_a, b_mask, pc_b):
         a_pt = a_mask * pc_a[..., -1]
         b_pt = b_mask * pc_b[..., -1]
         a_etaphi = pc_a[..., :-1]
         b_etaphi = pc_b[..., :-1]
-        return (
-            self.mmd(a_mask, pc_a, b_mask, pc_b)  ## Extra guide loss on the full set
-            + self.snk(
-                a_pt / a_pt.detach().sum(dim=-1, keepdim=True),
-                a_etaphi,
-                b_pt / b_pt.detach().sum(dim=-1, keepdim=True),
-                b_etaphi,
-            )
-            + F.huber_loss(
-                a_pt.sum(dim=-1) / a_mask.sum(dim=-1),
-                b_pt.sum(dim=-1) / b_mask.sum(dim=-1),
-                reduction="none",
-            )
+        loss = (
+            self.snk(a_mask, a_etaphi, b_mask, b_etaphi)
+            + self.snk(a_mask, a_pt.unsqueeze(-1), b_mask, b_pt.unsqueeze(-1))
+            + self.snk(a_pt, a_etaphi, b_pt, b_etaphi)
+            + F.huber_loss(a_pt.sum(dim=-1), b_pt.sum(dim=-1), reduction="none")
         )
+        return loss
+
+
+class EnergyMovers(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+
+    def forward(self, a_mask, pc_a, b_mask, pc_b):
+        a_pt = a_mask * pc_a[..., -1]
+        b_pt = b_mask * pc_b[..., -1]
+        a_etaphi = pc_a[..., :-1]
+        b_etaphi = pc_b[..., :-1]
+        dist = masked_dist_matrix(pc_a, a_pt > 0, pc_b, b_pt > 0, track_grad=True)[0]
+        f = T.from_numpy(
+            np.array(
+                [
+                    emd(a, b, dists=d, norm=True, return_flow=True)[1]
+                    for a, b, d in zip(
+                        a_pt.detach().cpu().numpy(),
+                        b_pt.detach().cpu().numpy(),
+                        dist.detach().cpu().numpy(),
+                    )
+                ]
+            )
+        ).to(a_mask.device)
+        loss = (dist**2 * f).sum(dim=(-1, -2)) + F.huber_loss(
+            a_pt.sum(dim=-1), b_pt.sum(dim=-1), reduction="none"
+        )
+        return loss
 
 
 class ChampferLoss(nn.Module):

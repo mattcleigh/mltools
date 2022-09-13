@@ -329,6 +329,11 @@ def log_squash(data: np.ndarray):
     return np.sign(data) * np.log(np.abs(data) + 1)
 
 
+def undo_log_squash(data: np.ndarray):
+    """Undo the log squash function above"""
+    return np.sign(data) * (np.exp(np.abs(data)) - 1)
+
+
 def signed_angle_diff(angle1, angle2):
     """Calculate diff between two angles reduced to the interval of [-pi, pi]"""
     return (angle1 - angle2 + np.pi) % (2 * np.pi) - np.pi
