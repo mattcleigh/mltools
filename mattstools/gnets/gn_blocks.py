@@ -407,7 +407,7 @@ class NodeBlock(nn.Module):
                 / math.sqrt(self.feat_outp_dim),
                 dim=-2,
             )
-            T.nan_to_num(pooled_nodes), ## Prevents Nans in 0 node graphs
+            pooled_nodes = T.nan_to_num(pooled_nodes)  ## Prevents Nans in 0 node graphs
             pooled_nodes = (
                 pooled_nodes.unsqueeze(-1).expand(-1, -1, -1, self.head_dim).flatten(-2)
             )

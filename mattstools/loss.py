@@ -88,7 +88,7 @@ class EMDSinkhorn(nn.Module):
         a_etaphi = pc_a[..., :-1]
         b_etaphi = pc_b[..., :-1]
         return (
-            self.mmd(a_mask, pc_a, b_mask, pc_b) ## Extra guide loss on the full set
+            self.mmd(a_mask, pc_a, b_mask, pc_b)  ## Extra guide loss on the full set
             + self.snk(
                 a_pt / a_pt.detach().sum(dim=-1, keepdim=True),
                 a_etaphi,
