@@ -10,7 +10,8 @@ import torch.nn.functional as F
 
 from torch.autograd import Function
 
-from mattstools.torch_utils import (
+from .bayesian import BayesianLinear
+from .torch_utils import (
     get_act,
     get_nrm,
     pass_with_mask,
@@ -42,6 +43,7 @@ class MLPBlock(nn.Module):
         nrm: str = "none",
         drp: float = 0,
         do_res: bool = False,
+        do_bayesian: bool = False,
     ) -> None:
         """
         args:
@@ -54,6 +56,7 @@ class MLPBlock(nn.Module):
             drp: The dropout probability, 0 implies no dropout
             do_res: Add to previous output, only if dim does not change
             n_layers: The number of transform layers in this block
+            do_bayesian: If to fill the block with bayesian linear layers
         """
         ## Applies the
         super().__init__()
@@ -74,7 +77,11 @@ class MLPBlock(nn.Module):
             lyr_in = inpt_dim + ctxt_dim if n == 0 else outp_dim
 
             ## Linear transform, activation, normalisation, dropout
-            self.block.append(nn.Linear(lyr_in, outp_dim))
+            self.block.append(
+                BayesianLinear(lyr_in, outp_dim)
+                if do_bayesian
+                else nn.Linear(lyr_in, outp_dim)
+            )
             if act != "none":
                 self.block.append(get_act(act))
             if nrm != "none":
@@ -134,10 +141,10 @@ class DenseNetwork(nn.Module):
         act_o: str = "none",
         do_out: bool = True,
         nrm: str = "none",
-        inpt_nrm: str = "none",
         drp: float = 0,
         do_res: bool = False,
         ctxt_in_all: bool = False,
+        do_bayesian: bool = False,
     ) -> None:
         """
         args:
@@ -152,11 +159,10 @@ class DenseNetwork(nn.Module):
             act_o: The name of the activation function to apply to the outputs
             do_out: If the network has a dedicated output block
             nrm: Type of normalisation (layer or batch) in each hidden block
-            inpt_nrm: Type of normalisation (layer or batch) to apply to inputs
-                Useful for transformers with residual connections
             drp: Dropout probability for hidden layers (0 means no dropout)
             do_res: Use res-connections between hidden blocks (only if same size)
             ctxt_in_all: Include the ctxt tensor in all blocks, not just input
+            do_bayesian: Create the network with bayesian linear layers
         """
         super().__init__()
 
@@ -170,14 +176,9 @@ class DenseNetwork(nn.Module):
         self.num_blocks = len(self.hddn_dim)
         self.ctxt_dim = ctxt_dim
         self.do_out = do_out
-        self.inpt_nrm = inpt_nrm
 
         ## Necc for this module to work with the nflows package
         self.hidden_features = self.hddn_dim[-1]
-
-        ## Input normalisation
-        if self.inpt_nrm != "none":
-            self.inpt_nrm_layer = get_nrm(inpt_nrm, inpt_dim)
 
         ## Input MLP block
         self.input_block = MLPBlock(
@@ -187,6 +188,7 @@ class DenseNetwork(nn.Module):
             act=act_h,
             nrm=nrm,
             drp=drp,
+            do_bayesian=do_bayesian,
         )
 
         ## All hidden blocks as a single module list
@@ -204,21 +206,21 @@ class DenseNetwork(nn.Module):
                         nrm=nrm,
                         drp=drp,
                         do_res=do_res,
+                        do_bayesian=do_bayesian,
                     )
                 )
 
         ## Output block (optional and there is no normalisation, dropout or context)
         if do_out:
             self.output_block = MLPBlock(
-                inpt_dim=self.hddn_dim[-1], outp_dim=self.outp_dim, act=act_o
+                inpt_dim=self.hddn_dim[-1],
+                outp_dim=self.outp_dim,
+                act=act_o,
+                do_bayesian=do_bayesian,
             )
 
     def forward(self, inputs: T.Tensor, ctxt: T.Tensor = None) -> T.Tensor:
         """Pass through all layers of the dense network"""
-
-        ## Normalise the inputs to the mlp
-        if self.inpt_nrm != "none":
-            inputs = self.inpt_nrm_layer(inputs)
 
         ## Pass through the input block
         inputs = self.input_block(inputs, ctxt)
@@ -235,8 +237,6 @@ class DenseNetwork(nn.Module):
 
     def __repr__(self):
         string = ""
-        if self.inpt_nrm != "none":
-            string += "\n  (nrm): " + repr(self.inpt_nrm_layer)
         string += "\n  (inp): " + repr(self.input_block) + "\n"
         for i, h_block in enumerate(self.hidden_blocks):
             string += f"  (h-{i+1}): " + repr(h_block) + "\n"
@@ -246,10 +246,7 @@ class DenseNetwork(nn.Module):
 
     def one_line_string(self):
         """Return a one line string that sums up the network structure"""
-        string = ""
-        if self.inpt_nrm != "none":
-            string += "LN>"
-        string += str(self.inpt_dim)
+        string = str(self.inpt_dim)
         if self.ctxt_dim:
             string += f"({self.ctxt_dim})"
         string += ">"
@@ -328,9 +325,9 @@ class DeepSet(nn.Module):
             )
 
             ## Check that the dimension of each head makes internal sense
-            self.head_dim = self.feat_net.outp_dim // self.attn_net.outp_dim
-            if self.head_dim * self.attn_net.outp_dim != self.feat_net.outp_dim:
-                raise ValueError("Output dimension must be divisible by # of heads!")
+            self.n_heads = self.attn_net.outp_dim
+            assert self.feat_net.outp_dim % self.n_heads == 0
+            self.head_dim = self.feat_net.outp_dim // self.n_heads
 
         ## Create the post network to update the pooled features of the set
         self.post_net = DenseNetwork(

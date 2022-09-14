@@ -25,7 +25,7 @@ from mattstools.torch_utils import get_act
 def change_kwargs_for_made(old_kwargs):
     """Converts a dictionary of keyword arguments for configuring a mattstools
     DenseNetwork to one that can initialise a MADE network for the nflows package
-    with similar (not exact) hyperparameters
+    with similar (not exactly the same) hyperparameters
     """
     new_kwargs = deepcopy(old_kwargs)
 
@@ -37,7 +37,7 @@ def change_kwargs_for_made(old_kwargs):
     ## Certain keys are changed and their values modified
     if "act_h" in new_kwargs:
         new_kwargs["activation"] = get_act(new_kwargs.pop("act_h"))
-    if "nrm" in new_kwargs:  ## Only has batch norm!
+    if "nrm" in new_kwargs:  ## MADE only supports batch norm!
         new_kwargs["use_batch_norm"] = new_kwargs.pop("nrm") is not None
 
     ## Some options are missing
@@ -49,8 +49,8 @@ def change_kwargs_for_made(old_kwargs):
     ## The hidden dimension passed to MADE as an arg, not a kwarg
     if "hddn_dim" in new_kwargs:
         hddn_dim = new_kwargs.pop("hddn_dim")
+    ## Otherwise use the same default value for mattstools.modules.DenseNet
     else:
-        ## Use the same default value for mattstools.modules.DenseNet
         hddn_dim = 32
 
     return new_kwargs, hddn_dim
@@ -64,8 +64,8 @@ def stacked_norm_flow(
     invrt_func: Literal["rqs", "aff"] = "aff",
     do_lu: bool = True,
     nrm: str = "none",
-    net_kwargs=None,
-    rqs_kwargs=None,
+    net_kwargs: dict = None,
+    rqs_kwargs: dict = None,
 ) -> CompositeTransform:
     """
     Create a stacked flow using a either autoregressive or coupling layers to learn the
@@ -82,7 +82,7 @@ def stacked_norm_flow(
         nstacks: The number of NSF+Perm layers to use in the overall transform
         param_func: To use either autoregressive or coupling layers
         invrt_func: To use either spline or affine transformations
-        do_lu: Use an invertible linear layer inbetween splines instead of permutation
+        do_lu: Use an invertible linear layer inbetween splines to encourage mixing
         nrm: Do a scale shift normalisation inbetween splines (batch or act)
         net_kwargs: Kwargs for the network constructor (includes ctxt dim)
         rqs_kwargs: Keyword args for the invertible spline layers
@@ -134,6 +134,8 @@ def stacked_norm_flow(
 
         ## For coupling layers
         elif param_func == "cplng":
+
+            ## Alternate between masking first half and second half (rounded up)
             mask = T.abs(T.round(T.arange(xz_dim) / (xz_dim - 1)).int() - i % 2)
 
             if invrt_func == "aff":

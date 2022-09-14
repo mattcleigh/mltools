@@ -14,7 +14,7 @@ setuptools.setup(
     url="https://gitlab.cern.ch/mleigh/mattstools",
     project_urls={"Bug Tracker": "https://gitlab.cern.ch/mleigh/mattstools/issues"},
     license="MIT",
-    packages=["mattstools"],
+    packages=["mattstools", "mattstools.flows", "mattstools.gnets"],
     install_requires=[
         "dotmap",
         "geomloss",
