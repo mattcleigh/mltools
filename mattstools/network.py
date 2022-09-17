@@ -2,6 +2,7 @@
 A collection of networks that all inherit from the MyNetwork base class
 """
 
+import dill
 from itertools import count
 from pathlib import Path
 from typing import Union
@@ -133,7 +134,10 @@ class MyNetBase(nn.Module):
         if as_dict:
             T.save(self.state_dict(), full_path)
         else:
-            T.save(self, full_path)
+            try:
+                T.save(self, full_path)
+            except:
+                T.save(self, full_path, pickle_module=dill)
 
     def save_configs(self, data_conf, net_conf, train_conf, do_wandb=True):
         """Save the three config files that were used to build the network,
@@ -165,18 +169,18 @@ class MyNetBase(nn.Module):
     def __repr__(self):
         return super().__repr__() + "\nNum params: " + str(count_parameters(self))
 
-    def on_epoch_start(self):
+    def on_epoch_start(self, _epoch_num: int):
         """This method is called by the trainer when an epoch begins"""
         return
 
-    def on_epoch_end(self):
+    def on_epoch_end(self, _epoch_num: int):
         """This method is called by the trainer when an epoch ends"""
         return
 
-    def on_train_start(self):
+    def on_train_start(self, _epoch_num: int):
         """This method is called by the trainer when a training epoch begins"""
         return
 
-    def on_valid_start(self):
+    def on_valid_start(self, _epoch_num: int):
         """This method is called by the trainer when a validation epoch begins"""
         return

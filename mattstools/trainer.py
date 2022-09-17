@@ -6,6 +6,7 @@ import json
 from contextlib import contextmanager
 from functools import partialmethod
 from pathlib import Path
+import dill as pickle
 
 import wandb
 import numpy as np
@@ -288,8 +289,8 @@ class Trainer:
 
             ## Call the dataset/network's on_train_start method
             if hasattr(self.valid_set, "on_train_start"):
-                dataset.on_train_start()
-            self.network.on_train_start()
+                dataset.on_train_start(epoch_num)
+            self.network.on_train_start(epoch_num)
 
         else:
             mode = "valid"
@@ -300,13 +301,13 @@ class Trainer:
 
             ## Call the dataset/network's on_valid_start method
             if hasattr(self.valid_set, "on_valid_start"):
-                dataset.on_valid_start()
-            self.network.on_valid_start()
+                dataset.on_valid_start(epoch_num)
+            self.network.on_valid_start(epoch_num)
 
         ## Call the dataset/network's on_epoch_start method
         if hasattr(self.valid_set, "on_epoch_start"):
-            dataset.on_epoch_start()
-        self.network.on_epoch_start()
+            dataset.on_epoch_start(epoch_num)
+        self.network.on_epoch_start(epoch_num)
 
         ## Cycle through the batches provided by the selected loader
         for batch_idx, batch in enumerate(tqdm(loader, desc=mode, ncols=80)):
@@ -353,8 +354,8 @@ class Trainer:
 
         ## Call the dataset/network's on_epoch_end method
         if hasattr(self.valid_set, "on_epoch_end"):
-            dataset.on_epoch_end()
-        self.network.on_epoch_end()
+            dataset.on_epoch_end(epoch_num)
+        self.network.on_epoch_end(epoch_num)
 
     def count_epochs(self) -> None:
         """Update attributes counting number of bad and total epochs"""
@@ -485,7 +486,7 @@ class Trainer:
             for lsnm in self.network.loss_names:
                 wandb.log(
                     {f"{dset} {lsnm}": self.loss_hist[lsnm][dset][-1]},
-                    step=self.num_epochs,
+                    step=self.num_epochs-1,
                 )
 
         ## Log patience parameters
@@ -495,7 +496,7 @@ class Trainer:
                 "num_epochs": self.num_epochs,
                 "bad_epochs": self.bad_epochs,
             },
-            step=self.num_epochs,
+            step=self.num_epochs-1,
         )
 
         ## Log optimiser (only 1st param groups) and learning rate information
@@ -505,8 +506,9 @@ class Trainer:
                 for k, v in self.optimiser.state_dict()["param_groups"][0].items()
                 if k != "params"
             },
-            step=self.num_epochs,
+            step=self.num_epochs-1,
         )
 
-        ## To ensure that wandb actually pushes now that the epoch is over we trick it
-        wandb.log({"trick_wandb": True}, step=self.num_epochs + 1)
+        ## Ensure that wandb actually pushes epoch information we use commit
+        wandb.log({"push_wandb": True}, step=self.num_epochs-1, commit=True)
+

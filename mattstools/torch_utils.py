@@ -88,6 +88,19 @@ def get_act(name: str) -> nn.Module:
     raise ValueError("No activation function with name: ", name)
 
 
+def base_modules(module: nn.Module)->list:
+    """Return a list of all of the base modules in a network
+    """
+    total = []
+    children = list(module.children())
+    if not children:
+        total += [module]
+    else:
+        for c in children:
+            total += base_modules(c)
+    return total
+
+
 def empty_0dim_like(tensor: T.Tensor) -> T.Tensor:
     """Returns an empty tensor with similar size as the input but with its final
     dimension reduced to 0

@@ -24,6 +24,8 @@ class BayesianLinear(nn.Module):
         https://arxiv.org/pdf/1506.02557.pdf
     - This saves computation time, as we are not sampling noise for every weight
     - It also helps with stability, as the gradient updates observe less variance
+
+    The bias and the (nominal) weight values are labeled the same as nn.Linear
     """
 
     def __init__(
@@ -53,14 +55,14 @@ class BayesianLinear(nn.Module):
 
         ## The learnable parameters of the model
         self.bias = nn.Parameter(T.empty(self.n_out))
-        self.w_mu = nn.Parameter(T.empty(self.n_out, self.n_in))
+        self.weight = nn.Parameter(T.empty(self.n_out, self.n_in))
         self.w_logsig2 = nn.Parameter(T.empty(self.n_out, self.n_in))
         self.reset_parameters()
 
     def reset_parameters(self) -> None:
         """Resets the learnable parameters, biases are initialised as zeros"""
         self.bias.data.data.zero_()
-        self.w_mu.data.normal_(0, 1 / math.sqrt(self.n_in))
+        self.weight.data.normal_(0, 1 / math.sqrt(self.n_in))
         self.w_logsig2.data.normal_(self.logsig2_init, 0.001)
 
     def prior_kl(self) -> T.Tensor:
@@ -69,7 +71,7 @@ class BayesianLinear(nn.Module):
         return (
             0.5
             * (
-                self.prior_sig * (self.w_mu**2 + w_logsig2.exp())
+                self.prior_sig * (self.weight**2 + w_logsig2.exp())
                 - w_logsig2
                 - math.log(self.prior_sig)
                 - 1
@@ -83,21 +85,21 @@ class BayesianLinear(nn.Module):
 
         ## For deterministic mode, simply calculate the nomimal output
         if self.deterministic:
-            return F.linear(input, self.w_mu, self.bias)  # Nominal
+            return F.linear(input, self.weight, self.bias)  # Nominal
 
         ## For numerical stability going forward
         w_logsig2 = self.w_logsig2.clamp(-11, 11)
 
         ## In training mode, we perform the Local Reparam Trick
         if self.training:
-            nom_out = F.linear(input, self.w_mu, self.bias)  # Nominal
+            nom_out = F.linear(input, self.weight, self.bias)  # Nominal
             var_out = F.linear(input**2, w_logsig2.exp())
             return nom_out + var_out.sqrt() * T.randn_like(nom_out) + 1e-8
 
         ## In evaluation mode we do the full noise generation
         else:
-            noise = T.exp(self.w_logsig2 / 2) * T.randn_like(self.w_mu)
-            return F.linear(input, self.w_mu + noise, self.bias) + 1e-8
+            noise = T.exp(self.w_logsig2 / 2) * T.randn_like(self.weight)
+            return F.linear(input, self.weight + noise, self.bias) + 1e-8
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}({self.n_in}, {self.n_out})"
