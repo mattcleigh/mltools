@@ -49,9 +49,7 @@ class EmbeddingLayer(nn.Module):
 
         ## The node embedding mlp (default output is the same as input)
         self.dense_net = DenseNetwork(
-            inpt_dim=inpt_dim[1],
-            ctxt_dim=inpt_dim[2] + ctxt_dim,
-            **net_kwargs,
+            inpt_dim=inpt_dim[1], ctxt_dim=inpt_dim[2] + ctxt_dim, **net_kwargs
         )
 
         ## The output dimension comes from input with new node features
@@ -351,7 +349,7 @@ class GraphVectorGenerator(nn.Module):
         ## Create the graph network, takes initial vec and ctxt as conditioning
         self.gnn = GraphNeuralNetwork(
             inpt_dim=[0, self.node_init_dim, 0],
-            ctxt_dim=inpt_dim + ctxt_dim**gnn_kwargs,
+            ctxt_dim=inpt_dim + ctxt_dim ** gnn_kwargs,
         )
 
         ## Set the final output dimension of this module
@@ -387,10 +385,7 @@ class GraphVectorGenerator(nn.Module):
         return inputs
 
     def forward(
-        self,
-        inputs: T.Tensor,
-        target_mask: T.BoolTensor,
-        ctxt: T.Tensor = None,
+        self, inputs: T.Tensor, target_mask: T.BoolTensor, ctxt: T.Tensor = None
     ) -> tuple:
         """Given some tensors, create the output graph object
         args:
@@ -461,14 +456,11 @@ class FullGraphVectorGenerator(nn.Module):
 
         ## The output embedding network
         self.outp_embd = EmbeddingLayer(
-            inpt_dim=self.gvg.outp_dim, ctxt_dim=ctxt_dim**outp_embd_kwargs
+            inpt_dim=self.gvg.outp_dim, ctxt_dim=ctxt_dim ** outp_embd_kwargs
         )
 
     def forward(
-        self,
-        vec: T.Tensor,
-        mask: T.BoolTensor,
-        ctxt: T.Tensor = None,
+        self, vec: T.Tensor, mask: T.BoolTensor, ctxt: T.Tensor = None
     ) -> tuple:
         """Pass the input through all layers sequentially"""
         vec = self.vec_embd(vec, ctxt=ctxt)

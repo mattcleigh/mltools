@@ -63,22 +63,10 @@ config_dict = {
         "num_sa_blocks": 3,
         "num_ca_blocks": 2,
         "mha_kwargs": {"num_heads": 4, "drp": 0.1},
-        "trans_ff_kwargs": {
-            "hddn_dim": 128,
-            "nrm": "layer",
-            "drp": 0.1,
-        },
+        "trans_ff_kwargs": {"hddn_dim": 128, "nrm": "layer", "drp": 0.1},
     },
-    "node_embd_kwargs": {
-        "hddn_dim": 128,
-        "nrm": "layer",
-        "drp": 0.1,
-    },
-    "outp_embd_kwargs": {
-        "hddn_dim": 256,
-        "nrm": "layer",
-        "drp": 0.1,
-    },
+    "node_embd_kwargs": {"hddn_dim": 128, "nrm": "layer", "drp": 0.1},
+    "outp_embd_kwargs": {"hddn_dim": 256, "nrm": "layer", "drp": 0.1},
 }
 
 network = CLRTrans(base_dict, config_dict)

@@ -401,10 +401,7 @@ def get_scaler(name: str):
 
 
 def args_into_conf(
-    argp: object,
-    conf: dict,
-    inpt_name: str,
-    dest_keychains: Union[list, str] = None,
+    argp: object, conf: dict, inpt_name: str, dest_keychains: Union[list, str] = None
 ) -> None:
     """Takes an input string and collects the attribute with that name from an object,
     then it places that value within a dictionary at certain locations defined by

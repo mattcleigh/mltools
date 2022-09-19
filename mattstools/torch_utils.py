@@ -88,7 +88,7 @@ def get_act(name: str) -> nn.Module:
     raise ValueError("No activation function with name: ", name)
 
 
-def base_modules(module: nn.Module)->list:
+def base_modules(module: nn.Module) -> list:
     """Return a list of all of the base modules in a network
     """
     total = []
@@ -423,12 +423,7 @@ def pass_with_mask(
 
     ## Create an output of the correct shape on the right device using the padval
     exp_size = (*inputs.shape[:-1], outp_dim)
-    outputs = T.full(
-        exp_size,
-        padval,
-        device=inputs.device,
-        dtype=inputs.dtype,
-    )
+    outputs = T.full(exp_size, padval, device=inputs.device, dtype=inputs.dtype)
 
     ## Onnx safe operation, but slow, use only for exporting
     if ONNX_SAFE:
@@ -501,9 +496,9 @@ def to_np(tensor: T.Tensor) -> np.ndarray:
 
 def print_gpu_info(dev=0):
     """Prints current gpu usage"""
-    total = T.cuda.get_device_properties(dev).total_memory / 1024**3
-    reser = T.cuda.memory_reserved(dev) / 1024**3
-    alloc = T.cuda.memory_allocated(dev) / 1024**3
+    total = T.cuda.get_device_properties(dev).total_memory / 1024 ** 3
+    reser = T.cuda.memory_reserved(dev) / 1024 ** 3
+    alloc = T.cuda.memory_allocated(dev) / 1024 ** 3
     print(f"\nTotal = {total:.2f}\nReser = {reser:.2f}\nAlloc = {alloc:.2f}")
 
 
@@ -603,9 +598,7 @@ def decompress(cmprsed: T.Tensor, mask: T.BoolTensor):
     """
     ## We first create the zero padded tensor of the right size then replace
     full = T.zeros(
-        (*mask.shape, cmprsed.shape[-1]),
-        dtype=cmprsed.dtype,
-        device=cmprsed.device,
+        (*mask.shape, cmprsed.shape[-1]), dtype=cmprsed.dtype, device=cmprsed.device
     )
 
     ## Place the nonpadded samples into the full shape

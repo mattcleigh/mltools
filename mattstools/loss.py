@@ -120,7 +120,7 @@ class EnergyMovers(nn.Module):
                 ]
             )
         ).to(a_mask.device)
-        loss = (dist**2 * f).sum(dim=(-1, -2)) + F.huber_loss(
+        loss = (dist ** 2 * f).sum(dim=(-1, -2)) + F.huber_loss(
             a_pt.sum(dim=-1), b_pt.sum(dim=-1), reduction="none"
         )
         return loss

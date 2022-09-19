@@ -121,11 +121,7 @@ class GraphBatch(Graph):
         """Return the dimensions of the graph object starting with the batch length"""
         return (
             len(self),
-            [
-                self.edges.shape[-1],
-                self.nodes.shape[-1],
-                self.globs.shape[-1],
-            ],
+            [self.edges.shape[-1], self.nodes.shape[-1], self.globs.shape[-1]],
         )
 
     def has_nan(self):
@@ -169,11 +165,7 @@ class GraphBatch(Graph):
 
         ## This step kills all persistant edges until I work out how to do this
         ## TODO Work out how to batch replace without killing edges!
-        self.edges = T.zeros(
-            (self.adjmat.sum(), 0),
-            dtype=T.float,
-            device=self.device,
-        )
+        self.edges = T.zeros((self.adjmat.sum(), 0), dtype=T.float, device=self.device)
 
     def __repr__(self):
         """Return the name of the graph and its dimension for printing"""

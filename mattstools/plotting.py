@@ -32,8 +32,8 @@ def gaussian(x_data, mu=0, sig=1):
     """Return the value of the gaussian distribution"""
     return (
         1
-        / np.sqrt(2 * np.pi * sig**2)
-        * np.exp(-((x_data - mu) ** 2) / (2 * sig**2))
+        / np.sqrt(2 * np.pi * sig ** 2)
+        * np.exp(-((x_data - mu) ** 2) / (2 * sig ** 2))
     )
 
 
@@ -361,12 +361,7 @@ def plot_multi_hists(
             if do_ratio_to_first:
                 ydata = (histo / denom_hist).tolist()
                 ydata = [ydata[0]] + ydata
-                axes[i, 1].step(
-                    b,
-                    ydata,
-                    color=hist_colours[j],
-                    **kwargs,
-                )
+                axes[i, 1].step(b, ydata, color=hist_colours[j], **kwargs)
 
         ## Set the x_axis label
         if do_ratio_to_first:
@@ -630,11 +625,7 @@ def parallel_plot(
 
             ## For simple line connectors
             else:
-                ax.plot(
-                    x_values[[i, i + 1]],
-                    y_matrix[[i, i + 1], lne],
-                    **lne_kwargs,
-                )
+                ax.plot(x_values[[i, i + 1]], y_matrix[[i, i + 1], lne], **lne_kwargs)
 
             ## Set the axis limits, y included extensions, x is limited to window
             ax.set_ylim(0 - y_ax_ext, 1 + y_ax_ext)

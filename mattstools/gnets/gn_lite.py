@@ -6,12 +6,7 @@ import math
 import torch as T
 
 from .graphs import GraphBatch
-from ..torch_utils import (
-    ctxt_from_mask,
-    pass_with_mask,
-    aggr_via_sparse,
-    decompress,
-)
+from ..torch_utils import ctxt_from_mask, pass_with_mask, aggr_via_sparse, decompress
 from ..modules import DenseNetwork
 
 import torch as T

@@ -20,13 +20,7 @@ from torch import autocast
 
 from .network import MyNetBase
 from .plotting import plot_multi_loss
-from .torch_utils import (
-    RunningAverage,
-    get_optim,
-    get_sched,
-    move_dev,
-    get_grad_norm,
-)
+from .torch_utils import RunningAverage, get_optim, get_sched, move_dev, get_grad_norm
 
 
 @contextmanager
@@ -486,7 +480,7 @@ class Trainer:
             for lsnm in self.network.loss_names:
                 wandb.log(
                     {f"{dset} {lsnm}": self.loss_hist[lsnm][dset][-1]},
-                    step=self.num_epochs-1,
+                    step=self.num_epochs - 1,
                 )
 
         ## Log patience parameters
@@ -496,7 +490,7 @@ class Trainer:
                 "num_epochs": self.num_epochs,
                 "bad_epochs": self.bad_epochs,
             },
-            step=self.num_epochs-1,
+            step=self.num_epochs - 1,
         )
 
         ## Log optimiser (only 1st param groups) and learning rate information
@@ -506,9 +500,8 @@ class Trainer:
                 for k, v in self.optimiser.state_dict()["param_groups"][0].items()
                 if k != "params"
             },
-            step=self.num_epochs-1,
+            step=self.num_epochs - 1,
         )
 
         ## Ensure that wandb actually pushes epoch information we use commit
-        wandb.log({"push_wandb": True}, step=self.num_epochs-1, commit=True)
-
+        wandb.log({"push_wandb": True}, step=self.num_epochs - 1, commit=True)

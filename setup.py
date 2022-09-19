@@ -28,5 +28,6 @@ setuptools.setup(
         "torch",
         "tqdm",
         "typing_extensions",
+        "energyflow",
     ],
 )

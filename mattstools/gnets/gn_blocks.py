@@ -519,9 +519,7 @@ class GlobBlock(nn.Module):
         ## The dense network to update features
         if use_net:
             self.feat_net = DenseNetwork(
-                inpt_dim=self.feat_inpt_dim,
-                ctxt_dim=self.ctxt_dim,
-                **self.feat_kwargs,
+                inpt_dim=self.feat_inpt_dim, ctxt_dim=self.ctxt_dim, **self.feat_kwargs
             )
 
         ## Turn off residual additive connections if the sizes dont line up

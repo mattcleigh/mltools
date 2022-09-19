@@ -71,7 +71,7 @@ class BayesianLinear(nn.Module):
         return (
             0.5
             * (
-                self.prior_sig * (self.weight**2 + w_logsig2.exp())
+                self.prior_sig * (self.weight ** 2 + w_logsig2.exp())
                 - w_logsig2
                 - math.log(self.prior_sig)
                 - 1
@@ -93,7 +93,7 @@ class BayesianLinear(nn.Module):
         ## In training mode, we perform the Local Reparam Trick
         if self.training:
             nom_out = F.linear(input, self.weight, self.bias)  # Nominal
-            var_out = F.linear(input**2, w_logsig2.exp())
+            var_out = F.linear(input ** 2, w_logsig2.exp())
             return nom_out + var_out.sqrt() * T.randn_like(nom_out) + 1e-8
 
         ## In evaluation mode we do the full noise generation

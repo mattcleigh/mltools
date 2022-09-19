@@ -125,10 +125,7 @@ def stacked_norm_flow(
             elif invrt_func == "rqs":
                 trans_list.append(
                     MaskedPiecewiseRationalQuadraticAutoregressiveTransform(
-                        xz_dim,
-                        hddn_dim,
-                        **made_kwargs,
-                        **rqs_kwargs,
+                        xz_dim, hddn_dim, **made_kwargs, **rqs_kwargs
                     )
                 )
 
@@ -144,9 +141,7 @@ def stacked_norm_flow(
             elif param_func == "cplng" and invrt_func == "rqs":
                 trans_list.append(
                     PiecewiseRationalQuadraticCouplingTransform(
-                        mask,
-                        net_mkr,
-                        **rqs_kwargs,
+                        mask, net_mkr, **rqs_kwargs
                     )
                 )
 

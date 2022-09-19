@@ -11,13 +11,7 @@ import torch.nn.functional as F
 from torch.autograd import Function
 
 from .bayesian import BayesianLinear
-from .torch_utils import (
-    get_act,
-    get_nrm,
-    pass_with_mask,
-    masked_pool,
-    smart_cat,
-)
+from .torch_utils import get_act, get_nrm, pass_with_mask, masked_pool, smart_cat
 
 
 class MLPBlock(nn.Module):

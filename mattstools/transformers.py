@@ -219,7 +219,7 @@ class MultiHeadedAttentionBlock(nn.Module):
         k = pass_with_mask(k, self.k_linear, kv_mask).view(shape)
         v = pass_with_mask(v, self.v_linear, kv_mask).view(shape)
 
-        ## Transpose to get dimensions: b,h,s,f (required for matmul)
+        ## Transpose to get dimensions: b,h,seq,f (required for matmul)
         q = q.transpose(1, 2)
         k = k.transpose(1, 2)
         v = v.transpose(1, 2)
@@ -236,7 +236,7 @@ class MultiHeadedAttentionBlock(nn.Module):
             mul_weights=self.mul_weights,
         )  ## Returned shape is b,h,s,f
 
-        ## Concatenate the all of the heads together to get shape: b,s,f
+        ## Concatenate the all of the heads together to get shape: b,seq,f
         q = q.transpose(1, 2).contiguous().view(b_size, -1, self.model_dim)
 
         ## Pass through final linear layer
@@ -257,10 +257,7 @@ class TransformerEncoderLayer(nn.Module):
     """
 
     def __init__(
-        self,
-        model_dim: int,
-        mha_kwargs: dict = None,
-        ff_kwargs: dict = None,
+        self, model_dim: int, mha_kwargs: dict = None, ff_kwargs: dict = None
     ) -> None:
         """Init method for TransformerEncoderLayer
 
@@ -312,10 +309,7 @@ class TransformerDecoderLayer(nn.Module):
     """
 
     def __init__(
-        self,
-        model_dim: int,
-        mha_kwargs: dict = None,
-        ff_kwargs: dict = None,
+        self, model_dim: int, mha_kwargs: dict = None, ff_kwargs: dict = None
     ) -> None:
         """Init method for TransformerEncoderLayer
 
@@ -629,11 +623,7 @@ class TransformerVectorDecoder(nn.Module):
         self.num_layers = num_layers
         self.final_norm = nn.LayerNorm(model_dim)
 
-    def forward(
-        self,
-        vec: T.Tensor,
-        mask: T.BoolTensor = None,
-    ) -> T.Tensor:
+    def forward(self, vec: T.Tensor, mask: T.BoolTensor = None) -> T.Tensor:
         """Pass the input through all layers sequentially"""
 
         ## Initialise the q-sequence randomly (adhere to mask)
@@ -818,10 +808,7 @@ class FullTransformerVectorDecoder(nn.Module):
         )
 
     def forward(
-        self,
-        vec: T.Tensor,
-        mask: T.BoolTensor,
-        ctxt: T.Tensor = None,
+        self, vec: T.Tensor, mask: T.BoolTensor, ctxt: T.Tensor = None
     ) -> T.Tensor:
         """Pass the input through all layers sequentially"""
         vec = self.vec_embd(vec, ctxt=ctxt)
