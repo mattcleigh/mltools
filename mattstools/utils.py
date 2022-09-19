@@ -68,6 +68,11 @@ def get_standard_configs(
     parser.add_argument(
         "--save_dir", type=str, help="The directory to use for saving the network"
     )
+    parser.add_argument(
+        "--fine_tune",
+        type=str,
+        help="Name of another network to use as a template and starting point",
+    )
 
     ## Learning scheme
     parser.add_argument(
@@ -120,9 +125,9 @@ def get_standard_configs(
     ## Load the arguments
     args, _ = parser.parse_known_args()
 
-    ## Raise an error if more than retume, retry
-    if args.resume and args.retry:
-        raise ValueError("Please only select one option for resume/retry/")
+    ## Raise an error if more than resume, retry
+    if sum([args.resume, args.retry, (args.fine_tune is not None)])>1:
+        raise ValueError("Please only select one option for resume/retry/fine_tune")
 
     ## Change the paths to previous configs if resuming, otherwise keep defaults
     if args.resume or args.retry:
@@ -144,6 +149,7 @@ def get_standard_configs(
     ## Most args need manual placement in the configuration dicts
     args_into_conf(args, net_conf, "name", "base_kwargs/name")
     args_into_conf(args, net_conf, "save_dir", "base_kwargs/save_dir")
+    args_into_conf(args, net_conf, "fine_tune", "base_kwargs/fine_tune")
     args_into_conf(args, train_conf, "batch_size", "loader_kwargs/batch_size")
     args_into_conf(args, train_conf, "num_workers", "loader_kwargs/num_workers")
     args_into_conf(args, train_conf, "sched_name", "trainer_kwargs/sched_dict/name")

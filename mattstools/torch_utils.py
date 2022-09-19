@@ -2,8 +2,11 @@
 Mix of utility functions specifically for pytorch
 """
 import os
+from pathlib import Path
 
+import yaml
 from typing import Iterable, List, Union, Tuple
+from dotmap import DotMap
 
 import numpy as np
 
@@ -623,3 +626,31 @@ def get_max_cpu_suggest():
 def log_squash(data: T.Tensor) -> T.Tensor:
     """Apply a log squashing function for distributions with high tails"""
     return T.sign(data) * T.log(T.abs(data) + 1)
+
+
+def load_for_fine_tuning(net_conf: DotMap, flag: str="best")->DotMap:
+    """Used for fine tuning a model. Loads a previous best model and also modifies
+    the net_conf to match the model being loaded other than the base kwargs
+    """
+    net_path = Path(net_conf.base_kwargs.fine_tune)
+
+    print("Loading previous instance of model for fine tuning")
+    print(f"template: {net_path / flag}")
+    print(f"(will update the net_conf accordingly)")
+
+
+    ## Load the previous instance of the network
+    dev = sel_device(net_conf.base_kwargs.device)
+    network = T.load(net_path / flag, map_location=dev)
+    network.device = dev
+
+    ## Load the previous network's config
+    with open(net_path / "config/net.yaml", encoding="utf-8") as f:
+        new_net_conf = yaml.load(f, Loader=yaml.Loader)
+
+    ## Combine combine the new and old net conf
+    for k, v in new_net_conf.items():
+        if k != "base_kwargs":
+            net_conf[k] = v
+
+    return network, net_conf
