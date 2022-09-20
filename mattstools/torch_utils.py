@@ -628,7 +628,7 @@ def log_squash(data: T.Tensor) -> T.Tensor:
     return T.sign(data) * T.log(T.abs(data) + 1)
 
 
-def load_for_fine_tuning(net_conf: DotMap, flag: str="best")->DotMap:
+def load_for_fine_tuning(net_conf: DotMap, flag: str="best")->tuple:
     """Used for fine tuning a model. Loads a previous best model and also modifies
     the net_conf to match the model being loaded other than the base kwargs
     """
@@ -652,5 +652,11 @@ def load_for_fine_tuning(net_conf: DotMap, flag: str="best")->DotMap:
     for k, v in new_net_conf.items():
         if k != "base_kwargs":
             net_conf[k] = v
+
+    ## Ensure that the loaded's base_kwargs are the new ones
+    network.name = net_conf.base_kwargs.name
+    network.save_dir = net_conf.base_kwargs.save_dir
+    network.full_name = Path(network.name, network.save_dir)
+    network.device = sel_device(net_conf.base_kwargs.device)
 
     return network, net_conf
