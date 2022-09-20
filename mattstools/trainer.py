@@ -118,14 +118,19 @@ class Trainer:
         self.chkp_every = chkp_every
 
         ## Load the optimiser and scheduler if the network does not have its own
-        self.optimiser = get_optim(self.optim_dict, self.network.parameters())
-        self.scheduler = get_sched(
-            self.sched_dict,
-            self.optimiser,
-            len(self.train_loader),
-            max_lr=self.optim_dict["lr"],
-            max_epochs=max_epochs,  ## Only used for onecycle
-        )
+        self.net_does_own_step = callable(getattr(self.network, 'train_step', None))
+        if self.net_does_own_step:
+            self.optimiser = None
+            self.scheduler = None
+        else:
+            self.optimiser = get_optim(self.optim_dict, self.network.parameters())
+            self.scheduler = get_sched(
+                self.sched_dict,
+                self.optimiser,
+                len(self.train_loader),
+                max_lr=self.optim_dict["lr"],
+                max_epochs=max_epochs,  ## Only used for onecycle
+            )
 
         ## If a scheduler is loaded make sure that the optimizer's learning rate is
         ## set to the start (self.scheduler.step is only called after first minibatch)
@@ -309,27 +314,37 @@ class Trainer:
             ## Move the sample to the network device
             batch = move_dev(batch, self.network.device)
 
-            ## Pass through the network and get the loss dictionary
-            # with opt_ctxt(self.do_autocast, autocast(self.network.device.type)):
-            losses = self.network.get_losses(batch, batch_idx, epoch_num)
+            ## If the network does its own training step
+            if self.net_does_own_step:
+                if is_train:
+                    losses = self.network.train_step(batch, batch_idx, epoch_num)
+                else:
+                    losses = self.network.valid_step(batch, batch_idx, epoch_num)
 
-            ## For training epochs we perform gradient descent
-            if is_train:
+            else:
+                ## Pass through the network and get the loss dictionary
+                # with opt_ctxt(self.do_autocast, autocast(self.network.device.type)):
+                losses = self.network.get_losses(batch, batch_idx, epoch_num)
 
-                ## Zero and calculate gradients using total loss (from dict)
-                self.optimiser.zero_grad(set_to_none=True)
-                losses["total"].backward()
+                ## For training epochs we perform gradient descent
+                if is_train:
 
-                ## Apply gradient clipping
-                if self.grad_clip:
-                    nn.utils.clip_grad_norm_(self.network.parameters(), self.grad_clip)
+                    ## Zero and calculate gradients using total loss (from dict)
+                    self.optimiser.zero_grad(set_to_none=True)
+                    losses["total"].backward()
 
-                ## Step the optimiser
-                self.optimiser.step()
+                    ## Apply gradient clipping
+                    if self.grad_clip:
+                        nn.utils.clip_grad_norm_(
+                            self.network.parameters(), self.grad_clip
+                        )
 
-                ## Step the learning rate scheduler
-                if self.scheduler is not None:
-                    self.scheduler.step()
+                    ## Step the optimiser
+                    self.optimiser.step()
+
+                    ## Step the learning rate scheduler
+                    if self.scheduler is not None:
+                        self.scheduler.step()
 
             ## Update the each of the running losses using the dictionary
             for lnm, running in self.run_loss.items():
@@ -370,9 +385,10 @@ class Trainer:
         ## Save a checkpoint of the network/optimiser/loss (for reloading)
         checkpoint = {
             "network": self.network.state_dict(),
-            "optimiser": self.optimiser.state_dict(),
             "losses": self.loss_hist,
         }
+        if not self.net_does_own_step:
+            checkpoint["optimiser"] = self.optimiser.state_dict()
 
         ## Add the scheduler if used in training
         if self.scheduler is not None:
@@ -443,8 +459,9 @@ class Trainer:
             self.network.full_name / "checkpoints" / f"checkpoint_{flag}"
         )
         self.network.load_state_dict(checkpoint["network"])
-        self.optimiser.load_state_dict(checkpoint["optimiser"])
         self.loss_hist = checkpoint["losses"]
+        if not self.net_does_own_step:
+            self.optimiser.load_state_dict(checkpoint["optimiser"])
         if self.scheduler is not None:
             self.scheduler.load_state_dict(checkpoint["scheduler"])
 
@@ -494,14 +511,15 @@ class Trainer:
         )
 
         ## Log optimiser (only 1st param groups) and learning rate information
-        wandb.log(
-            {
-                k: np.array(v) if isinstance(v, tuple) else v
-                for k, v in self.optimiser.state_dict()["param_groups"][0].items()
-                if k != "params"
-            },
-            step=self.num_epochs - 1,
-        )
+        if not self.net_does_own_step:
+            wandb.log(
+                {
+                    k: np.array(v) if isinstance(v, tuple) else v
+                    for k, v in self.optimiser.state_dict()["param_groups"][0].items()
+                    if k != "params"
+                },
+                step=self.num_epochs - 1,
+            )
 
         ## Ensure that wandb actually pushes epoch information we use commit
         wandb.log({"push_wandb": True}, step=self.num_epochs - 1, commit=True)

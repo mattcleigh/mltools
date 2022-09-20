@@ -21,9 +21,9 @@ from sklearn.preprocessing import (
 
 
 def get_standard_configs(
-    def_train: str = "config/data.yaml",
+    def_train: str = "config/train.yaml",
     def_net: str = "config/net.yaml",
-    def_data: str = "config/train.yaml",
+    def_data: str = "config/data.yaml",
 ) -> Tuple[DotMap, DotMap, DotMap]:
     """Loads, modifies, and returns three configuration dictionaries using command
     line arguments for a basic training setup
@@ -45,7 +45,7 @@ def get_standard_configs(
     parser.add_argument(
         "--data_conf",
         type=str,
-        default=def_train,
+        default=def_data,
         help="Path to config file to use as a template for data preperation",
     )
     parser.add_argument(
@@ -57,7 +57,7 @@ def get_standard_configs(
     parser.add_argument(
         "--train_conf",
         type=str,
-        default=def_data,
+        default=def_train,
         help="Path to config file to use as a template for training scheme",
     )
 

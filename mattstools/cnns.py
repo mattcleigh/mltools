@@ -322,7 +322,7 @@ class DoublingConvNet(nn.Module):
             resnet_blocks.append(nn.ModuleList(lvl_layers))
 
             ## Exit if the next iteration would lead too small spacial dimensions
-            if min(inp_size) // 2 < min_size:
+            if min(inp_size) // 2 <= min_size:
                 break
 
             ## Update the dimensions for the next iteration
@@ -341,11 +341,11 @@ class DoublingConvNet(nn.Module):
             **dense_kwargs,
         )
 
-    def forward(self, input: T.Tensor, ctxt: T.Tensor = None):
+    def forward(self, inpt: T.Tensor, ctxt: T.Tensor = None):
         """Forward pass of the network"""
 
         ## Pass through the first convolution layer to embed the channel dimension
-        input = self.first_block(input)
+        inpt = self.first_block(inpt)
 
         ## Pass through the ResNetBlocks and the downsampling
         for level in self.resnet_blocks:
@@ -354,9 +354,9 @@ class DoublingConvNet(nn.Module):
             inpt = self.down_sample(inpt)
 
         ## Flatten and pass through final dense network and return
-        input = T.flatten(input, start_dim=1)
+        inpt = T.flatten(inpt, start_dim=1)
 
-        return self.dense(input, ctxt)
+        return self.dense(inpt, ctxt)
 
 
 class UNet(nn.Module):
@@ -513,11 +513,13 @@ class UNet(nn.Module):
         self.decoder_blocks = nn.ModuleList(decoder_blocks)
 
         ## Final block in maps to the number of output channels
+        last_kwargs = deepcopy(resnet_kwargs)
+        last_kwargs.nrm_groups = 1
         self.last_block = ResNetBlock(
             inpt_channels=start_channels,
             ctxt_dim=ctxt_dim,
             outp_channels=outp_channels,
-            **resnet_kwargs,
+            **last_kwargs,
         )
 
     def forward(self, inpt: T.Tensor, ctxt: T.Tensor = None):

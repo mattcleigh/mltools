@@ -33,6 +33,18 @@ from .schedulers import CyclicWithWarmup, WarmupToConstant, LinearWarmupRootDeca
 ONNX_SAFE = False
 
 
+class GradsOff:
+    """Context manager for passing through a model without it tracking gradients"""
+    def __init__(self, model):
+        self.model = model
+
+    def __enter__(self):
+        self.model.requires_grad_(False)
+
+    def __exit__(self, exc_type, exc_value, exc_traceback):
+        self.model.requires_grad_(True)
+
+
 class RunningAverage:
     """A class which tracks the sum and data count so can calculate
     the running average on demand
