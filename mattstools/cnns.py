@@ -515,6 +515,7 @@ class UNet(nn.Module):
         ## Final block in maps to the number of output channels
         last_kwargs = deepcopy(resnet_kwargs)
         last_kwargs.nrm_groups = 1
+        last_kwargs.drp = 0 # No dropout on final block! These are the outputs!
         self.last_block = ResNetBlock(
             inpt_channels=start_channels,
             ctxt_dim=ctxt_dim,
