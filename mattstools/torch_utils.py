@@ -217,7 +217,7 @@ def get_loss_fn(name: str) -> nn.Module:
 
 
 def get_sched(
-    sched_dict, opt, steps_per_epoch, max_lr=None, max_epochs=None
+    sched_dict, opt, steps_per_epoch: int=0, max_lr: float=None, max_epochs: float=None
 ) -> schd._LRScheduler:
     """Return a pytorch learning rate schedular given a dict containing a name and kwargs
     args:
@@ -233,7 +233,21 @@ def get_sched(
     dict_copy = sched_dict.copy()
     name = dict_copy.pop("name")
 
-    ## Pop off the number of epochs per cycle
+    ## Exit if the name indicates no scheduler
+    if name in ["", "none", "None"]:
+        return None
+
+    ## If the steps per epoch is 0, try and get it from the sched_dict
+    if steps_per_epoch==0:
+        try:
+            steps_per_epoch = dict_copy.pop("steps_per_epoch")
+        except:
+            raise ValueError(
+                "steps_per_epoch was not passed to get_sched and was ",
+                "not in the scheduler dictionary!",
+            )
+
+    ## Pop off the number of epochs per cycle (needed as arg)
     if "epochs_per_cycle" in dict_copy:
         epochs_per_cycle = dict_copy.pop("epochs_per_cycle")
     else:
@@ -244,9 +258,7 @@ def get_sched(
         if "div_factor" not in dict_copy:
             dict_copy["div_factor"] = 1e4
 
-    if name in ["", "none", "None"]:
-        return None
-    elif name == "cosann":
+    if name == "cosann":
         return schd.CosineAnnealingLR(
             opt, steps_per_epoch * epochs_per_cycle, **dict_copy
         )
