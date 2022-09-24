@@ -15,6 +15,16 @@ def bayesian_prior_loss(model: nn.Module):
     return kl_loss
 
 
+def change_deterministic(model: nn.Module, setting: bool = True)->None:
+    """Loops over a network's submodules and looks for BayesianLinear layers.
+    Changes their deterministic parameter
+    """
+    if isinstance(model, BayesianLinear):
+        model.deterministic = setting
+    for m in model.children():
+        change_deterministic(m, setting)
+
+
 class BayesianLinear(nn.Module):
     """A bayesian linear layer
     Here every single weight in the matrix is modeled as a gaussian and sampled during
