@@ -396,9 +396,9 @@ class UNet(nn.Module):
         """
         super().__init__()
 
-        ## Save dict defaults
-        resnet_kwargs = resnet_kwargs or {}
-        attn_kwargs = attn_kwargs or {}
+        ## Save dict defaults (these are modified)
+        resnet_kwargs = deepcopy(resnet_kwargs) or {}
+        attn_kwargs = deepcopy(attn_kwargs) or {}
 
         ## Class attributes
         self.inpt_size = inpt_size
@@ -410,6 +410,9 @@ class UNet(nn.Module):
         self.start_channels = start_channels
         self.max_channels = max_channels
         self.dims = len(inpt_size)
+
+        ## Add the dimensions to the resnet_kwargs
+        resnet_kwargs.dims = self.dims
 
         ## The downsampling layer and upscaling layers (not learnable)
         stride = 2 if self.dims != 3 else (2, 2, 2)
