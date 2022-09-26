@@ -49,12 +49,11 @@ class WarmupToConstant(_LRScheduler):
             optimizer (Optimizer): Wrapped optimizer.
             num_steps: target learning rate is reached at num_steps.
         """
-        for group in optimizer.param_groups:
-            group['initial_lr'] = 0
-            group['lr'] = 0
+        super().__init__(optimizer)
         self.num_steps = num_steps
         self.finished = False
-        super().__init__(optimizer)
+        for group in optimizer.param_groups:
+            group['lr'] = 0
 
     def get_lr(self):
         if self.last_epoch > self.num_steps:
