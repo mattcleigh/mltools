@@ -25,7 +25,7 @@ from .loss import (
     MyBCEWithLogit,
     VAELoss,
     ChampferLoss,
-    EMDSinkhorn,
+    ModifiedSinkhorn,
 )
 from .schedulers import CyclicWithWarmup, WarmupToConstant, LinearWarmupRootDecay
 
@@ -203,8 +203,8 @@ def get_loss_fn(name: str) -> nn.Module:
         return GeomWrapper(SamplesLoss("sinkhorn", p=1, blur=0.01))
     if name == "champfer":
         return ChampferLoss()
-    if name == "emdsinkhorn":
-        return EMDSinkhorn()
+    if name == "modifiedsinkhorn":
+        return ModifiedSinkhorn()
     if name == "energymovers":
         return EnergyMovers()
 

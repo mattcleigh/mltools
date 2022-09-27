@@ -28,6 +28,26 @@ class VAELoss(nn.Module):
         return kld_to_norm(means, log_stds)
 
 
+def champfer_loss(mask_a, pc_a, mask_b, pc_b):
+    """Returns the champfer loss between two point clouds with different
+    cardinality and masking
+    """
+
+    ## Calculate the distance matrix (squared) between the outputs and targets
+    matrix_mask = mask_a.bool().unsqueeze(-1) & mask_b.bool().unsqueeze(-2)
+    dist_matrix = T.cdist(pc_a, pc_b)
+
+    ## Ensure the distances between fake nodes take the padding value
+    dist_matrix = dist_matrix.masked_fill(~matrix_mask, 1e8)
+
+    ## Get the sum of the minimum along each axis, square, and scale by the weights
+    min1 = T.min(dist_matrix, dim=-1)[0] ** 2 * mask_a  ## Zeros out the padded
+    min2 = T.min(dist_matrix, dim=-2)[0] ** 2 * mask_b
+
+    ## Add the two metrics together (no batch reduction)
+    return T.sum(min1, dim=-1) + T.sum(min2, dim=-1)
+
+
 def kld_to_norm(means: T.Tensor, log_stds: T.Tensor, reduce="mean") -> T.Tensor:
     """Calculate the KL-divergence to a unit normal distribution"""
     loss = 0.5 * (means * means + (2 * log_stds).exp() - 2 * log_stds - 1)
@@ -41,6 +61,23 @@ def kld_to_norm(means: T.Tensor, log_stds: T.Tensor, reduce="mean") -> T.Tensor:
         return loss
     raise RuntimeError(f"Unrecognized reduction arguments: {reduce}")
 
+def kld_with_OE(means: T.Tensor, log_stds: T.Tensor, labels=T.Tensor, reduce="mean") -> T.Tensor:
+    """Calculate the KL-divergence to a unit normal distribution"""
+    loss = kld_to_norm(means, log_stds, reduce="none")
+
+    ## All classes not equal to zero have the loss terms flipped (maximise loss)
+    loss = loss * (1-2*labels).unsqueeze(-1)
+    loss = T.clamp_min(loss, -3)
+
+    if reduce == "mean":
+        return loss.mean()
+    if reduce == "dim_mean":
+        return loss.mean(dim=-1)
+    if reduce == "sum":
+        return loss.sum()
+    if reduce == "none":
+        return loss
+    raise RuntimeError(f"Unrecognized reduction arguments: {reduce}")
 
 class GeomWrapper(nn.Module):
     """This is a wrapper class for the geomloss package which by default renables all
@@ -79,10 +116,18 @@ class MyBCEWithLogit(nn.Module):
         return self.loss_fn(outputs.squeeze(dim=-1), targets.float())
 
 
-class EMDSinkhorn(nn.Module):
+class ModifiedSinkhorn(nn.Module):
     def __init__(self) -> None:
+        """
+        Applies four different sinkhorn loss functions:
+        1)  PT Weighted sinkhorn loss of eta/phi point cloud (main one)
+        2)  Champfer loss on eta/phi point cloud (no weights)
+        3)  Champfer loss on sinkhorn marginal
+        4)  Huber loss on all total Pt
+        """
         super().__init__()
         self.snk = GeomWrapper(SamplesLoss(loss="sinkhorn"))
+        self.w = 1
 
     def forward(self, a_mask, pc_a, b_mask, pc_b):
         a_pt = a_mask * pc_a[..., -1]
@@ -90,10 +135,10 @@ class EMDSinkhorn(nn.Module):
         a_etaphi = pc_a[..., :-1]
         b_etaphi = pc_b[..., :-1]
         loss = (
-            self.snk(a_mask, a_etaphi, b_mask, b_etaphi)
+            self.snk(a_pt, a_etaphi.detach(), b_pt, b_etaphi.detach())
+            + self.snk(a_mask, a_etaphi, b_mask, b_etaphi)
             + self.snk(a_mask, a_pt.unsqueeze(-1), b_mask, b_pt.unsqueeze(-1))
-            + self.snk(a_pt, a_etaphi, b_pt, b_etaphi)
-            + F.huber_loss(a_pt.sum(dim=-1), b_pt.sum(dim=-1), reduction="none")
+            # + F.huber_loss(a_pt.sum(dim=-1), b_pt.sum(dim=-1), reduction="none") / b_pt.detach().sum(dim=-1)
         )
         return loss
 
@@ -141,20 +186,7 @@ class ChampferLoss(nn.Module):
         """
 
         ## Calculate the distance matrix (squared) between the outputs and targets
-        dist = masked_dist_matrix(
-            tensor_a=outputs,
-            mask_a=o_weights > 0,
-            tensor_b=targets,
-            mask_b=t_weights > 0,
-            pad_val=1e6,  ## Dont use inf as we can't zero that out
-        )[0]
-
-        ## Get the sum of the minimum along each axis, square, and scale by the weights
-        min1 = T.min(dist, dim=-1)[0] ** 2 * (o_weights)  ## Zeros out the padded
-        min2 = T.min(dist, dim=-2)[0] ** 2 * (t_weights)
-
-        ## Add the two metrics together (no batch reduction)
-        return T.sum(min1, dim=-1) + T.sum(min2, dim=-1)
+        return champfer_loss(o_weights, outputs, t_weights, targets)
 
 
 def masked_dist_loss(
@@ -191,40 +223,3 @@ def masked_dist_loss(
     if reduce == "none":
         return loss
     raise ValueError("Unknown reduce option for masked_dist_loss")
-
-
-# class GANLoss(nn.Module):
-#     """Aversarial loss for use in GANs or AAEs
-#     - Requires both the inputs and the model
-#     - This is so it can regenerate samples for nonsaturating loss
-#     - This is also to allow for gradient penalties
-#     """
-
-#     def forward(
-#         self, inputs: T.Tensor, outputs: T.Tensor, labels: T.Tensor, network: nn.Module
-#     ):
-#         """
-#         args:
-#             inputs: The inputs to the discriminator
-#             outputs: The outputs of the discriminator
-#             labels: The labels of the dataset (1=True, 0=False)
-#             network: The discriminator network
-#         """
-
-#         ## Calculate the the BCE discriminator losss
-#         disc_loss = F.binary_cross_entropy_with_logits(outputs, labels.unsqueeze(-1))
-
-#         ## Freeze gradient tracking for the discriminator
-#         for param in network.parameters():
-#             param.requires_grad = False
-
-#         ## Calculate the non saturating generator loss using only generated samples
-#         gen_vals, _, _ = network.forward(inputs[~labels.bool()], None, get_loss=False)
-#         gen_loss = F.logsigmoid(gen_vals).mean()
-
-#         ## Unfreeze the parameters of the discriminator
-#         for param in network.parameters():
-#             param.requires_grad = True
-
-#         ## Add gradient penalties here
-#         return disc_loss + gen_loss

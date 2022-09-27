@@ -104,12 +104,12 @@ class BayesianLinear(nn.Module):
         if self.training:
             nom_out = F.linear(input, self.weight, self.bias)  # Nominal
             var_out = F.linear(input ** 2, w_logsig2.exp())
-            return nom_out + var_out.sqrt() * T.randn_like(nom_out) + 1e-8
+            return nom_out + var_out.sqrt() * T.randn_like(nom_out)
 
         ## In evaluation mode we do the full noise generation
         else:
             noise = T.exp(self.w_logsig2 / 2) * T.randn_like(self.weight)
-            return F.linear(input, self.weight + noise, self.bias) + 1e-8
+            return F.linear(input, self.weight + noise, self.bias)
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}({self.n_in}, {self.n_out})"

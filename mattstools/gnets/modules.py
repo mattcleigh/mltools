@@ -503,7 +503,7 @@ class FullGraphVectorEncoder(nn.Module):
         self.ctxt_dim = ctxt_dim
 
         ## The series of modules that make up the network
-        self.gnn = GraphNeuralNetwork(inpt_dim, **gnn_kwargs)
+        self.gnn = GraphNeuralNetwork(inpt_dim, ctxt_dim, **gnn_kwargs)
         self.dns = DenseNetwork(
             inpt_dim=self.gnn.outp_dim[2],
             ctxt_dim=ctxt_dim,

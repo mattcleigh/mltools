@@ -3,7 +3,7 @@ Functions and classes used to define the learnable and invertible transformation
 """
 
 from copy import deepcopy
-from typing import Literal
+from typing  import Literal
 import torch as T
 
 from nflows.transforms import (
