@@ -193,6 +193,10 @@ def get_loss_fn(name: str) -> nn.Module:
     ## Regression losses
     if name == "huber":
         return nn.HuberLoss(reduction="none")
+    if name == "mae":
+        return nn.MSELoss(reduction="none")
+    if name == "mse":
+        return nn.L1Loss(reduction="none")
 
     ## Distribution matching losses
     if name == "energymmd":
@@ -661,7 +665,6 @@ def load_for_fine_tuning(net_conf: DotMap, flag: str="best")->tuple:
     print("Loading previous instance of model for fine tuning")
     print(f"template: {net_path / flag}")
     print(f"(will update the net_conf accordingly)")
-
 
     ## Load the previous instance of the network
     dev = sel_device(net_conf.base_kwargs.device)
