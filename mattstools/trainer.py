@@ -287,7 +287,7 @@ class Trainer:
             T.set_grad_enabled(True)
 
             ## Call the dataset/network's on_train_start method
-            if hasattr(self.valid_set, "on_train_start"):
+            if hasattr(self.train_set, "on_train_start"):
                 dataset.on_train_start(epoch_num)
             self.network.on_train_start(epoch_num)
 
@@ -304,7 +304,7 @@ class Trainer:
             self.network.on_valid_start(epoch_num)
 
         ## Call the dataset/network's on_epoch_start method
-        if hasattr(self.valid_set, "on_epoch_start"):
+        if hasattr(self.train_set, "on_epoch_start"):
             dataset.on_epoch_start(epoch_num)
         self.network.on_epoch_start(epoch_num)
 
@@ -362,7 +362,7 @@ class Trainer:
             running.reset()
 
         ## Call the dataset/network's on_epoch_end method
-        if hasattr(self.valid_set, "on_epoch_end"):
+        if hasattr(self.train_set, "on_epoch_end"):
             dataset.on_epoch_end(epoch_num)
         self.network.on_epoch_end(epoch_num)
 

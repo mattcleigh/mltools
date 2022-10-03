@@ -193,9 +193,9 @@ def get_loss_fn(name: str) -> nn.Module:
     ## Regression losses
     if name == "huber":
         return nn.HuberLoss(reduction="none")
-    if name == "mae":
-        return nn.MSELoss(reduction="none")
     if name == "mse":
+        return nn.MSELoss(reduction="none")
+    if name == "mae":
         return nn.L1Loss(reduction="none")
 
     ## Distribution matching losses

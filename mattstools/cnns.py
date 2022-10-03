@@ -530,7 +530,7 @@ class UNet(nn.Module):
         """Forward pass of the network"""
 
         ## Pass through the first convolution layer to embed the channel dimension
-        inpt = self.first_block(inpt)
+        inpt = self.first_block(inpt, ctxt)
 
         ## Pass through the encoder
         dec_outs = []
@@ -542,7 +542,7 @@ class UNet(nn.Module):
 
         ## Pass through the middle blocks
         for block in self.middle_blocks:
-            inpt = block(inpt)
+            inpt = block(inpt, ctxt)
 
         ## Pass through the decoder blocks
         for level in self.decoder_blocks:
