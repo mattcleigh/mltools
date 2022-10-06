@@ -100,8 +100,11 @@ class Trainer:
             print("No validation set provided")
 
         ## Create a history of train and validation losses for early stopping
+        self.loss_categories = ["train"]
+        if self.has_v:
+            self.loss_categories += ["valid"]
         self.loss_hist = {
-            lsnm: {dset: [] for dset in ["train", "valid"]}
+            lsnm: {dset: [] for dset in self.loss_categories}
             for lsnm in self.network.loss_names
         }
 
@@ -493,7 +496,7 @@ class Trainer:
             return
 
         ## Start by logging the saved loss metrics
-        for dset in ["train", "valid"]:
+        for dset in self.loss_categories:
             for lsnm in self.network.loss_names:
                 wandb.log(
                     {f"{dset} {lsnm}": self.loss_hist[lsnm][dset][-1]},
