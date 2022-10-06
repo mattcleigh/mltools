@@ -21,7 +21,7 @@ setuptools.setup(
         "EnergyFlow",
         "geomloss",
         "matplotlib",
-        "nflows @ git+https://github.com/bayesiains/nflows.git",
+        "matts-nflows",
         "numpy",
         "pandas",
         "PyYAML",
