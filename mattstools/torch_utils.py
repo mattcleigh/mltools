@@ -35,13 +35,13 @@ ONNX_SAFE = False
 
 class GradsOff:
     """Context manager for passing through a model without it tracking gradients"""
-    def __init__(self, model):
+    def __init__(self, model) -> None:
         self.model = model
 
-    def __enter__(self):
+    def __enter__(self) -> None:
         self.model.requires_grad_(False)
 
-    def __exit__(self, exc_type, exc_value, exc_traceback):
+    def __exit__(self, exc_type, exc_value, exc_traceback) -> None:
         self.model.requires_grad_(True)
 
 
@@ -454,7 +454,13 @@ def pass_with_mask(
 
     ## Create an output of the correct shape on the right device using the padval
     exp_size = (*inputs.shape[:-1], outp_dim)
-    outputs = T.full(exp_size, padval, device=inputs.device, dtype=inputs.dtype)
+    if T.is_autocast_enabled():
+        out_type = T.float16
+    elif T.is_autocast_cpu_enabled():
+        out_type = T.bfloat16
+    else:
+        out_type = inputs.dtype
+    outputs = T.full(exp_size, padval, device=inputs.device, dtype=out_type)
 
     ## Onnx safe operation, but slow, use only for exporting
     if ONNX_SAFE:
@@ -522,6 +528,8 @@ def to_np(tensor: T.Tensor) -> np.ndarray:
     pytorch tensor to numpy array
     - Includes gradient deletion, and device migration
     """
+    if tensor.dtype == T.bfloat16: ## Numpy conversions don't support bfloat16s
+        tensor = tensor.half()
     return tensor.detach().cpu().numpy()
 
 

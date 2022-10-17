@@ -2,6 +2,7 @@
 A collection of plotting scripts for standard uses
 """
 
+from distutils.log import Log
 from typing import Union
 from pathlib import Path
 
@@ -84,10 +85,11 @@ def plot_corr_heatmaps(
     ## Initialise the figure
     fig, ax = plt.subplots(1, 1, figsize=figsize)
     imshow = ax.imshow(
-        np.log(hist.T) if do_log else hist.T,
+        hist.T,
         origin="lower",
         cmap=cmap,
         extent=[min(xedges), max(xedges), min(yedges), max(yedges)],
+        norm="log" if do_log else "linear",
     )
 
     ## Add line
@@ -98,7 +100,7 @@ def plot_corr_heatmaps(
     if incl_cbar:
         divider = make_axes_locatable(ax)
         cax = divider.append_axes("right", size="5%", pad=0.05)
-        fig.colorbar(imshow, cax=cax, orientation="vertical")
+        clb = fig.colorbar(imshow, cax=cax, orientation="vertical", label="frequency")
 
     ## Axis labels and titles
     ax.set_xlabel(xlabel)
