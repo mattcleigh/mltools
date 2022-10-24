@@ -5,7 +5,7 @@ A collection of networks that all inherit from the MyNetwork base class
 import dill
 from itertools import count
 from pathlib import Path
-from typing import Union
+from typing import Any, Union
 
 import torch as T
 import torch.nn as nn
@@ -25,9 +25,9 @@ class MyNetBase(nn.Module):
         *,
         name: str,
         save_dir: str,
-        inpt_dim: Union[int, list],
-        outp_dim: Union[int, list],
-        ctxt_dim: Union[int, list] = 0,
+        inpt_dim: Any,
+        outp_dim: Any,
+        ctxt_dim: Any = 0,
         device: str = "cpu",
         mkdir: bool = True,
         **other_info,
@@ -80,7 +80,7 @@ class MyNetBase(nn.Module):
             for lsnm in self.loss_names
         }
 
-    def set_preproc(self, stat_dict):
+    def set_preproc(self, stat_dict) -> None:
         """Save a dictionary of data processing tensors as buffers on the network
         - Ensures they will be saved/loaded alongside the network
         """

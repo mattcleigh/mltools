@@ -100,6 +100,8 @@ def get_act(name: str) -> nn.Module:
         return nn.Tanh()
     if name == "softmax":
         return nn.Softmax()
+    if name == "sigmoid":
+        return nn.Sigmoid()
     raise ValueError("No activation function with name: ", name)
 
 
@@ -494,8 +496,13 @@ def sel_device(dev: Union[str, T.device]) -> T.device:
     if dev in ["cuda", "gpu"]:
         print("Trying to select cuda based on available hardware")
         dev = "cuda" if T.cuda.is_available() else "cpu"
-        print(f" - {dev} selected")
 
+    ## Tries to get specific gpu
+    elif "cuda" in dev:
+        print(f"Trying to select {dev} based on available hardware")
+        dev = dev if T.cuda.is_available() else "cpu"
+
+    print(f"Running on hardware: {dev}")
     return T.device(dev)
 
 

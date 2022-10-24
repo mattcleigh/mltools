@@ -2,7 +2,8 @@
 Collection of pytorch modules that make up the common networks used in my projects
 """
 
-from typing import Union
+from multiprocessing.sharedctypes import Value
+from typing import Optional, Union
 
 import torch as T
 import torch.nn as nn
@@ -137,7 +138,8 @@ class DenseNetwork(nn.Module):
         nrm: str = "none",
         drp: float = 0,
         do_res: bool = False,
-        ctxt_in_all: bool = False,
+        ctxt_in_inpt: bool = True,
+        ctxt_in_hddn: bool = False,
         do_bayesian: bool = False,
     ) -> None:
         """
@@ -155,10 +157,16 @@ class DenseNetwork(nn.Module):
             nrm: Type of normalisation (layer or batch) in each hidden block
             drp: Dropout probability for hidden layers (0 means no dropout)
             do_res: Use res-connections between hidden blocks (only if same size)
-            ctxt_in_all: Include the ctxt tensor in all blocks, not just input
+            ctxt_in_inpt: Include the ctxt tensor in the input block
+            ctxt_in_hddn: Include the ctxt tensor in the hidden blocks
             do_bayesian: Create the network with bayesian linear layers
         """
         super().__init__()
+
+        ## Check that the context is used somewhere
+        if ctxt_dim:
+            if not ctxt_in_hddn and not ctxt_in_inpt:
+                raise ValueError("Network has context inputs but nowhere to use them!")
 
         ## We store the input, hddn (list), output, and ctxt dims to query them later
         self.inpt_dim = inpt_dim
@@ -178,7 +186,7 @@ class DenseNetwork(nn.Module):
         self.input_block = MLPBlock(
             inpt_dim=self.inpt_dim,
             outp_dim=self.hddn_dim[0],
-            ctxt_dim=self.ctxt_dim,
+            ctxt_dim=self.ctxt_dim if ctxt_in_inpt else 0,
             act=act_h,
             nrm=nrm,
             drp=drp,
@@ -194,7 +202,7 @@ class DenseNetwork(nn.Module):
                     MLPBlock(
                         inpt_dim=h_1,
                         outp_dim=h_2,
-                        ctxt_dim=self.ctxt_dim if ctxt_in_all else 0,
+                        ctxt_dim=self.ctxt_dim if ctxt_in_hddn else 0,
                         n_layers=n_lyr_pbk,
                         act=act_h,
                         nrm=nrm,
@@ -213,7 +221,7 @@ class DenseNetwork(nn.Module):
                 do_bayesian=do_bayesian,
             )
 
-    def forward(self, inputs: T.Tensor, ctxt: T.Tensor = None) -> T.Tensor:
+    def forward(self, inputs: T.Tensor, ctxt: T.Tensor = Optional[None]) -> T.Tensor:
         """Pass through all layers of the dense network"""
 
         ## Pass through the input block
