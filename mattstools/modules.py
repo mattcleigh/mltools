@@ -2,7 +2,8 @@
 Collection of pytorch modules that make up the common networks used in my projects
 """
 
-from typing import Union
+from multiprocessing.sharedctypes import Value
+from typing import Optional, Union
 
 import torch as T
 import torch.nn as nn
@@ -15,16 +16,17 @@ from .torch_utils import get_act, get_nrm, pass_with_mask, masked_pool, smart_ca
 
 
 class MLPBlock(nn.Module):
-    """A simple MLP block that makes up a dense network
+    """
+    A simple MLP block that makes up a dense network.
 
     Made up of several layers containing:
     - linear map
-    - activation function
-    - layer normalisation
-    - dropout
+    - activation function [Optional]
+    - layer normalisation [Optional]
+    - dropout [Optional]
 
-    Only the input of the block is concatentated with context information
-    For residual blocks, the input is added to the output of the final layer
+    Only the input of the block is concatentated with context information.
+    For residual blocks, the input is added to the output of the final layer.
     """
 
     def __init__(
@@ -39,20 +41,29 @@ class MLPBlock(nn.Module):
         do_res: bool = False,
         do_bayesian: bool = False,
     ) -> None:
+        """Init method for MLPBlock
+
+        Parameters
+        ----------
+        inpt_dim : int
+            The number of features for the input layer
+        outp_dim : int
+            The number of output features
+        ctxt_dim : int, optional
+            The number of contextual features to concat to the inputs, by default 0
+        n_layers : int, optional
+            A string indicating the name of the activation function, by default 1
+        act : str, optional
+            A string indicating the name of the normalisation, by default "lrlu"
+        nrm : str, optional
+            The dropout probability, 0 implies no dropout, by default "none"
+        drp : float, optional
+            Add to previous output, only if dim does not change, by default 0
+        do_res : bool, optional
+            The number of transform layers in this block, by default False
+        do_bayesian : bool, optional
+            If to fill the block with bayesian linear layers, by default False
         """
-        args:
-            inpt_dim: The number of features for the input layer
-            outp_dim: The number of output features
-        kwargs:
-            ctxt_dim: The number of contextual features to concat to the inputs
-            act: A string indicating the name of the activation function
-            nrm: A string indicating the name of the normalisation
-            drp: The dropout probability, 0 implies no dropout
-            do_res: Add to previous output, only if dim does not change
-            n_layers: The number of transform layers in this block
-            do_bayesian: If to fill the block with bayesian linear layers
-        """
-        ## Applies the
         super().__init__()
 
         ## Save the input and output dimensions of the module
@@ -83,7 +94,7 @@ class MLPBlock(nn.Module):
             if drp > 0:
                 self.block.append(nn.Dropout(drp))
 
-    def forward(self, inpt: T.Tensor, ctxt: T.Tensor = None) -> T.Tensor:
+    def forward(self, inpt: T.Tensor, ctxt: Optional[T.Tensor] = None) -> T.Tensor:
         """
         args:
             tensor: Pytorch tensor to pass through the network
@@ -107,7 +118,8 @@ class MLPBlock(nn.Module):
 
         return temp
 
-    def __repr__(self):
+    def __repr__(self) -> str:
+        """Generate a one line string summing up the components of the block"""
         string = str(self.inpt_dim)
         if self.ctxt_dim:
             string += f"({self.ctxt_dim})"
@@ -137,28 +149,62 @@ class DenseNetwork(nn.Module):
         nrm: str = "none",
         drp: float = 0,
         do_res: bool = False,
-        ctxt_in_all: bool = False,
+        ctxt_in_inpt: bool = True,
+        ctxt_in_hddn: bool = False,
         do_bayesian: bool = False,
     ) -> None:
-        """
-        args:
-            inpt_dim: The number of input neurons
-        kwargs:
-            outp_dim: The number of output neurons, if none it will take inpt or hddn
-            ctxt_dim: The number of context features, use is determined by ctxt_type
-            hddn_dim: The width of each hidden block (if list, overides depth)
-            num_blocks: The number of hidden blocks (overwritten by hddn_dim if list)
-            n_lyr_pbk: The number of transform layers per hidden block
-            act_h: The name of the activation function to apply in the hidden blocks
-            act_o: The name of the activation function to apply to the outputs
-            do_out: If the network has a dedicated output block
-            nrm: Type of normalisation (layer or batch) in each hidden block
-            drp: Dropout probability for hidden layers (0 means no dropout)
-            do_res: Use res-connections between hidden blocks (only if same size)
-            ctxt_in_all: Include the ctxt tensor in all blocks, not just input
-            do_bayesian: Create the network with bayesian linear layers
+        """Initialise the DenseNetwork.
+
+        Parameters
+        ----------
+        inpt_dim : int
+            The number of input neurons
+        outp_dim : int, optional
+            The number of output neurons. If none it will take from inpt or hddn,
+            by default 0
+        ctxt_dim : int, optional
+            The number of context features. The context feature use is determined by
+            ctxt_type, by default 0
+        hddn_dim : Union[int, list], optional
+            The width of each hidden block. If a list it overides depth, by default 32
+        num_blocks : int, optional
+            The number of hidden blocks, can be overwritten by hddn_dim, by default 1
+        n_lyr_pbk : int, optional
+            The number of transform layers per hidden block, by default 1
+        act_h : str, optional
+            The name of the activation function to apply in the hidden blocks,
+            by default "lrlu"
+        act_o : str, optional
+            The name of the activation function to apply to the outputs,
+            by default "none"
+        do_out : bool, optional
+            If the network has a dedicated output block, by default True
+        nrm : str, optional
+            Type of normalisation (layer or batch) in each hidden block, by default "none"
+        drp : float, optional
+            Dropout probability for hidden layers (0 means no dropout), by default 0
+        do_res : bool, optional
+            Use resisdual-connections between hidden blocks (only if same size),
+            by default False
+        ctxt_in_inpt : bool, optional
+            Include the ctxt tensor in the input block, by default True
+        ctxt_in_hddn : bool, optional
+            Include the ctxt tensor in the hidden blocks, by default False
+        do_bayesian : bool, optional
+            Create the network with bayesian linear layers, by default False
+
+        Raises
+        ------
+        ValueError
+            If the network was given a context input but both ctxt_in_inpt and
+            ctxt_in_hddn were False
         """
         super().__init__()
+
+        ## Check that the context is used somewhere
+        if ctxt_dim:
+            if not ctxt_in_hddn and not ctxt_in_inpt:
+                raise ValueError("Network has context inputs but nowhere to use them!")
 
         ## We store the input, hddn (list), output, and ctxt dims to query them later
         self.inpt_dim = inpt_dim
@@ -178,7 +224,7 @@ class DenseNetwork(nn.Module):
         self.input_block = MLPBlock(
             inpt_dim=self.inpt_dim,
             outp_dim=self.hddn_dim[0],
-            ctxt_dim=self.ctxt_dim,
+            ctxt_dim=self.ctxt_dim if ctxt_in_inpt else 0,
             act=act_h,
             nrm=nrm,
             drp=drp,
@@ -194,7 +240,7 @@ class DenseNetwork(nn.Module):
                     MLPBlock(
                         inpt_dim=h_1,
                         outp_dim=h_2,
-                        ctxt_dim=self.ctxt_dim if ctxt_in_all else 0,
+                        ctxt_dim=self.ctxt_dim if ctxt_in_hddn else 0,
                         n_layers=n_lyr_pbk,
                         act=act_h,
                         nrm=nrm,
@@ -213,7 +259,7 @@ class DenseNetwork(nn.Module):
                 do_bayesian=do_bayesian,
             )
 
-    def forward(self, inputs: T.Tensor, ctxt: T.Tensor = None) -> T.Tensor:
+    def forward(self, inputs: T.Tensor, ctxt: T.Tensor = Optional[None]) -> T.Tensor:
         """Pass through all layers of the dense network"""
 
         ## Pass through the input block

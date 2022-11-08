@@ -2,7 +2,6 @@
 Custom pytorch learning rate schedulers
 """
 
-from lib2to3.pgen2.token import OP
 import warnings
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler, OneCycleLR
@@ -59,12 +58,6 @@ class WarmupToConstant(_LRScheduler):
         return [
             (base_lr / self.num_steps) * self.last_epoch for base_lr in self.base_lrs
         ]
-
-
-# class WarmupThenCyclic(_LRScheduler):
-#     """
-#     """
-#     def __init__(self, optimizer: Optimizer, warmup_steps, **cyclic_kwargs):
 
 
 class CyclicWithWarmup(OneCycleLR):

@@ -2,7 +2,8 @@
 A collection of plotting scripts for standard uses
 """
 
-from typing import Union
+from distutils.log import Log
+from typing import Optional, Union
 from pathlib import Path
 
 import numpy as np
@@ -46,6 +47,7 @@ def plot_corr_heatmaps(
     ylabel: str,
     weights: np.ndarray = None,
     do_log: bool = True,
+    equal_aspect: bool = True,
     cmap: str = "coolwarm",
     incl_line: bool = True,
     incl_cbar: bool = True,
@@ -67,6 +69,7 @@ def plot_corr_heatmaps(
     kwargs:
         weights: The weight value for each x, y pair
         do_log: If the z axis should be the logarithm
+        equal_aspect: Force the sizes of the axes' units to match
         cmap: The name of the cmap to use for z values
         incl_line: If a y=x line should be included to show ideal correlation
         incl_cbar: Add the colour bar to the axis
@@ -79,26 +82,29 @@ def plot_corr_heatmaps(
     ## Create the histogram
     if len(bins) != 2:
         bins = [bins, bins]
-    hist, xedges, yedges = np.histogram2d(x_vals, y_vals, weights=weights, bins=bins)
 
     ## Initialise the figure
     fig, ax = plt.subplots(1, 1, figsize=figsize)
-    imshow = ax.imshow(
-        np.log(hist.T) if do_log else hist.T,
-        origin="lower",
+    hist = ax.hist2d(
+        x_vals,
+        y_vals,
+        bins=bins,
+        weights=weights,
         cmap=cmap,
-        extent=[min(xedges), max(xedges), min(yedges), max(yedges)],
+        norm="log" if do_log else None
     )
+    if equal_aspect:
+        ax.set_aspect("equal")
 
     ## Add line
     if incl_line:
-        ax.plot([min(xedges), max(xedges)], [min(yedges), max(yedges)], "k--")
+        ax.plot([min(hist[1]), max(hist[1])], [min(hist[2]), max(hist[2])], "k--")
 
     ## Add colourbar
     if incl_cbar:
         divider = make_axes_locatable(ax)
         cax = divider.append_axes("right", size="5%", pad=0.05)
-        fig.colorbar(imshow, cax=cax, orientation="vertical")
+        clb = fig.colorbar(hist[3], cax=cax, orientation="vertical", label="frequency")
 
     ## Axis labels and titles
     ax.set_xlabel(xlabel)
@@ -186,6 +192,7 @@ def plot_multi_hists(
     data_list: Union[list, np.ndarray],
     type_labels: Union[list, str],
     col_labels: Union[list, str],
+    multi_hist: Optional[list] = None,
     normed: bool = False,
     bins: Union[list, str] = "auto",
     logy: bool = False,
@@ -206,7 +213,7 @@ def plot_multi_hists(
     do_ratio_to_first: bool = False,
     as_pdf: bool = False,
     return_fig: bool = False,
-):
+    ) -> Union[plt.Figure, None]:
     """Plot multiple histograms given a list of 2D tensors/arrays
     - Performs the histogramming here
     - Each column the arrays will be a seperate axis
@@ -217,6 +224,7 @@ def plot_multi_hists(
         data_list: A list of tensors or numpy arrays
         type_labels: A list of labels for each tensor in data_list
         col_labels: A list of labels for each column/histogram
+        multi_hist: Reshape the columns and plot as a shaded histogram
         normed: If the histograms are to be a density plot
         bins: The bins to use for each axis, can use numpy's strings
         logy: If we should use the log in the y-axis
@@ -299,6 +307,38 @@ def plot_multi_hists(
         ## Cycle through the different data arrays
         for j in range(n_data):
 
+            ## For a multiple histogram
+            if multi_hist is not None and multi_hist[j] > 1:
+                data = np.copy(data_list[j][:, i]).reshape(-1, multi_hist[j])
+                mh_hists = []
+                for mh in range(multi_hist[j]):
+                    mh_hists.append(np.histogram(data[:, mh], b, density=normed)[0])
+                mh_means = np.mean(mh_hists, axis=0)
+                mh_unc = np.std(mh_hists, axis=0)
+                mh_means = [mh_means[0]] + mh_means.tolist()
+                mh_unc = [mh_unc[0]] + mh_unc.tolist()
+                axes[i, 0].step(b, mh_means, label=type_labels[j], color=hist_colours[j], **kwargs)
+                axes[i, 0].fill_between(
+                    b,
+                    np.subtract(mh_means, mh_unc),
+                    np.add(mh_means, mh_unc),
+                    color=hist_colours[j],
+                    step="pre",
+                    alpha=0.4,
+                )
+                if do_ratio_to_first:
+                    d = [denom_hist[0]] + denom_hist.tolist()
+                    axes[i, 1].step(b, np.divide(mh_means, d), color=hist_colours[j], **kwargs)
+                    axes[i, 1].fill_between(
+                        b,
+                        np.divide(np.subtract(mh_means, mh_unc), d),
+                        np.divide(np.add(mh_means, mh_unc), d),
+                        color=hist_colours[j],
+                        step="pre",
+                        alpha=0.4,
+                    )
+                continue
+
             ## Read the binned data from the array
             if already_hists:
                 histo = data_list[j][:, i]
@@ -319,6 +359,7 @@ def plot_multi_hists(
 
                 ## Calculate the histogram
                 histo, _ = np.histogram(data, b, density=normed)
+
 
             ## Apply the scaling factor
             histo = histo * hist_scale

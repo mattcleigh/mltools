@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 
 import yaml
-from typing import Iterable, List, Union, Tuple
+from typing import Iterable, List, Optional, Union, Tuple
 from dotmap import DotMap
 
 import numpy as np
@@ -35,13 +35,13 @@ ONNX_SAFE = False
 
 class GradsOff:
     """Context manager for passing through a model without it tracking gradients"""
-    def __init__(self, model):
+    def __init__(self, model) -> None:
         self.model = model
 
-    def __enter__(self):
+    def __enter__(self) -> None:
         self.model.requires_grad_(False)
 
-    def __exit__(self, exc_type, exc_value, exc_traceback):
+    def __exit__(self, exc_type, exc_value, exc_traceback) -> None:
         self.model.requires_grad_(True)
 
 
@@ -100,6 +100,8 @@ def get_act(name: str) -> nn.Module:
         return nn.Tanh()
     if name == "softmax":
         return nn.Softmax()
+    if name == "sigmoid":
+        return nn.Sigmoid()
     raise ValueError("No activation function with name: ", name)
 
 
@@ -223,11 +225,17 @@ def get_loss_fn(name: str) -> nn.Module:
 def get_sched(
     sched_dict, opt, steps_per_epoch: int=0, max_lr: float=None, max_epochs: float=None
 ) -> schd._LRScheduler:
-    """Return a pytorch learning rate schedular given a dict containing a name and kwargs
+    """Return a pytorch learning rate schedular given a dict containing a name and
+    other kwargs.
+
+    I still prefer this method as opposed to the hydra implementation as
+    it allows us to specify the cyclical scheduler periods as a function of epochs
+    rather than steps.
+
     args:
         sched_dict: A dictionary of kwargs used to select and configure the schedular
         opt: The optimiser to apply the learning rate to
-        steps_per_epoch: The number of minibatches in a single epoch
+        steps_per_epoch: The number of minibatches in a training single epoch
     kwargs: (only for OneCyle learning!)
         max_lr: The maximum learning rate for the one shot
         max_epochs: The maximum number of epochs to train for
@@ -421,7 +429,7 @@ def pass_with_mask(
     inputs: T.Tensor,
     module: nn.Module,
     mask: T.BoolTensor = None,
-    context: List[T.Tensor] = None,
+    context: Optional[Union[T.Tensor, List[T.Tensor]]] = None,
     padval: float = 0.0,
 ) -> T.Tensor:
     """Pass a collection of padded tensors through a module without wasting computation
@@ -454,9 +462,15 @@ def pass_with_mask(
 
     ## Create an output of the correct shape on the right device using the padval
     exp_size = (*inputs.shape[:-1], outp_dim)
-    outputs = T.full(exp_size, padval, device=inputs.device, dtype=inputs.dtype)
+    if T.is_autocast_enabled():
+        out_type = T.float16
+    elif T.is_autocast_cpu_enabled():
+        out_type = T.bfloat16
+    else:
+        out_type = inputs.dtype
+    outputs = T.full(exp_size, padval, device=inputs.device, dtype=out_type)
 
-    ## Onnx safe operation, but slow, use only for exporting
+    ## Onnx safe operation, but slow, use only when exporting
     if ONNX_SAFE:
         o_mask = mask.unsqueeze(-1).expand(exp_size)
         if context is None:
@@ -488,8 +502,13 @@ def sel_device(dev: Union[str, T.device]) -> T.device:
     if dev in ["cuda", "gpu"]:
         print("Trying to select cuda based on available hardware")
         dev = "cuda" if T.cuda.is_available() else "cpu"
-        print(f" - {dev} selected")
 
+    ## Tries to get specific gpu
+    elif "cuda" in dev:
+        print(f"Trying to select {dev} based on available hardware")
+        dev = dev if T.cuda.is_available() else "cpu"
+
+    print(f"Running on hardware: {dev}")
     return T.device(dev)
 
 
@@ -522,6 +541,8 @@ def to_np(tensor: T.Tensor) -> np.ndarray:
     pytorch tensor to numpy array
     - Includes gradient deletion, and device migration
     """
+    if tensor.dtype == T.bfloat16: ## Numpy conversions don't support bfloat16s
+        tensor = tensor.half()
     return tensor.detach().cpu().numpy()
 
 

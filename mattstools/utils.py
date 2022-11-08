@@ -330,12 +330,17 @@ def str2bool(mystring: str) -> bool:
         raise argparse.ArgumentTypeError("Boolean value expected.")
 
 
-def log_squash(data: np.ndarray):
+def min_loc(data: np.ndarray) -> tuple:
+    """Returns the idx for the minimum of a multidimensional array"""
+    return np.unravel_index(data.argmin(), data.shape)
+
+
+def log_squash(data: np.ndarray) -> np.ndarray:
     """Apply a log squashing function for distributions with high tails"""
     return np.sign(data) * np.log(np.abs(data) + 1)
 
 
-def undo_log_squash(data: np.ndarray):
+def undo_log_squash(data: np.ndarray) -> np.ndarray:
     """Undo the log squash function above"""
     return np.sign(data) * (np.exp(np.abs(data)) - 1)
 

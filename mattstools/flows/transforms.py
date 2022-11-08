@@ -41,7 +41,7 @@ def change_kwargs_for_made(old_kwargs):
         new_kwargs["use_batch_norm"] = new_kwargs.pop("nrm") is not None
 
     ## Some options are missing
-    missing = ["ctxt_in_all", "n_lyr_pbk", "act_o", "do_out"]
+    missing = ["ctxt_in_inpt", "ctxt_in_hddn", "n_lyr_pbk", "act_o", "do_out"]
     for miss in missing:
         if miss in new_kwargs:
             del new_kwargs[miss]
