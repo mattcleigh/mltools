@@ -1,6 +1,6 @@
 from copy import deepcopy
 import math
-
+import logging
 import numpy as np
 
 import torch as T
@@ -11,6 +11,7 @@ from .torch_utils import get_act
 from .modules import DenseNetwork
 from .transformers import attention
 
+log = logging.getLogger(__name__)
 
 def zero_module(module):
     """Zero out the parameters of a module and return it"""
@@ -241,7 +242,7 @@ class DoublingConvNet(nn.Module):
         outp_dim: int,
         ctxt_dim: int = 0,
         min_size: int = 2,
-        attn_after: int = 3,
+        attn_below: int = 8,
         start_channels: int = 32,
         max_channels: int = 256,
         resnet_kwargs: dict = None,
@@ -255,7 +256,7 @@ class DoublingConvNet(nn.Module):
             outp_dim: Number of output featurs
             ctxt_dim: Size of the contextual tensor
             min_size: The smallest spacial dimensions to reach before flattening
-            attn_after: Include attention after a certain amount of downsampling
+            attn_below: Include attention below this dimension
             resnet_kwargs: Kwargs for the ResNetBlocks
             attn_kwargs: Kwargs for the MultiHeadedAttention block
             dense_kwargs: Kwargs for the dense network
@@ -273,7 +274,7 @@ class DoublingConvNet(nn.Module):
         self.ctxt_dim = ctxt_dim
         self.outp_dim = outp_dim
         self.min_size = min_size
-        self.attn_after = attn_after
+        self.attn_below = attn_below
         self.start_channels = start_channels
         self.max_channels = max_channels
         self.dims = len(inpt_size)
@@ -299,7 +300,7 @@ class DoublingConvNet(nn.Module):
 
         ## Start creating the levels (should exit but max 100 for safety)
         resnet_blocks = []
-        for lvl in range(100):
+        for _ in range(100):
             lvl_layers = []
 
             ## Add the resnet block
@@ -313,7 +314,7 @@ class DoublingConvNet(nn.Module):
             )
 
             ## Add an optional attention block if we downsampled enough
-            if lvl >= attn_after:
+            if max(inpt_size) <= attn_below:
                 lvl_layers.append(
                     MultiHeadedAttentionBlock(inpt_channels=out_c, **attn_kwargs)
                 )
@@ -377,7 +378,7 @@ class UNet(nn.Module):
         outp_channels: int,
         ctxt_dim: int = 0,
         min_size: int = 8,
-        attn_after: int = 3,
+        attn_below: int = 8,
         start_channels: int = 32,
         max_channels: int = 128,
         resnet_kwargs: dict = None,
@@ -390,7 +391,7 @@ class UNet(nn.Module):
             outp_channels: Number of channels in the output image
             ctxt_dim: Size of the contextual tensor
             min_size: The smallest spacial dimensions to reach before flattening
-            attn_after: Include attention after a certain amount of downsampling
+            attn_below: Include attention below this resolution
             resnet_kwargs: Kwargs for the ResNetBlocks
             attn_kwargs: Kwargs for the MultiHeadedAttention block
         """
@@ -406,7 +407,7 @@ class UNet(nn.Module):
         self.outp_channels = outp_channels
         self.ctxt_dim = ctxt_dim
         self.min_size = min_size
-        self.attn_after = attn_after
+        self.attn_below = attn_below
         self.start_channels = start_channels
         self.max_channels = max_channels
         self.dims = len(inpt_size)
@@ -436,7 +437,7 @@ class UNet(nn.Module):
 
         ## The encoder blocks are ResNet->(attn)->Downsample
         encoder_blocks = []
-        for lvl in range(100):
+        for _ in range(100):
             lvl_layers = []
 
             ## Add the resnet block
@@ -450,7 +451,7 @@ class UNet(nn.Module):
             )
 
             ## Add an optional attention block if we downsampled enough
-            if lvl >= attn_after:
+            if max(inp_size[-1]) <= attn_below:
                 lvl_layers.append(
                     MultiHeadedAttentionBlock(inpt_channels=out_c[-1], **attn_kwargs)
                 )
@@ -505,7 +506,7 @@ class UNet(nn.Module):
             )
 
             ## Add the attention layer at the appropriate levels
-            if (len(out_c) - i) >= attn_after:
+            if max(inp_size[-i]) <= attn_below:
                 lvl_layers.append(
                     MultiHeadedAttentionBlock(inpt_channels=out_c[-1], **attn_kwargs)
                 )
@@ -528,6 +529,10 @@ class UNet(nn.Module):
 
     def forward(self, inpt: T.Tensor, ctxt: T.Tensor = None):
         """Forward pass of the network"""
+
+        ## Make sure the input size is expected
+        if inpt.shape[-1] != self.inpt_size[-1]:
+            log.warning("Input image does not match the training sample!")
 
         ## Pass through the first convolution layer to embed the channel dimension
         inpt = self.first_block(inpt, ctxt)

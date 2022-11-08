@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 
 import yaml
-from typing import Iterable, List, Union, Tuple
+from typing import Iterable, List, Optional, Union, Tuple
 from dotmap import DotMap
 
 import numpy as np
@@ -225,11 +225,17 @@ def get_loss_fn(name: str) -> nn.Module:
 def get_sched(
     sched_dict, opt, steps_per_epoch: int=0, max_lr: float=None, max_epochs: float=None
 ) -> schd._LRScheduler:
-    """Return a pytorch learning rate schedular given a dict containing a name and kwargs
+    """Return a pytorch learning rate schedular given a dict containing a name and
+    other kwargs.
+
+    I still prefer this method as opposed to the hydra implementation as
+    it allows us to specify the cyclical scheduler periods as a function of epochs
+    rather than steps.
+
     args:
         sched_dict: A dictionary of kwargs used to select and configure the schedular
         opt: The optimiser to apply the learning rate to
-        steps_per_epoch: The number of minibatches in a single epoch
+        steps_per_epoch: The number of minibatches in a training single epoch
     kwargs: (only for OneCyle learning!)
         max_lr: The maximum learning rate for the one shot
         max_epochs: The maximum number of epochs to train for
@@ -423,7 +429,7 @@ def pass_with_mask(
     inputs: T.Tensor,
     module: nn.Module,
     mask: T.BoolTensor = None,
-    context: List[T.Tensor] = None,
+    context: Optional[Union[T.Tensor, List[T.Tensor]]] = None,
     padval: float = 0.0,
 ) -> T.Tensor:
     """Pass a collection of padded tensors through a module without wasting computation
@@ -464,7 +470,7 @@ def pass_with_mask(
         out_type = inputs.dtype
     outputs = T.full(exp_size, padval, device=inputs.device, dtype=out_type)
 
-    ## Onnx safe operation, but slow, use only for exporting
+    ## Onnx safe operation, but slow, use only when exporting
     if ONNX_SAFE:
         o_mask = mask.unsqueeze(-1).expand(exp_size)
         if context is None:
