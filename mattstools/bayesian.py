@@ -1,17 +1,28 @@
+from typing import Union
 import math
 import torch as T
 import torch.nn as nn
 import torch.nn.functional as F
 
 
-def bayesian_prior_loss(model: nn.Module):
+def contains_bayesian_layers(model: nn.Module)->bool:
+    """Loops over a network's submodules and looks for BayesianLinear layers.
+    If at least one is found then it returns with True
+    """
+    if isinstance(model, BayesianLinear):
+        return True
+    return any(isinstance(m, BayesianLinear) for m in model.modules())
+
+
+
+def prior_loss(model: nn.Module) -> Union[T.Tensor, int]:
     """Loops over a network's submodules and looks for BayesianLinear layers.
     Once found it uses their current state to add to a running loss to calculate the
     total prior loss of a network.
     """
     kl_loss = model.prior_kl() if isinstance(model, BayesianLinear) else 0
     for m in model.children():
-        kl_loss = kl_loss + bayesian_prior_loss(m)
+        kl_loss = kl_loss + prior_loss(m)
     return kl_loss
 
 

@@ -67,7 +67,7 @@ class ResNetBlock(nn.Module):
         act: str = "lrlu",
         drp: float = 0,
         nrm_groups: int = 1,
-    ):
+    ) -> None:
         """
         args:
             inpt_channels: the number of input channels.

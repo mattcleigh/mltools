@@ -375,7 +375,7 @@ class DeepSet(nn.Module):
         )
 
     def forward(
-        self, tensor: T.tensor, mask: T.BoolTensor, ctxt: Union[T.Tensor, list] = None
+        self, inpt: T.tensor, mask: T.BoolTensor, ctxt: Union[T.Tensor, list] = None
     ):
         """The expected shapes of the inputs are
         - tensor: batch x setsize x features
@@ -388,12 +388,12 @@ class DeepSet(nn.Module):
             ctxt = smart_cat(ctxt)
 
         ## Pass the non_zero values through the feature network
-        feat_outs = pass_with_mask(tensor, self.feat_net, mask, context=ctxt)
+        feat_outs = pass_with_mask(inpt, self.feat_net, mask, context=ctxt)
 
         ## For attention
         if self.pool_type == "attn":
             attn_outs = pass_with_mask(
-                tensor,
+                inpt,
                 self.attn_net,
                 mask,
                 context=ctxt,
