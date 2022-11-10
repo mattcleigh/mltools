@@ -139,16 +139,16 @@ class ResNetBlock(nn.Module):
                 raise ValueError("ResNet was expecting a ctxt input but none given")
 
             ## Pass through the layers, size for broadcasting and split int scale/shift
-            ctxt = self.ctxt_layers(ctxt.float())
+            ctxt = self.ctxt_layers(ctxt)
             ctxt = ctxt.view(ctxt.size() + self.dims * (1,))
             scale, shift = ctxt.chunk(2, 1)
-            output = scale * output + shift
+            output = (1 + scale) * output + shift # scale+1 so doesnt kill on init
 
         ## Pass through the second layers of the module
         output = self.first_layers(input)
 
         ## Return with the skip connection
-        return output + self.skip_connection(input)
+        return output + self.skip_connection(input) / math.sqrt(2)
 
 
 class MultiHeadedAttentionBlock(nn.Module):
@@ -383,9 +383,10 @@ class UNet(nn.Module):
         max_channels: int = 128,
         resnet_kwargs: dict = None,
         attn_kwargs: dict = None,
+        ctxt_embed_kwargs: dict = None,
     ) -> None:
         """
-        args:
+        Args:
             inpt_size: Spacial dimensions of the inputs
             inpt_channels: Number of channels in the inputs
             outp_channels: Number of channels in the output image
@@ -394,6 +395,7 @@ class UNet(nn.Module):
             attn_below: Include attention below this resolution
             resnet_kwargs: Kwargs for the ResNetBlocks
             attn_kwargs: Kwargs for the MultiHeadedAttention block
+            ctxt_embed_kwargs: Kwargs for the Dense context embedder
         """
         super().__init__()
 
@@ -411,9 +413,19 @@ class UNet(nn.Module):
         self.start_channels = start_channels
         self.max_channels = max_channels
         self.dims = len(inpt_size)
+        self.has_ctxt = ctxt_dim > 0
 
         ## Add the dimensions to the resnet_kwargs
         resnet_kwargs.dims = self.dims
+
+        ## If there is a context input, have a network to embed it
+        if self.has_ctxt:
+            self.context_embedder = DenseNetwork(
+                inpt_dim=ctxt_dim,
+                **ctxt_embed_kwargs,
+            )
+            emb_ctxt_size = self.context_embedder.outp_dim
+        emb_ctxt_size = 0
 
         ## The downsampling layer and upscaling layers (not learnable)
         stride = 2 if self.dims != 3 else (2, 2, 2)
@@ -425,7 +437,7 @@ class UNet(nn.Module):
         first_kwargs.nrm_groups = 1
         self.first_block = ResNetBlock(
             inpt_channels=inpt_channels,
-            ctxt_dim=ctxt_dim,
+            ctxt_dim=emb_ctxt_size,
             outp_channels=start_channels,
             **first_kwargs,
         )
@@ -444,7 +456,7 @@ class UNet(nn.Module):
             lvl_layers.append(
                 ResNetBlock(
                     inpt_channels=inp_c[-1],
-                    ctxt_dim=ctxt_dim,
+                    ctxt_dim=emb_ctxt_size,
                     outp_channels=out_c[-1],
                     **resnet_kwargs,
                 )
@@ -476,14 +488,14 @@ class UNet(nn.Module):
             [
                 ResNetBlock(
                     inpt_channels=out_c[-1],
-                    ctxt_dim=ctxt_dim,
+                    ctxt_dim=emb_ctxt_size,
                     outp_channels=out_c[-1],
                     **resnet_kwargs,
                 ),
                 MultiHeadedAttentionBlock(inpt_channels=out_c[-1], **attn_kwargs),
                 ResNetBlock(
                     inpt_channels=out_c[-1],
-                    ctxt_dim=ctxt_dim,
+                    ctxt_dim=emb_ctxt_size,
                     outp_channels=out_c[-1],
                     **resnet_kwargs,
                 ),
@@ -499,7 +511,7 @@ class UNet(nn.Module):
             lvl_layers.append(
                 ResNetBlock(
                     inpt_channels=out_c[-i] * 2,  # Concatenates across the unet
-                    ctxt_dim=ctxt_dim,
+                    ctxt_dim=emb_ctxt_size,
                     outp_channels=inp_c[-i],
                     **resnet_kwargs,
                 )
@@ -522,7 +534,7 @@ class UNet(nn.Module):
         last_kwargs.drp = 0 # No dropout on final block! These are the outputs!
         self.last_block = ResNetBlock(
             inpt_channels=start_channels,
-            ctxt_dim=ctxt_dim,
+            ctxt_dim=emb_ctxt_size,
             outp_channels=outp_channels,
             **last_kwargs,
         )
@@ -533,6 +545,9 @@ class UNet(nn.Module):
         ## Make sure the input size is expected
         if inpt.shape[-1] != self.inpt_size[-1]:
             log.warning("Input image does not match the training sample!")
+
+        ## Embed the context tensor
+        ctxt = self.context_embedder(ctxt)
 
         ## Pass through the first convolution layer to embed the channel dimension
         inpt = self.first_block(inpt, ctxt)

@@ -88,7 +88,7 @@ def get_act(name: str) -> nn.Module:
         return nn.ReLU()
     if name == "lrlu":
         return nn.LeakyReLU(0.1)
-    if name == "silu":
+    if name == "silu" or name == "swish":
         return nn.SiLU()
     if name == "selu":
         return nn.SELU()
