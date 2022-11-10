@@ -461,12 +461,12 @@ class Trainer:
         checkpoint = T.load(
             self.network.full_name / "checkpoints" / f"checkpoint_{flag}"
         )
-        self.network.load_state_dict(checkpoint["network"])
+        self.network.load_state_dict(checkpoint["network"], strict=False)
         self.loss_hist = checkpoint["losses"]
-        if not self.net_does_own_step:
-            self.optimiser.load_state_dict(checkpoint["optimiser"])
-        if self.scheduler is not None:
-            self.scheduler.load_state_dict(checkpoint["scheduler"])
+        # if not self.net_does_own_step:
+            # self.optimiser.load_state_dict(checkpoint["optimiser"])
+        # if self.scheduler is not None:
+            # self.scheduler.load_state_dict(checkpoint["scheduler"])
 
         ## Update the epoch count
         self.count_epochs()

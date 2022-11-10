@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setuptools.setup(
     name="mattstools",
-    version="0.0.7",
+    version="0.0.9",
     author="Matthew Leigh",
     author_email="mattcleigh@gmail.com",
     description="Some common utilities used in my DL projects",
