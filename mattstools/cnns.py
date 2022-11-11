@@ -115,7 +115,7 @@ class ResNetBlock(nn.Module):
         )
 
         ## The embedding layers for the contextual information
-        if ctxt_dim:
+        if self.has_ctxt:
             self.ctxt_layers = nn.Sequential(
                 get_act(act), nn.Linear(ctxt_dim, 2 * self.outp_channels)
             )
@@ -425,7 +425,8 @@ class UNet(nn.Module):
                 **ctxt_embed_kwargs,
             )
             emb_ctxt_size = self.context_embedder.outp_dim
-        emb_ctxt_size = 0
+        else:
+            emb_ctxt_size = 0
 
         ## The downsampling layer and upscaling layers (not learnable)
         stride = 2 if self.dims != 3 else (2, 2, 2)
@@ -471,11 +472,11 @@ class UNet(nn.Module):
             ## Add the level's layers to the block list
             encoder_blocks.append(nn.ModuleList(lvl_layers))
 
-            ## Exit if the iteration would lead an output with small spacial dimensions
+            ## Exit if the next iteration would lead an output with small spacial dimensions
             if min(inp_size[-1]) // 2 <= min_size:
                 break
 
-            ## Update the dimensions for the next iteration
+            ## Update the dimensions for the NEXT iteration
             inp_size.append(inp_size[-1] // 2)  # Halve the spacial dimensions
             inp_c.append(out_c[-1])
             out_c.append(min(out_c[-1] * 2, max_channels))  # Double the channels
@@ -520,7 +521,7 @@ class UNet(nn.Module):
             ## Add the attention layer at the appropriate levels
             if max(inp_size[-i]) <= attn_below:
                 lvl_layers.append(
-                    MultiHeadedAttentionBlock(inpt_channels=out_c[-1], **attn_kwargs)
+                    MultiHeadedAttentionBlock(inpt_channels=inp_c[-1], **attn_kwargs)
                 )
 
             ## Add the level's layers to the block list
