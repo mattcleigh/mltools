@@ -1,6 +1,7 @@
 from copy import deepcopy
 import math
 import logging
+from typing import Mapping, Optional
 import numpy as np
 
 import torch as T
@@ -381,9 +382,9 @@ class UNet(nn.Module):
         attn_below: int = 8,
         start_channels: int = 32,
         max_channels: int = 128,
-        resnet_kwargs: dict = None,
-        attn_kwargs: dict = None,
-        ctxt_embed_kwargs: dict = None,
+        resnet_kwargs: Optional[Mapping] = None,
+        attn_kwargs: Optional[Mapping] = None,
+        ctxt_embed_kwargs: Optional[Mapping] = None,
     ) -> None:
         """
         Args:
@@ -402,6 +403,7 @@ class UNet(nn.Module):
         ## Save dict defaults (these are modified)
         resnet_kwargs = deepcopy(resnet_kwargs) or {}
         attn_kwargs = deepcopy(attn_kwargs) or {}
+        ctxt_embed_kwargs = deepcopy(ctxt_embed_kwargs) or {}
 
         ## Class attributes
         self.inpt_size = inpt_size
@@ -542,6 +544,10 @@ class UNet(nn.Module):
 
     def forward(self, inpt: T.Tensor, ctxt: T.Tensor = None):
         """Forward pass of the network"""
+
+        ## Some context tensors come from labels and must match the same type as inpt
+        if ctxt.dtype != inpt.dtype:
+            ctxt = ctxt.type(inpt.dtype)
 
         ## Make sure the input size is expected
         if inpt.shape[-1] != self.inpt_size[-1]:
