@@ -145,7 +145,7 @@ class ResNetBlock(nn.Module):
             output = (1 + scale) * output + shift # scale+1 so doesnt kill on init
 
         ## Pass through the second layers of the module
-        output = self.first_layers(input)
+        output = self.second_layers(output)
 
         ## Return with the skip connection
         return output + self.skip_connection(input) / math.sqrt(2)
