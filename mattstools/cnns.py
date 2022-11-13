@@ -523,7 +523,7 @@ class UNet(nn.Module):
             ## Add the attention layer at the appropriate levels
             if max(inp_size[-i]) <= attn_below:
                 lvl_layers.append(
-                    MultiHeadedAttentionBlock(inpt_channels=inp_c[-1], **attn_kwargs)
+                    MultiHeadedAttentionBlock(inpt_channels=inp_c[-i], **attn_kwargs)
                 )
 
             ## Add the level's layers to the block list
