@@ -3,6 +3,7 @@ Some classes to describe transformer architectures
 """
 
 import math
+from typing import Mapping, Optional
 
 import torch as T
 import torch.nn as nn
@@ -814,4 +815,71 @@ class FullTransformerVectorDecoder(nn.Module):
         vec = self.vec_embd(vec, ctxt=ctxt)
         nodes = self.tvg(vec, mask)
         nodes = pass_with_mask(nodes, self.outp_embd, mask, context=ctxt)
+        return nodes
+
+
+class FullTransformerEncoder(nn.Module):
+    """A transformer encoder with added input and output embedding networks
+    Sequence to Sequence
+    """
+
+    def __init__(
+        self,
+        inpt_dim: int,
+        outp_dim: int,
+        ctxt_dim: int = 0,
+        te_kwargs: Optional[Mapping] = None,
+        node_embd_kwargs: Optional[Mapping] = None,
+        outp_embd_kwargs: Optional[Mapping] = None,
+    ) -> None:
+        """Init function for the TransformerVectorEncoder
+
+        Args:
+            inpt_dim: Dim. of each element of the sequence
+            outp_dim: Dim. of of the final output vector
+            ctxt_dim: Dim. of the context vector to pass to the embedding nets
+            te_kwargs: Keyword arguments to pass to the TVE constructor
+            node_embd_kwargs: Keyword arguments for node ff embedder
+            outp_embd_kwargs: Keyword arguments for output ff embedder
+        """
+        super().__init__()
+
+        # Safe default dict arguments
+        te_kwargs = te_kwargs or {}
+        node_embd_kwargs = node_embd_kwargs or {}
+        outp_embd_kwargs = outp_embd_kwargs or {}
+
+        ## Create the class attributes
+        self.inpt_dim = inpt_dim
+        self.outp_dim = outp_dim
+        self.ctxt_dim = ctxt_dim
+
+        ## Initialise the TVE, the main part of this network
+        self.te = TransformerEncoder(**te_kwargs)
+        self.model_dim = self.te.model_dim
+
+        ## Initialise all embedding networks
+        self.node_embd = DenseNetwork(
+            inpt_dim=self.inpt_dim,
+            outp_dim=self.model_dim,
+            ctxt_dim=self.ctxt_dim,
+            **node_embd_kwargs
+        )
+        self.outp_embd = DenseNetwork(
+            inpt_dim=self.model_dim,
+            outp_dim=self.outp_dim,
+            ctxt_dim=self.ctxt_dim,
+            **outp_embd_kwargs
+        )
+
+    def forward(
+        self,
+        nodes: T.Tensor,
+        mask: T.BoolTensor = None,
+        ctxt: T.Tensor = None,
+    ) -> T.Tensor:
+        """Pass the input through all layers sequentially"""
+        nodes = pass_with_mask(nodes, self.node_embd, mask, ctxt)
+        nodes = self.te.forward(nodes, mask)
+        nodes = pass_with_mask(nodes, self.outp_embd, mask, ctxt)
         return nodes

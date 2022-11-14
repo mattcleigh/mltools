@@ -448,8 +448,10 @@ def pass_with_mask(
     if mask is None:
         if context is None:
             return module(inputs)
+
+        ## Mask is typically one dimension less than the tensor
         return module(
-            inputs, ctxt_from_mask(context, T.ones_like(inputs[..., 0], dtype=T.bool))
+            inputs, context.unsqueeze(-2).expand(*inputs.shape[:-1], -1)
         )
 
     ## Get the output dimension from the passed module (mine=outp_dim, torch=features)
