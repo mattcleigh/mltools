@@ -14,6 +14,7 @@ from .transformers import attention
 
 log = logging.getLogger(__name__)
 
+
 def zero_module(module):
     """Zero out the parameters of a module and return it"""
     for p in module.parameters():
@@ -143,7 +144,7 @@ class ResNetBlock(nn.Module):
             ctxt = self.ctxt_layers(ctxt)
             ctxt = ctxt.view(ctxt.size() + self.dims * (1,))
             scale, shift = ctxt.chunk(2, 1)
-            output = (1 + scale) * output + shift # scale+1 so doesnt kill on init
+            output = (1 + scale) * output + shift  # scale+1 so doesnt kill on init
 
         ## Pass through the second layers of the module
         output = self.second_layers(output)
@@ -534,7 +535,7 @@ class UNet(nn.Module):
         ## Final block in maps to the number of output channels
         last_kwargs = deepcopy(resnet_kwargs)
         last_kwargs.nrm_groups = 1
-        last_kwargs.drp = 0 # No dropout on final block! These are the outputs!
+        last_kwargs.drp = 0  # No dropout on final block! These are the outputs!
         self.last_block = ResNetBlock(
             inpt_channels=start_channels,
             ctxt_dim=emb_ctxt_size,

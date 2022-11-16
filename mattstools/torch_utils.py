@@ -35,6 +35,7 @@ ONNX_SAFE = False
 
 class GradsOff:
     """Context manager for passing through a model without it tracking gradients"""
+
     def __init__(self, model) -> None:
         self.model = model
 
@@ -106,8 +107,7 @@ def get_act(name: str) -> nn.Module:
 
 
 def base_modules(module: nn.Module) -> list:
-    """Return a list of all of the base modules in a network
-    """
+    """Return a list of all of the base modules in a network"""
     total = []
     children = list(module.children())
     if not children:
@@ -223,7 +223,11 @@ def get_loss_fn(name: str) -> nn.Module:
 
 
 def get_sched(
-    sched_dict, opt, steps_per_epoch: int=0, max_lr: float=None, max_epochs: float=None
+    sched_dict,
+    opt,
+    steps_per_epoch: int = 0,
+    max_lr: float = None,
+    max_epochs: float = None,
 ) -> schd._LRScheduler:
     """Return a pytorch learning rate schedular given a dict containing a name and
     other kwargs.
@@ -250,7 +254,7 @@ def get_sched(
         return None
 
     ## If the steps per epoch is 0, try and get it from the sched_dict
-    if steps_per_epoch==0:
+    if steps_per_epoch == 0:
         try:
             steps_per_epoch = dict_copy.pop("steps_per_epoch")
         except:
@@ -450,9 +454,7 @@ def pass_with_mask(
             return module(inputs)
 
         ## Mask is typically one dimension less than the tensor
-        return module(
-            inputs, context.unsqueeze(-2).expand(*inputs.shape[:-1], -1)
-        )
+        return module(inputs, context.unsqueeze(-2).expand(*inputs.shape[:-1], -1))
 
     ## Get the output dimension from the passed module (mine=outp_dim, torch=features)
     if hasattr(module, "outp_dim"):
@@ -543,16 +545,16 @@ def to_np(tensor: T.Tensor) -> np.ndarray:
     pytorch tensor to numpy array
     - Includes gradient deletion, and device migration
     """
-    if tensor.dtype == T.bfloat16: ## Numpy conversions don't support bfloat16s
+    if tensor.dtype == T.bfloat16:  ## Numpy conversions don't support bfloat16s
         tensor = tensor.half()
     return tensor.detach().cpu().numpy()
 
 
 def print_gpu_info(dev=0):
     """Prints current gpu usage"""
-    total = T.cuda.get_device_properties(dev).total_memory / 1024 ** 3
-    reser = T.cuda.memory_reserved(dev) / 1024 ** 3
-    alloc = T.cuda.memory_allocated(dev) / 1024 ** 3
+    total = T.cuda.get_device_properties(dev).total_memory / 1024**3
+    reser = T.cuda.memory_reserved(dev) / 1024**3
+    alloc = T.cuda.memory_allocated(dev) / 1024**3
     print(f"\nTotal = {total:.2f}\nReser = {reser:.2f}\nAlloc = {alloc:.2f}")
 
 
@@ -679,7 +681,7 @@ def log_squash(data: T.Tensor) -> T.Tensor:
     return T.sign(data) * T.log(T.abs(data) + 1)
 
 
-def load_for_fine_tuning(net_conf: DotMap, flag: str="best")->tuple:
+def load_for_fine_tuning(net_conf: DotMap, flag: str = "best") -> tuple:
     """Used for fine tuning a model. Loads a previous best model and also modifies
     the net_conf to match the model being loaded other than the base kwargs
     """

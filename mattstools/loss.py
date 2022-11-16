@@ -61,12 +61,15 @@ def kld_to_norm(means: T.Tensor, log_stds: T.Tensor, reduce="mean") -> T.Tensor:
         return loss
     raise RuntimeError(f"Unrecognized reduction arguments: {reduce}")
 
-def kld_with_OE(means: T.Tensor, log_stds: T.Tensor, labels=T.Tensor, reduce="mean") -> T.Tensor:
+
+def kld_with_OE(
+    means: T.Tensor, log_stds: T.Tensor, labels=T.Tensor, reduce="mean"
+) -> T.Tensor:
     """Calculate the KL-divergence to a unit normal distribution"""
     loss = kld_to_norm(means, log_stds, reduce="none")
 
     ## All classes not equal to zero have the loss terms flipped (maximise loss)
-    loss = loss * (1-2*labels).unsqueeze(-1)
+    loss = loss * (1 - 2 * labels).unsqueeze(-1)
     loss = T.clamp_min(loss, -3)
 
     if reduce == "mean":
@@ -78,6 +81,7 @@ def kld_with_OE(means: T.Tensor, log_stds: T.Tensor, labels=T.Tensor, reduce="me
     if reduce == "none":
         return loss
     raise RuntimeError(f"Unrecognized reduction arguments: {reduce}")
+
 
 class GeomWrapper(nn.Module):
     """This is a wrapper class for the geomloss package which by default renables all
@@ -165,7 +169,7 @@ class EnergyMovers(nn.Module):
                 ]
             )
         ).to(a_mask.device)
-        loss = (dist ** 2 * f).sum(dim=(-1, -2)) + F.huber_loss(
+        loss = (dist**2 * f).sum(dim=(-1, -2)) + F.huber_loss(
             a_pt.sum(dim=-1), b_pt.sum(dim=-1), reduction="none"
         )
         return loss

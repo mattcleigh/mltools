@@ -34,8 +34,8 @@ def gaussian(x_data, mu=0, sig=1):
     """Return the value of the gaussian distribution"""
     return (
         1
-        / np.sqrt(2 * np.pi * sig ** 2)
-        * np.exp(-((x_data - mu) ** 2) / (2 * sig ** 2))
+        / np.sqrt(2 * np.pi * sig**2)
+        * np.exp(-((x_data - mu) ** 2) / (2 * sig**2))
     )
 
 
@@ -92,7 +92,7 @@ def plot_corr_heatmaps(
         bins=bins,
         weights=weights,
         cmap=cmap,
-        norm="log" if do_log else None
+        norm="log" if do_log else None,
     )
     if equal_aspect:
         ax.set_aspect("equal")
@@ -215,7 +215,7 @@ def plot_multi_hists(
     as_pdf: bool = False,
     return_fig: bool = False,
     return_img: bool = False,
-    ) -> Union[plt.Figure, None]:
+) -> Union[plt.Figure, None]:
     """Plot multiple histograms given a list of 2D tensors/arrays
     - Performs the histogramming here
     - Each column the arrays will be a seperate axis
@@ -317,7 +317,9 @@ def plot_multi_hists(
                 mh_unc = np.std(mh_hists, axis=0)
                 mh_means = [mh_means[0]] + mh_means.tolist()
                 mh_unc = [mh_unc[0]] + mh_unc.tolist()
-                axes[i, 0].step(b, mh_means, label=type_labels[j], color=hist_colours[j], **kwargs)
+                axes[i, 0].step(
+                    b, mh_means, label=type_labels[j], color=hist_colours[j], **kwargs
+                )
                 axes[i, 0].fill_between(
                     b,
                     np.subtract(mh_means, mh_unc),
@@ -328,7 +330,9 @@ def plot_multi_hists(
                 )
                 if do_ratio_to_first:
                     d = [denom_hist[0]] + denom_hist.tolist()
-                    axes[i, 1].step(b, np.divide(mh_means, d), color=hist_colours[j], **kwargs)
+                    axes[i, 1].step(
+                        b, np.divide(mh_means, d), color=hist_colours[j], **kwargs
+                    )
                     axes[i, 1].fill_between(
                         b,
                         np.divide(np.subtract(mh_means, mh_unc), d),
@@ -359,7 +363,6 @@ def plot_multi_hists(
 
                 ## Calculate the histogram
                 histo, _ = np.histogram(data, b, density=normed)
-
 
             ## Apply the scaling factor
             histo = histo * hist_scale
@@ -457,9 +460,7 @@ def plot_multi_hists(
         return fig
     if return_img:
         img = PIL.Image.frombytes(
-            "RGB",
-            fig.canvas.get_width_height(),
-            fig.canvas.tostring_rgb()
+            "RGB", fig.canvas.get_width_height(), fig.canvas.tostring_rgb()
         )
         plt.close(fig)
         return img

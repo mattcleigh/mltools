@@ -121,7 +121,7 @@ class Trainer:
         self.chkp_every = chkp_every
 
         ## Load the optimiser and scheduler if the network does not have its own
-        self.net_does_own_step = callable(getattr(self.network, 'train_step', None))
+        self.net_does_own_step = callable(getattr(self.network, "train_step", None))
         if self.net_does_own_step:
             self.optimiser = None
             self.scheduler = None
@@ -464,9 +464,9 @@ class Trainer:
         self.network.load_state_dict(checkpoint["network"], strict=False)
         self.loss_hist = checkpoint["losses"]
         # if not self.net_does_own_step:
-            # self.optimiser.load_state_dict(checkpoint["optimiser"])
+        # self.optimiser.load_state_dict(checkpoint["optimiser"])
         # if self.scheduler is not None:
-            # self.scheduler.load_state_dict(checkpoint["scheduler"])
+        # self.scheduler.load_state_dict(checkpoint["scheduler"])
 
         ## Update the epoch count
         self.count_epochs()

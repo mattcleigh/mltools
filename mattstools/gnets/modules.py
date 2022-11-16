@@ -349,7 +349,7 @@ class GraphVectorGenerator(nn.Module):
         ## Create the graph network, takes initial vec and ctxt as conditioning
         self.gnn = GraphNeuralNetwork(
             inpt_dim=[0, self.node_init_dim, 0],
-            ctxt_dim=inpt_dim + ctxt_dim ** gnn_kwargs,
+            ctxt_dim=inpt_dim + ctxt_dim**gnn_kwargs,
         )
 
         ## Set the final output dimension of this module
@@ -456,7 +456,7 @@ class FullGraphVectorGenerator(nn.Module):
 
         ## The output embedding network
         self.outp_embd = EmbeddingLayer(
-            inpt_dim=self.gvg.outp_dim, ctxt_dim=ctxt_dim ** outp_embd_kwargs
+            inpt_dim=self.gvg.outp_dim, ctxt_dim=ctxt_dim**outp_embd_kwargs
         )
 
     def forward(

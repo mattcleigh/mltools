@@ -5,14 +5,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-def contains_bayesian_layers(model: nn.Module)->bool:
+def contains_bayesian_layers(model: nn.Module) -> bool:
     """Loops over a network's submodules and looks for BayesianLinear layers.
     If at least one is found then it returns with True
     """
     if isinstance(model, BayesianLinear):
         return True
     return any(isinstance(m, BayesianLinear) for m in model.modules())
-
 
 
 def prior_loss(model: nn.Module) -> Union[T.Tensor, int]:
@@ -26,7 +25,7 @@ def prior_loss(model: nn.Module) -> Union[T.Tensor, int]:
     return kl_loss
 
 
-def change_deterministic(model: nn.Module, setting: bool = True)->None:
+def change_deterministic(model: nn.Module, setting: bool = True) -> None:
     """Loops over a network's submodules and looks for BayesianLinear layers.
     Changes their deterministic parameter
     """
@@ -92,7 +91,7 @@ class BayesianLinear(nn.Module):
         return (
             0.5
             * (
-                self.prior_sig * (self.weight ** 2 + w_logsig2.exp())
+                self.prior_sig * (self.weight**2 + w_logsig2.exp())
                 - w_logsig2
                 - math.log(self.prior_sig)
                 - 1
@@ -114,7 +113,7 @@ class BayesianLinear(nn.Module):
         ## In training mode, we perform the Local Reparam Trick
         if self.training:
             nom_out = F.linear(input, self.weight, self.bias)  # Nominal
-            var_out = F.linear(input ** 2, w_logsig2.exp())
+            var_out = F.linear(input**2, w_logsig2.exp())
             return nom_out + var_out.sqrt() * T.randn_like(nom_out)
 
         ## In evaluation mode we do the full noise generation

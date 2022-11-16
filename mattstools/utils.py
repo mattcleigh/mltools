@@ -126,7 +126,7 @@ def get_standard_configs(
     args, _ = parser.parse_known_args()
 
     ## Raise an error if more than resume, retry
-    if sum([args.resume, args.retry, (args.fine_tune is not None)])>1:
+    if sum([args.resume, args.retry, (args.fine_tune is not None)]) > 1:
         raise ValueError("Please only select one option for resume/retry/fine_tune")
 
     ## Change the paths to previous configs if resuming, otherwise keep defaults
