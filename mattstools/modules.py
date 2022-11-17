@@ -557,17 +557,33 @@ class IterativeNormLayer(nn.Module):
         """Applies the standardisation to a batch of inputs, also uses the inputs to
         update the running stats if in training mode"""
         with T.no_grad():
-            inpt = self._mask(inpt, mask)
+            sel_inpt = self._mask(inpt, mask)
             if not self.frozen and self.training:
-                self.update(inpt)
+                self.update(sel_inpt)
 
             # Apply the mapping [None] performs an unsqueeze, broadcasting across batch
-            return (inpt - self.means) / (self.vars.sqrt() + 1e-8)
+            normed_inpt = (sel_inpt - self.means) / (self.vars.sqrt() + 1e-8)
+
+            # Undo the masking
+            if mask is not None:
+                inpt = inpt.clone() # prevents inplace operation, bad for autograd
+                inpt[mask] = normed_inpt
+                return inpt
+
+            return normed_inpt
 
     def reverse(self, inpt: T.Tensor, mask: Optional[T.BoolTensor] = None) -> T.Tensor:
         """Unnormalises the inputs given the recorded stats"""
-        inpt = self._mask(inpt, mask)
-        return inpt * self.vars.sqrt() + self.means
+        sel_inpt = self._mask(inpt, mask)
+        unnormed_inpt = sel_inpt * self.vars.sqrt() + self.means
+
+        # Undo the masking
+        if mask is not None:
+            inpt = inpt.clone() # prevents inplace operation, bad for autograd
+            inpt[mask] = unnormed_inpt
+            return inpt
+
+        return unnormed_inpt
 
     def update(self, inpt: T.Tensor, mask: Optional[T.BoolTensor] = None) -> None:
         """Update the running stats using a batch of data"""

@@ -118,19 +118,21 @@ def base_modules(module: nn.Module) -> list:
     return total
 
 
-def empty_0dim_like(tensor: T.Tensor) -> T.Tensor:
+def empty_0dim_like(inpt: Union[T.Tensor, np.ndarray]) -> Union[T.Tensor, np.ndarray]:
     """Returns an empty tensor with similar size as the input but with its final
     dimension reduced to 0
     """
 
-    ## Get all but the final dimension
-    all_but_last = tensor.shape[:-1]
+    # Get all but the final dimension
+    all_but_last = inpt.shape[:-1]
 
-    ## Ensure that this is a tuple/list so it can agree with return syntax
+    # Ensure that this is a tuple/list so it can agree with return syntax
     if isinstance(all_but_last, int):
         all_but_last = [all_but_last]
 
-    return T.empty((*all_but_last, 0), dtype=tensor.dtype, device=tensor.device)
+    if isinstance(inpt, T.Tensor):
+        return T.empty((*all_but_last, 0), dtype=inpt.dtype, device=inpt.device)
+    return np.empty((*all_but_last, 0))
 
 
 def get_nrm(name: str, outp_dim: int) -> nn.Module:
@@ -248,6 +250,9 @@ def get_sched(
     ## Pop off the name and learning rate for the optimiser
     dict_copy = sched_dict.copy()
     name = dict_copy.pop("name")
+
+    ## Get the max_lr from the optimiser if not specified
+    max_lr = max_lr or opt.defaults["lr"]
 
     ## Exit if the name indicates no scheduler
     if name in ["", "none", "None"]:
