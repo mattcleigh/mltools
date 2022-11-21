@@ -1,6 +1,38 @@
-from typing import Tuple
+from typing import Optional, Tuple
 import math
 import torch as T
+from tqdm import tqdm
+
+
+class CosineEncoding:
+    def __init__(
+        self,
+        outp_dim: int = 32,
+        min_value: float = 0.0,
+        max_value: float = 1.0,
+        frequency_scaling: str = "exponential",
+    ) -> None:
+        self.outp_dim = outp_dim
+        self.min_value = min_value
+        self.max_value = max_value
+        self.frequency_scaling = frequency_scaling
+
+    def __call__(self, inpt: T.Tensor) -> T.Tensor:
+        return cosine_encoding(
+            inpt, self.outp_dim, self.min_value, self.max_value, self.frequency_scaling
+        )
+
+
+class DiffusionSchedule:
+    def __init__(self, max_sr: float = 1, min_sr: float = 1e-2) -> None:
+        self.max_sr = max_sr
+        self.min_sr = min_sr
+
+    def __call__(self, time: T.Tensor) -> T.Tensor:
+        return cosine_diffusion_shedule(time, self.max_sr, self.min_sr)
+
+    def get_betas(self, time: T.Tensor) -> None:
+        return cosine_beta_shedule(time, self.max_sr, self.min_sr)
 
 
 def cosine_encoding(
@@ -53,7 +85,7 @@ def cosine_encoding(
     return T.cos((x + min_value) * freqs * math.pi / (max_value + min_value))
 
 
-def diffusion_shedule(
+def cosine_diffusion_shedule(
     diff_time: T.Tensor, max_sr: float = 1, min_sr: float = 1e-2
 ) -> Tuple[T.Tensor, T.Tensor]:
     """Calculates the signal and noise rate for any point in the diffusion processes
@@ -89,29 +121,241 @@ def diffusion_shedule(
     return signal_rates, noise_rates
 
 
-class CosineEncoding:
-    def __init__(
-        self,
-        outp_dim: int = 32,
-        min_value: float = 0.0,
-        max_value: float = 1.0,
-        frequency_scaling: str = "exponential",
-    ) -> None:
-        self.outp_dim = outp_dim
-        self.min_value = min_value
-        self.max_value = max_value
-        self.frequency_scaling = frequency_scaling
+def cosine_beta_shedule(
+    diff_time: T.Tensor, max_sr: float = 1, min_sr: float = 1e-2
+) -> T.Tensor:
+    """Returns the beta values for the continuous flows using the above cosine scheduler"""
+    start_angle = math.acos(max_sr)
+    end_angle = math.acos(min_sr)
+    diffusion_angles = start_angle + diff_time * (end_angle - start_angle)
+    return 2 * (end_angle - start_angle) * T.tan(diffusion_angles)
 
-    def __call__(self, inpt: T.Tensor) -> T.Tensor:
-        return cosine_encoding(
-            inpt, self.outp_dim, self.min_value, self.max_value, self.frequency_scaling
+
+@T.no_grad()
+def ddim_sampler(
+    model,
+    diff_sched: DiffusionSchedule,
+    initial_noise: T.Tensor,
+    n_steps: int = 50,
+    keep_all: bool = False,
+    mask: Optional[T.Tensor] = None,
+    ctxt: Optional[T.BoolTensor] = None,
+    clip_predictions: Optional[tuple] = None,
+) -> Tuple[T.Tensor, list]:
+    """Apply the DDIM sampling process to generate a batch of samples from noise
+
+    Args:
+        model: A denoising diffusion model
+            Requires: inpt_dim, device, forward() method that outputs pred noise
+        diif_sched: A diffusion schedule object to calculate signal and noise rates
+        initial_noise: The initial noise to pass through the process
+            If none it will be generated here
+        n_steps: The number of iterations to generate the samples
+        keep_all: Return all stages of diffusion process
+            Can be memory heavy for large batches
+        num_samples: How many samples to generate
+            Ignored if initial_noise is provided
+        mask: The mask for the output point clouds
+        ctxt: The context tensor for the output point clouds
+        clip_predictions: Can stabalise generation by clipping the outputs
+    """
+
+    # Get the initial noise for generation and the number of sammples
+    num_samples = initial_noise.shape[0]
+
+    # The shape needed for expanding the time encodings
+    expanded_shape = [-1] + [1] * (initial_noise.dim() - 1)
+
+    # Check the input argument for the n_steps, must be less than what was trained
+    all_stages = []
+    step_size = 1 / n_steps
+
+    # Do the very first step of the iteration using pure noise
+    next_noisy_data = initial_noise
+    next_diff_times = T.ones(num_samples, device=model.device)
+    next_signal_rates, next_noise_rates = diff_sched(
+        next_diff_times.view(expanded_shape),
+    )
+
+    # Cycle through the remainder of all the steps
+    for step in tqdm(range(n_steps), "DDIM-sampling", leave=False):
+
+        # Update with the previous 'next' step
+        noisy_data = next_noisy_data
+        diff_times = next_diff_times
+        signal_rates = next_signal_rates
+        noise_rates = next_noise_rates
+
+        # Keep track of the diffusion evolution
+        if keep_all:
+            all_stages.append(noisy_data)
+
+        # Apply the denoise step to get X_0 and expected noise
+        pred_noises = model(noisy_data, diff_times, mask, ctxt)
+        pred_data = ddim_predict(noisy_data, pred_noises, signal_rates, noise_rates)
+
+        # Get the next predicted components using the next signal and noise rates
+        next_diff_times = diff_times - step_size
+        next_signal_rates, next_noise_rates = diff_sched(
+            next_diff_times.view(expanded_shape)
         )
 
+        # Clamp the predicted X_0 for stability
+        if clip_predictions is not None:
+            pred_data.clamp_(*clip_predictions)
 
-class DiffusionSchedule:
-    def __init__(self, max_sr: float = 1, min_sr: float = 1e-2) -> None:
-        self.max_sr = max_sr
-        self.min_sr = min_sr
+        # Remix the predicted components to go from estimated X_0 -> X_{t-1}
+        next_noisy_data = next_signal_rates * pred_data + next_noise_rates * pred_noises
 
-    def __call__(self, time: T.Tensor) -> T.Tensor:
-        return diffusion_shedule(time, self.max_sr, self.min_sr)
+    return pred_data, all_stages
+
+
+@T.no_grad()
+def euler_maruyama_sampler(
+    model,
+    diff_sched: DiffusionSchedule,
+    initial_noise: T.Tensor,
+    n_steps: int = 50,
+    keep_all: bool = False,
+    mask: Optional[T.Tensor] = None,
+    ctxt: Optional[T.BoolTensor] = None,
+    clip_predictions: Optional[tuple] = None,
+) -> Tuple[T.Tensor, list]:
+    """Apply the full reverse process to noise to generate a batch of samples
+
+    Args:
+        model: A denoising diffusion model
+            Requires: inpt_dim, device, forward() method that outputs pred noise
+        diif_sched: A diffusion schedule object to calculate signal and noise rates
+        initial_noise: The initial noise to pass through the process
+            If none it will be generated here
+        n_steps: The number of iterations to generate the samples
+        keep_all: Return all stages of diffusion process
+            Can be memory heavy for large batches
+        num_samples: How many samples to generate
+            Ignored if initial_noise is provided
+        mask: The mask for the output point clouds
+        ctxt: The context tensor for the output point clouds
+        clip_predictions: Can stabalise generation by clipping the outputs
+    """
+
+    # Get the initial noise for generation and the number of sammples
+    num_samples = initial_noise.shape[0]
+
+    # The shape needed for expanding the time encodings
+    expanded_shape = [-1] + [1] * (initial_noise.dim() - 1)
+
+    # Check the input argument for the n_steps, must be less than what was trained
+    all_stages = []
+    delta_t = 1 / n_steps
+
+    # Do the very first step of the iteration using pure noise
+    x_t = initial_noise
+    t = T.ones(num_samples, device=model.device)
+
+    # Cycle through the remainder of all the steps
+    for step in tqdm(range(n_steps), "Euler-Maruyama-sampling", leave=False):
+
+        # Apply the denoise step to get X_0 and expected noise
+        pred_noises = model(x_t, t, mask, ctxt)
+
+        # Use to get s_theta
+        _, noise_rates = diff_sched(t.view(expanded_shape))
+        s = - pred_noises / noise_rates
+
+        # Take one step using the eu method
+        betas = diff_sched.get_betas(t.view(expanded_shape))
+        x_t += 0.5 * betas * (x_t + 2 * s) * delta_t
+        x_t += (betas * delta_t).sqrt() * T.randn_like(x_t)
+        t -= delta_t
+
+        # Keep track of the diffusion evolution
+        if keep_all:
+            all_stages.append(x_t)
+
+        # Clamp the predicted X_0 for stability
+        if clip_predictions is not None:
+            x_t.clamp_(*clip_predictions)
+
+    return x_t, all_stages
+
+
+@T.no_grad()
+def euler_sampler(
+    model,
+    diff_sched: DiffusionSchedule,
+    initial_noise: T.Tensor,
+    n_steps: int = 50,
+    keep_all: bool = False,
+    mask: Optional[T.Tensor] = None,
+    ctxt: Optional[T.BoolTensor] = None,
+    clip_predictions: Optional[tuple] = None,
+) -> Tuple[T.Tensor, list]:
+    """Apply the full reverse process to noise to generate a batch of samples
+
+    Args:
+        model: A denoising diffusion model
+            Requires: inpt_dim, device, forward() method that outputs pred noise
+        diif_sched: A diffusion schedule object to calculate signal and noise rates
+        initial_noise: The initial noise to pass through the process
+            If none it will be generated here
+        n_steps: The number of iterations to generate the samples
+        keep_all: Return all stages of diffusion process
+            Can be memory heavy for large batches
+        num_samples: How many samples to generate
+            Ignored if initial_noise is provided
+        mask: The mask for the output point clouds
+        ctxt: The context tensor for the output point clouds
+        clip_predictions: Can stabalise generation by clipping the outputs
+    """
+
+    # Get the initial noise for generation and the number of sammples
+    num_samples = initial_noise.shape[0]
+
+    # The shape needed for expanding the time encodings
+    expanded_shape = [-1] + [1] * (initial_noise.dim() - 1)
+
+    # Check the input argument for the n_steps, must be less than what was trained
+    all_stages = []
+    delta_t = 1 / n_steps
+
+    # Do the very first step of the iteration using pure noise
+    x_t = initial_noise
+    t = T.ones(num_samples, device=model.device)
+
+    # Cycle through the remainder of all the steps
+    for step in tqdm(range(n_steps), "Euler-sampling", leave=False):
+
+        # Apply the denoise step to get X_0 and expected noise
+        pred_noises = model(x_t, t, mask, ctxt)
+
+        # Use to get s_theta
+        _, noise_rates = diff_sched(t.view(expanded_shape))
+        s = - pred_noises / noise_rates
+
+        # Take one step using the eu method
+        betas = diff_sched.get_betas(t.view(expanded_shape))
+        x_t += 0.5 * betas * (x_t + s) * delta_t
+        t -= delta_t
+
+        # Keep track of the diffusion evolution
+        if keep_all:
+            all_stages.append(x_t)
+
+        # Clamp the predicted X_0 for stability
+        if clip_predictions is not None:
+            x_t.clamp_(*clip_predictions)
+
+    return x_t, all_stages
+
+
+def ddim_predict(
+    noisy_data: T.Tensor,
+    pred_noises: T.Tensor,
+    signal_rates: T.Tensor,
+    noise_rates: T.Tensor,
+) -> T.Tensor:
+    """Use a single ddim step to predict the final image from anywhere in the diffusion
+    process
+    """
+    return (noisy_data - noise_rates * pred_noises) / signal_rates
