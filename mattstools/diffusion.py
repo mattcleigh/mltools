@@ -253,7 +253,7 @@ def euler_maruyama_sampler(
 
         # Use to get s_theta
         _, noise_rates = diff_sched(t.view(expanded_shape))
-        s = - pred_noises / noise_rates
+        s = -pred_noises / noise_rates
 
         # Take one step using the eu method
         betas = diff_sched.get_betas(t.view(expanded_shape))
@@ -339,7 +339,7 @@ def runge_kutta_sampler(
     delta_t = 1 / n_steps
 
     # Wrap the ode gradient in a lambda function depending only on xt and t
-    ode_grad = lambda t, x_t : get_ode_gradient(model, diff_sched, x_t, t, mask, ctxt)
+    ode_grad = lambda t, x_t: get_ode_gradient(model, diff_sched, x_t, t, mask, ctxt)
 
     # The initial variables needed for the loop
     x_t = initial_noise
@@ -347,10 +347,10 @@ def runge_kutta_sampler(
     for step in tqdm(range(n_steps), "Runge-Kutta-sampling", leave=False):
 
         k1 = delta_t * (ode_grad(t, x_t))
-        k2 = delta_t * (ode_grad((t-delta_t/2), (x_t+k1/2)))
-        k3 = delta_t * (ode_grad((t-delta_t/2), (x_t+k2/2)))
-        k4 = delta_t * (ode_grad((t-delta_t), (x_t+k3)))
-        k = (k1+2*k2+2*k3+k4)/6
+        k2 = delta_t * (ode_grad((t - delta_t / 2), (x_t + k1 / 2)))
+        k3 = delta_t * (ode_grad((t - delta_t / 2), (x_t + k2 / 2)))
+        k4 = delta_t * (ode_grad((t - delta_t), (x_t + k3)))
+        k = (k1 + 2 * k2 + 2 * k3 + k4) / 6
         x_t += k
         t -= delta_t
 
@@ -363,6 +363,7 @@ def runge_kutta_sampler(
             x_t.clamp_(*clip_predictions)
 
     return x_t, all_stages
+
 
 def get_ode_gradient(
     model,
