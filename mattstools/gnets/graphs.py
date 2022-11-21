@@ -7,7 +7,7 @@ from typing import Iterable, Union
 import torch as T
 from torch.utils.data._utils.collate import default_collate
 
-from mattstools.torch_utils import sel_device
+from ..torch_utils import sel_device
 
 
 class Graph:

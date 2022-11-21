@@ -17,9 +17,9 @@ from nflows.transforms import (
     ActNorm,
 )
 
-from mattstools.modules import DenseNetwork
-from mattstools.utils import key_change
-from mattstools.torch_utils import get_act
+from ..modules import DenseNetwork
+from ..utils import key_change
+from ..torch_utils import get_act
 
 
 def change_kwargs_for_made(old_kwargs):

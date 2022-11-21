@@ -11,13 +11,13 @@ import math
 import torch as T
 import torch.nn as nn
 
-from mattstools.utils import merge_dict
-from mattstools.modules import DenseNetwork
-from mattstools.torch_utils import smart_cat, masked_pool, pass_with_mask, reparam_trick
-from mattstools.distances import knn, masked_dist_matrix, masked_diff_matrix
+from ..utils import merge_dict
+from ..modules import DenseNetwork
+from ..torch_utils import smart_cat, masked_pool, pass_with_mask, reparam_trick
+from ..distances import knn, masked_dist_matrix, masked_diff_matrix
 
-from mattstools.gnets.graphs import GraphBatch
-from mattstools.gnets.gn_blocks import GNBlock
+from ..gnets.graphs import GraphBatch
+from ..gnets.gn_blocks import GNBlock
 
 
 class EmbeddingLayer(nn.Module):

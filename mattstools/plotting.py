@@ -17,7 +17,8 @@ from matplotlib.colors import LogNorm
 from scipy.interpolate import make_interp_spline
 from scipy.stats import pearsonr
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-from mattstools.utils import mid_points, undo_mid
+
+from .utils import mid_points, undo_mid
 
 ## Some defaults for my plots to make them look nicer
 plt.rcParams["xaxis.labellocation"] = "right"
@@ -57,7 +58,7 @@ def plot_corr_heatmaps(
     do_pearson=False,
     do_pdf: bool = False,
     return_fig: bool = False,
-    return_img: bool = False
+    return_img: bool = False,
 ) -> None:
     """
     Plot and save a 2D heatmap, usually for correlation plots

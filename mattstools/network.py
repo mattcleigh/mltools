@@ -11,8 +11,8 @@ import torch as T
 import torch.nn as nn
 import wandb
 
-from mattstools.torch_utils import sel_device, count_parameters
-from mattstools.utils import save_yaml_files
+from .torch_utils import sel_device, count_parameters
+from .utils import save_yaml_files
 
 
 class MyNetBase(nn.Module):
