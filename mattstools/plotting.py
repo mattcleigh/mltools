@@ -40,12 +40,12 @@ def gaussian(x_data, mu=0, sig=1):
 
 
 def plot_corr_heatmaps(
-    path: Path,
     x_vals: np.ndarray,
     y_vals: np.ndarray,
     bins: list,
     xlabel: str,
     ylabel: str,
+    path: Optional[Path] = None,
     weights: np.ndarray = None,
     do_log: bool = True,
     equal_aspect: bool = True,
@@ -56,6 +56,8 @@ def plot_corr_heatmaps(
     figsize=(6, 5),
     do_pearson=False,
     do_pdf: bool = False,
+    return_fig: bool = False,
+    return_img: bool = False
 ) -> None:
     """
     Plot and save a 2D heatmap, usually for correlation plots
@@ -126,10 +128,19 @@ def plot_corr_heatmaps(
 
     ## Save the image
     fig.tight_layout()
-    fig.savefig(path.with_suffix(".png"))
-    if do_pdf:
-        fig.savefig(path.with_suffix(".pdf"))
-    plt.close(fig)
+    if path is not None:
+        path = Path(path)
+        fig.savefig(path.with_suffix(".png"))
+        if do_pdf:
+            fig.savefig(path.with_suffix(".pdf"))
+    if return_fig:
+        return fig
+    if return_img:
+        img = PIL.Image.frombytes(
+            "RGB", fig.canvas.get_width_height(), fig.canvas.tostring_rgb()
+        )
+        plt.close(fig)
+        return img
 
 
 def plot_multi_loss(

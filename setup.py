@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setuptools.setup(
     name="mattstools",
-    version="0.0.9",
+    version="0.0.10",
     author="Matthew Leigh",
     author_email="mattcleigh@gmail.com",
     description="Some common utilities used in my DL projects",
@@ -16,12 +16,11 @@ setuptools.setup(
     license="MIT",
     packages=["mattstools", "mattstools.flows", "mattstools.gnets"],
     install_requires=[
-        "dill",
         "dotmap",
         "EnergyFlow",
         "geomloss",
         "matplotlib",
-        "git+https://github.com/bayesiains/nflows.git#egg=nflows",
+        "nflows",
         "numpy",
         "pandas",
         "PyYAML",
