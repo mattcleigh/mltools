@@ -372,8 +372,20 @@ def get_ode_gradient(
     t: T.Tensor,
     mask: Optional[T.BoolTensor] = None,
     ctxt: Optional[T.Tensor] = None,
-) -> None:
+) -> T.Tensor:
     expanded_shape = [-1] + [1] * (x_t.dim() - 1)
     _, noise_rates = diff_sched(t.view(expanded_shape))
     betas = diff_sched.get_betas(t.view(expanded_shape))
     return 0.5 * betas * (x_t - model(x_t, t, mask, ctxt) / noise_rates)
+
+
+def run_sampler(sampler: str, *args, **kwargs) -> Tuple[T.Tensor, list]:
+    if sampler == "em":
+        return euler_maruyama_sampler(*args, **kwargs)
+    if sampler == "euler":
+        return euler_sampler(*args, **kwargs)
+    if sampler == "rk":
+        return runge_kutta_sampler(*args, **kwargs)
+    if sampler == "ddim":
+        return ddim_sampler(*args, **kwargs)
+    raise RuntimeError("Unknown sampler: ", sampler)
