@@ -31,9 +31,9 @@ def reload_original_config(cfg: OmegaConf) -> OmegaConf:
     orig_cfg = OmegaConf.load(Path("full_config.yaml"))
 
     # Get the latest updated checkpoint with the suffix last
-    orig_cfg.ckpt_path = str(sorted(
-        Path.cwd().glob("checkpoints/last*.ckpt"), key=os.path.getmtime
-    )[-1])
+    orig_cfg.ckpt_path = str(
+        sorted(Path.cwd().glob("checkpoints/last*.ckpt"), key=os.path.getmtime)[-1]
+    )
 
     # Set the wandb logger to attempt to resume the job
     if hasattr(orig_cfg, "loggers"):
@@ -95,6 +95,7 @@ def print_config(
 
     # print config tree
     rich.print(tree)
+
 
 def save_config(cfg: OmegaConf) -> None:
     """Saves the config to the output directory.
