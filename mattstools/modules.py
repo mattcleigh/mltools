@@ -469,11 +469,11 @@ class IterativeNormLayer(nn.Module):
 
     def __init__(
         self,
-        inpt_dim: T.Tensor,
+        inpt_dim: Union[T.Tensor, tuple, int],
         means: Optional[T.Tensor] = None,
         vars: Optional[T.Tensor] = None,
-        n: T.Tensor = T.tensor(0),
-        max_n: int = 1_000_000,
+        n: int = 0,
+        max_n: int = 1_00_000,
         extra_dims: Union[tuple, int] = (),
     ) -> None:
         """Init method for Normalisatiion module
@@ -495,6 +495,12 @@ class IterativeNormLayer(nn.Module):
                 """Only one of 'means' and 'vars' is defined. Either both or
                 neither must be defined"""
             )
+
+        # Allow interger inpt_dim and n arguments
+        if isinstance(inpt_dim, int):
+            inpt_dim = (inpt_dim,)
+        if isinstance(n, int):
+            n = T.tensor(n)
 
         # The dimensions over which to apply the normalisation, make positive!
         if isinstance(extra_dims, int):  # Ensure it is a list
@@ -561,7 +567,7 @@ class IterativeNormLayer(nn.Module):
             if not self.frozen and self.training:
                 self.update(sel_inpt)
 
-            # Apply the mapping [None] performs an unsqueeze, broadcasting across batch
+            # Apply the mapping
             normed_inpt = (sel_inpt - self.means) / (self.vars.sqrt() + 1e-8)
 
             # Undo the masking
