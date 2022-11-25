@@ -31,8 +31,9 @@ class DiffusionSchedule:
     def __call__(self, time: T.Tensor) -> T.Tensor:
         return cosine_diffusion_shedule(time, self.max_sr, self.min_sr)
 
-    def get_betas(self, time: T.Tensor) -> None:
+    def get_betas(self, time: T.Tensor) -> T.Tensor:
         return cosine_beta_shedule(time, self.max_sr, self.min_sr)
+
 
 
 def cosine_encoding(
@@ -265,7 +266,7 @@ def euler_maruyama_sampler(
         if keep_all:
             all_stages.append(x_t)
 
-        # Clamp the predicted X_0 for stability
+        # Clamp the denoised data for stability
         if clip_predictions is not None:
             x_t.clamp_(*clip_predictions)
 
@@ -308,7 +309,7 @@ def euler_sampler(
         if keep_all:
             all_stages.append(x_t)
 
-        # Clamp the predicted X_0 for stability
+        # Clamp the denoised data for stability
         if clip_predictions is not None:
             x_t.clamp_(*clip_predictions)
 
@@ -358,7 +359,7 @@ def runge_kutta_sampler(
         if keep_all:
             all_stages.append(x_t)
 
-        # Clamp the predicted X_0 for stability
+        # Clamp the denoised data for stability
         if clip_predictions is not None:
             x_t.clamp_(*clip_predictions)
 
