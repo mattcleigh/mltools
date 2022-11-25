@@ -349,7 +349,7 @@ def runge_kutta_sampler(
         k1 = delta_t * (ode_grad(t, x_t))
         k2 = delta_t * (ode_grad((t - delta_t / 2), (x_t + k1 / 2)))
         k3 = delta_t * (ode_grad((t - delta_t / 2), (x_t + k2 / 2)))
-        k4 = delta_t * (ode_grad((t - delta_t), (x_t + k3)))
+        k4 = delta_t * (ode_grad((T.clamp_min(t - delta_t, 0)), (x_t + k3)))
         k = (k1 + 2 * k2 + 2 * k3 + k4) / 6
         x_t += k
         t -= delta_t
@@ -388,4 +388,4 @@ def run_sampler(sampler: str, *args, **kwargs) -> Tuple[T.Tensor, list]:
         return runge_kutta_sampler(*args, **kwargs)
     if sampler == "ddim":
         return ddim_sampler(*args, **kwargs)
-    raise RuntimeError("Unknown sampler: ", sampler)
+    raise RuntimeError(f"Unknown sampler: {sampler}")
