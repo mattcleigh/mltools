@@ -35,7 +35,6 @@ class DiffusionSchedule:
         return cosine_beta_shedule(time, self.max_sr, self.min_sr)
 
 
-
 def cosine_encoding(
     x: T.Tensor,
     outp_dim: int = 32,
