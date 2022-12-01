@@ -4,7 +4,7 @@ General mix of utility functions
 
 import argparse
 from pathlib import Path
-from typing import Union, Tuple, Any
+from typing import Optional, Union, Tuple, Any
 from functools import reduce
 from dotmap import DotMap
 import operator
@@ -330,6 +330,13 @@ def str2bool(mystring: str) -> bool:
         raise argparse.ArgumentTypeError("Boolean value expected.")
 
 
+def log_clip(
+    data: np.ndarray, clip_min: Optional[float] = 1e-6, clip_max: Optional[float] = None
+) -> np.ndarray:
+    """Applies a clip and then the log function, typically to prevent neg infs"""
+    return np.log(np.clip(data, clip_min, clip_max))
+
+
 def min_loc(data: np.ndarray) -> tuple:
     """Returns the idx for the minimum of a multidimensional array"""
     return np.unravel_index(data.argmin(), data.shape)
@@ -345,9 +352,24 @@ def undo_log_squash(data: np.ndarray) -> np.ndarray:
     return np.sign(data) * (np.exp(np.abs(data)) - 1)
 
 
-def signed_angle_diff(angle1, angle2):
+def signed_angle_diff(angle1: Any, angle2: Any) ->Any:
     """Calculate diff between two angles reduced to the interval of [-pi, pi]"""
     return (angle1 - angle2 + np.pi) % (2 * np.pi) - np.pi
+
+
+def empty_0dim_like(arr: np.ndarray) -> np.ndarray:
+    """Returns an empty array with similar size as the input but with its final
+    dimension size reduced to 0
+    """
+
+    ## Get all but the final dimension
+    all_but_last = arr.shape[:-1]
+
+    ## Ensure that this is a tuple/list so it can agree with return syntax
+    if isinstance(all_but_last, int):
+        all_but_last = [all_but_last]
+
+    return np.empty((*all_but_last, 0), dtype=arr.dtype)
 
 
 def load_yaml_files(files: Union[list, tuple, str]) -> tuple:

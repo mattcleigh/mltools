@@ -3,20 +3,19 @@ A collection of plotting scripts for standard uses
 """
 
 from distutils.log import Log
-from typing import Optional, Union
 from pathlib import Path
-import PIL.Image
+from typing import Optional, Union
 
-import numpy as np
-import pandas as pd
 import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
+import numpy as np
+import pandas as pd
+import PIL.Image
 from matplotlib.colors import LogNorm
-
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 from scipy.interpolate import make_interp_spline
 from scipy.stats import pearsonr
-from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 from .utils import mid_points, undo_mid
 
@@ -108,7 +107,7 @@ def plot_corr_heatmaps(
     if incl_cbar:
         divider = make_axes_locatable(ax)
         cax = divider.append_axes("right", size="5%", pad=0.05)
-        try: # Hacky solution to fix this sometimes failing if the values are shit
+        try:  # Hacky solution to fix this sometimes failing if the values are shit
             clb = fig.colorbar(
                 hist[3], cax=cax, orientation="vertical", label="frequency"
             )
