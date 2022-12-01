@@ -108,7 +108,12 @@ def plot_corr_heatmaps(
     if incl_cbar:
         divider = make_axes_locatable(ax)
         cax = divider.append_axes("right", size="5%", pad=0.05)
-        clb = fig.colorbar(hist[3], cax=cax, orientation="vertical", label="frequency")
+        try: # Hacky solution to fix this sometimes failing if the values are shit
+            clb = fig.colorbar(
+                hist[3], cax=cax, orientation="vertical", label="frequency"
+            )
+        except:
+            pass
 
     ## Axis labels and titles
     ax.set_xlabel(xlabel)

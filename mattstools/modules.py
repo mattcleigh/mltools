@@ -473,7 +473,7 @@ class IterativeNormLayer(nn.Module):
         means: Optional[T.Tensor] = None,
         vars: Optional[T.Tensor] = None,
         n: int = 0,
-        max_n: int = 1_00_000,
+        max_n: int = 5_00_000,
         extra_dims: Union[tuple, int] = (),
     ) -> None:
         """Init method for Normalisatiion module
