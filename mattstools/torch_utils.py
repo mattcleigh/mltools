@@ -3,31 +3,28 @@ Mix of utility functions specifically for pytorch
 """
 import os
 from pathlib import Path
-
-import yaml
-from typing import Iterable, List, Optional, Union, Tuple
-from dotmap import DotMap
+from typing import Iterable, List, Optional, Tuple, Union
 
 import numpy as np
-
 import torch as T
 import torch.nn as nn
 import torch.optim as optim
 import torch.optim.lr_scheduler as schd
-from torch.utils.data import Dataset, Subset, random_split
-
+import yaml
+from dotmap import DotMap
 from geomloss import SamplesLoss
+from torch.utils.data import Dataset, Subset, random_split
 
 from .lookahead import Lookahead
 from .loss import (
+    ChampferLoss,
     EnergyMovers,
     GeomWrapper,
+    ModifiedSinkhorn,
     MyBCEWithLogit,
     VAELoss,
-    ChampferLoss,
-    ModifiedSinkhorn,
 )
-from .schedulers import CyclicWithWarmup, WarmupToConstant, LinearWarmupRootDecay
+from .schedulers import CyclicWithWarmup, LinearWarmupRootDecay, WarmupToConstant
 
 ## An onnx save argument which is for the pass with mask function (makes it slower)
 ONNX_SAFE = False

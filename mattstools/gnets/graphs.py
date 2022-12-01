@@ -2,6 +2,7 @@
 Defines the graph object type and other operations specific to handing them
 """
 from __future__ import annotations
+
 from typing import Iterable, Union
 
 import torch as T
@@ -37,6 +38,10 @@ class Graph:
         kwargs:
             dev: A string indicating the device on which to store the tensors
         """
+
+        # Check if the edges must be compressed manually
+        if edges.dim() > nodes.dim():
+            edges = edges[adjmat]
 
         ## Save each of the component tensors onto the correct device
         self.edges = edges

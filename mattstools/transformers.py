@@ -55,10 +55,9 @@ def attention(
     value: T.Tensor,
     dim_key: int,
     attn_mask: T.BoolTensor = None,
-    edge_weights: T.Tensor = None,
-    mul_weights: bool = False,
+    attn_bias: T.Tensor = None,
     dropout_layer: nn.Module = None,
-):
+) -> T.Tensor:
     """Apply the attention using the scaled dot product between the key query and
     key tensors, then matrix multiplied by the value.
 
@@ -71,9 +70,7 @@ def attention(
         value: Batched value sequence of tensors (b, h, s, f)
         dim_key: The dimension of the key features, used to scale the dot product
         attn_mask: The attention mask, used to blind certain combinations of k,q pairs
-        edge_weights: Extra weights to combine with attention weights
-        mul_weights: If the edge weights are multiplied into the scores
-            (False means they are added pre softmax)
+        attn_bias: Extra weights to combine with attention weights
         dropout_layer: Optional dropout layer for the scores
     """
 
@@ -81,11 +78,8 @@ def attention(
     scores = T.matmul(query, key.transpose(-2, -1)) / math.sqrt(dim_key)
 
     ## Multiply the scores by adding in the manual weights
-    if edge_weights is not None:
-        if mul_weights:
-            scores = scores * edge_weights.transpose(-3, -1)
-        else:
-            scores = scores + edge_weights.transpose(-3, -1)
+    if attn_bias is not None:
+        scores = scores + attn_bias.transpose(-3, -1)
 
     ## Mask away the scores between invalid nodes
     if attn_mask is not None:
@@ -151,7 +145,6 @@ class MultiHeadedAttentionBlock(nn.Module):
         model_dim: int,
         num_heads: int = 1,
         drp: float = 0,
-        mul_weights: bool = False,
     ):
         """Init method for AttentionBlock
 
@@ -161,8 +154,6 @@ class MultiHeadedAttentionBlock(nn.Module):
             num_heads: The number of different attention heads to process in parallel
                 - Must allow interger division into model_dim
             drp: The dropout probability used in the MHA operation
-            mul_weights: How extra interation weights should be used if passed
-                - See attention above
         """
         super().__init__()
 
@@ -170,7 +161,6 @@ class MultiHeadedAttentionBlock(nn.Module):
         self.model_dim = model_dim
         self.num_heads = num_heads
         self.head_dim = model_dim // num_heads
-        self.mul_weights = mul_weights
 
         ## Check that the dimension of each head makes internal sense
         if self.head_dim * num_heads != model_dim:
@@ -191,7 +181,7 @@ class MultiHeadedAttentionBlock(nn.Module):
         q_mask: T.BoolTensor = None,
         kv_mask: T.BoolTensor = None,
         attn_mask: T.BoolTensor = None,
-        edge_weights: T.Tensor = None,
+        attn_bias: T.Tensor = None,
     ) -> T.Tensor:
         """
         args:
@@ -233,8 +223,7 @@ class MultiHeadedAttentionBlock(nn.Module):
             self.model_dim,
             attn_mask=attn_mask,
             dropout_layer=self.dropout_layer,
-            edge_weights=edge_weights,
-            mul_weights=self.mul_weights,
+            attn_bias=attn_bias,
         )  ## Returned shape is b,h,s,f
 
         ## Concatenate the all of the heads together to get shape: b,seq,f
@@ -285,12 +274,12 @@ class TransformerEncoderLayer(nn.Module):
         self.norm3 = nn.LayerNorm(model_dim)
 
     def forward(
-        self, x: T.Tensor, mask: T.BoolTensor, edge_weights: T.BoolTensor = None
+        self, x: T.Tensor, mask: T.BoolTensor, attn_bias: T.BoolTensor = None
     ) -> T.Tensor:
         "Pass through the layer using residual connections and layer normalisation"
         x = x + self.norm2(
             self.self_attn(
-                self.norm1(x), q_mask=mask, kv_mask=mask, edge_weights=edge_weights
+                self.norm1(x), q_mask=mask, kv_mask=mask, attn_bias=attn_bias
             )
         )
         x = x + pass_with_mask(self.norm3(x), self.feed_forward, mask)
@@ -556,14 +545,14 @@ class TransformerVectorEncoder(nn.Module):
         self,
         seq: T.Tensor,
         mask: T.BoolTensor = None,
-        edge_weights: T.Tensor = None,
+        attn_bias: T.Tensor = None,
         return_seq: bool = False,
     ) -> T.Tensor:
         """Pass the input through all layers sequentially"""
 
         ## Pass through the self attention encoder
         for layer in self.sa_layers:
-            seq = layer(seq, mask, edge_weights=edge_weights)
+            seq = layer(seq, mask, attn_bias=attn_bias)
 
         ## Get the learned class token and expand to the batch size
         ## Use shape[0] not len as it is ONNX safe!
@@ -725,6 +714,7 @@ class FullTransformerVectorEncoder(nn.Module):
         mask: T.BoolTensor = None,
         ctxt: T.Tensor = None,
         edges: T.Tensor = None,
+        adjmat: T.BoolTensor = None,
         return_seq: bool = False,
     ) -> T.Tensor:
         """Pass the input through all layers sequentially"""
@@ -734,18 +724,18 @@ class FullTransformerVectorEncoder(nn.Module):
 
         ## Embed the edges (optional)
         if edges is not None:
-            edges = self.edge_embd(edges, ctxt)
+            edges = pass_with_mask(edges, self.edge_embd, adjmat, ctxt)
 
         ## If we want the sequence and the output then return both
         if return_seq:
-            outp, nodes = self.tve(nodes, mask, edges, return_seq)
-            outp = self.outp_embd(outp, ctxt)
-            return outp, nodes
+            output, nodes = self.tve(nodes, mask, edges, return_seq)
+            output = self.outp_embd(output, ctxt)
+            return output, nodes
 
-        ## If we only want the output, then overwrite the nodes to save space
-        nodes = self.tve(nodes, mask, edges, return_seq)
-        nodes = self.outp_embd(nodes, ctxt)
-        return nodes
+        ## If we only want the output vector
+        output = self.tve(nodes, mask, edges, return_seq)
+        output = self.outp_embd(nodes, ctxt)
+        return output
 
 
 class FullTransformerVectorDecoder(nn.Module):
@@ -791,8 +781,8 @@ class FullTransformerVectorDecoder(nn.Module):
         self.ctxt_dim = ctxt_dim
 
         ## Initialise the TVE, the main part of this network
-        self.tvg = TransformerVectorDecoder(**tvd_kwargs)
-        self.model_dim = self.tvg.model_dim
+        self.tvd = TransformerVectorDecoder(**tvd_kwargs)
+        self.model_dim = self.tvd.model_dim
 
         ## Initialise all embedding networks
         self.vec_embd = DenseNetwork(
@@ -813,7 +803,7 @@ class FullTransformerVectorDecoder(nn.Module):
     ) -> T.Tensor:
         """Pass the input through all layers sequentially"""
         vec = self.vec_embd(vec, ctxt=ctxt)
-        nodes = self.tvg(vec, mask)
+        nodes = self.tvd(vec, mask)
         nodes = pass_with_mask(nodes, self.outp_embd, mask, context=ctxt)
         return nodes
 

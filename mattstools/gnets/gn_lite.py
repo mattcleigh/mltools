@@ -4,14 +4,12 @@ Defines the lightweight and streamlined graph object and operations
 import math
 
 import torch as T
-
-from .graphs import GraphBatch
-from ..torch_utils import ctxt_from_mask, pass_with_mask, aggr_via_sparse, decompress
-from ..modules import DenseNetwork
-
-import torch as T
 import torch.nn as nn
 import torch.nn.functional as F
+
+from ..modules import DenseNetwork
+from ..torch_utils import aggr_via_sparse, ctxt_from_mask, decompress, pass_with_mask
+from .graphs import GraphBatch
 
 
 class EdgeBlockLite(nn.Module):

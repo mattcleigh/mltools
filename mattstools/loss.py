@@ -2,13 +2,11 @@
 Custom loss functions and methods to calculate them
 """
 
+import numpy as np
 import torch as T
 import torch.nn as nn
 import torch.nn.functional as F
-
 from energyflow.emd import emd
-import numpy as np
-
 from geomloss import SamplesLoss
 
 from .distances import masked_dist_matrix

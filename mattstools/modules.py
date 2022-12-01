@@ -2,17 +2,17 @@
 Collection of pytorch modules that make up the common networks used in my projects
 """
 
+from copy import copy
 from multiprocessing.sharedctypes import Value
 from typing import Optional, Union
 
 import torch as T
 import torch.nn as nn
 import torch.nn.functional as F
-
-from copy import copy
 from torch.autograd import Function
+
 from .bayesian import BayesianLinear
-from .torch_utils import get_act, get_nrm, pass_with_mask, masked_pool, smart_cat
+from .torch_utils import get_act, get_nrm, masked_pool, pass_with_mask, smart_cat
 
 
 class MLPBlock(nn.Module):

@@ -3,25 +3,23 @@ Defines the lightweight and streamlined graph object and operations
 """
 import math
 from typing import Tuple
-from dotmap import DotMap
-
-import torch as T
-
-from .graphs import GraphBatch
-from ..modules import DenseNetwork
-from ..torch_utils import (
-    ctxt_from_mask,
-    pass_with_mask,
-    aggr_via_sparse,
-    decompress,
-    smart_cat,
-    masked_pool,
-    empty_0dim_like,
-)
 
 import torch as T
 import torch.nn as nn
 import torch.nn.functional as F
+from dotmap import DotMap
+
+from ..modules import DenseNetwork
+from ..torch_utils import (
+    aggr_via_sparse,
+    ctxt_from_mask,
+    decompress,
+    empty_0dim_like,
+    masked_pool,
+    pass_with_mask,
+    smart_cat,
+)
+from .graphs import GraphBatch
 
 
 class EdgeBlock(nn.Module):
