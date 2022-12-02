@@ -725,6 +725,7 @@ class FullTransformerVectorEncoder(nn.Module):
         mask: T.BoolTensor = None,
         ctxt: T.Tensor = None,
         edges: T.Tensor = None,
+        adjmat: T.Tensor = None,
         return_seq: bool = False,
     ) -> T.Tensor:
         """Pass the input through all layers sequentially"""
@@ -734,7 +735,7 @@ class FullTransformerVectorEncoder(nn.Module):
 
         ## Embed the edges (optional)
         if edges is not None:
-            edges = self.edge_embd(edges, ctxt)
+            edges = pass_with_mask(edges, self.edge_embd, adjmat, ctxt)
 
         ## If we want the sequence and the output then return both
         if return_seq:
