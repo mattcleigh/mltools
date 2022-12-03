@@ -194,7 +194,7 @@ class NodeBlockLite(nn.Module):
                 nodes,
                 self.attn_net,
                 graph.mask,
-                context=[graph.globs, ctxt],
+                high_level=[graph.globs, ctxt],
                 padval=-T.inf,
             ),
             dim=-2,
@@ -203,7 +203,7 @@ class NodeBlockLite(nn.Module):
 
         ## Pass them through the feature network
         nodes = pass_with_mask(
-            nodes, self.feat_net, graph.mask, context=[graph.globs, ctxt]
+            nodes, self.feat_net, graph.mask, high_level=[graph.globs, ctxt]
         )
         if self.same_size:
             nodes = nodes + graph.nodes

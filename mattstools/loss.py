@@ -87,11 +87,11 @@ class GeomWrapper(nn.Module):
     evaluation
     """
 
-    def __init__(self, loss_fn):
+    def __init__(self, loss_fn) -> None:
         super().__init__()
         self.loss_fn = loss_fn
 
-    def forward(self, *args, **kwargs):
+    def forward(self, *args, **kwargs) -> T.Tensor:
         """Return the loss"""
         current_grad_state = T.is_grad_enabled()
         loss = self.loss_fn(*args, **kwargs)

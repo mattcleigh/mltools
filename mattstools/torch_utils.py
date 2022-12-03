@@ -338,7 +338,7 @@ def masked_pool(
 ) -> T.Tensor:
     """Apply a pooling operation to masked elements of a tensor
     args:
-        pool_type: Which pooling operation to use, currently supports sum and mean
+        pool_type: Which pooling operation to use, currently supports max, sum and mean
         tensor: The input tensor to pool over
         mask: The mask to show which values should be included in the pool
 
@@ -369,7 +369,7 @@ def masked_pool(
     raise ValueError(f"Unknown pooling type: {pool_type}")
 
 
-def smart_cat(inputs: Iterable, dim=-1):
+def smart_cat(inputs: Iterable, dim=-1) -> T.Tensor:
     """A concatenation option that ensures no memory is copied if tensors are empty or
     saved as None"""
 
@@ -386,12 +386,14 @@ def smart_cat(inputs: Iterable, dim=-1):
 
 def ctxt_from_mask(context: Union[list, T.Tensor], mask: T.BoolTensor) -> T.Tensor:
     """Concatenates and returns conditional information expanded and then sampled
-    using a mask. The returned tensor is compressed but repeated the appropriate number
+    using a mask.
+
+    The returned tensor is compressed but repeated the appropriate number
     of times for each sample. Method uses pytorch's expand function so is light on
     memory usage.
 
-    Primarily used for repeating conditional information for deep sets or
-    graph networks.
+    Primarily used for repeating high level information for deep sets, graph nets, or
+    transformers.
 
     For example, given a deep set with feature tensor [batch, nodes, features],
     a mask tensor [batch, nodes], and context information for each sample in the batch
@@ -400,9 +402,13 @@ def ctxt_from_mask(context: Union[list, T.Tensor], mask: T.BoolTensor) -> T.Tens
 
     Context and mask must have the same batch dimension
 
-    args:
-        context: A tensor or a list of tensors containing the sample context info
-        mask: A mask which determines the size and sampling of the context
+    Parameters
+    ----------
+    context : T.Tensor
+        A tensor or a list of tensors containing the sample context info
+    mask : T.BoolTensor
+        A mask which determines the size and sampling of the context
+
     """
 
     ## Get the expanded veiw sizes (Use shape[0] not len as it is ONNX safe!)
@@ -423,75 +429,107 @@ def ctxt_from_mask(context: Union[list, T.Tensor], mask: T.BoolTensor) -> T.Tens
     return smart_cat(all_context)
 
 
-def np_group_by(a: np.ndarray) -> np.ndarray:
-    """A groupby method which runs over a numpy array, binning by the first column
-    and making many seperate arrays as results
-    """
-    a = a[a[:, 0].argsort()]
-    return np.split(a[:, 1:], np.unique(a[:, 0], return_index=True)[1][1:])
-
-
 def pass_with_mask(
     inputs: T.Tensor,
     module: nn.Module,
     mask: T.BoolTensor = None,
-    context: Optional[Union[T.Tensor, List[T.Tensor]]] = None,
+    high_level: Optional[Union[T.Tensor, List[T.Tensor]]] = None,
     padval: float = 0.0,
+    output_dim: Optional[int] = None,
 ) -> T.Tensor:
     """Pass a collection of padded tensors through a module without wasting computation
-    on padded elements!
-    - Only confirmed tested with mattstools DenseNet
+    on the padded elements.
 
-    args:
-        data: The padded input tensor
-        module: The pytorch module to apply to the inputs
-        mask: A boolean tensor showing the real vs padded elements of the inputs
-        context: A list of context tensor per sample to be repeated for the mask
-        padval: A value to pad the outputs with
+    Ensures that: output[mask] = module(input[mask], high_level)
+    Reliably for models.dense.Dense and nn.Linear
+
+    Uses different methods depending if the global ONNE_SAFE variable is set to true
+    or false, note that this does not change the output! Only the method. The onnx safe
+    method is slightly slower, so it is advised to only use it during training.
+
+    Parameters
+    ----------
+    inputs : T.Tensor
+        The padded tensor to pass through the module
+    module : nn.Module
+        The pytorch model to act over the final dimension of the tensors
+    mask : Optional[T.BoolTensor], optional
+        Mask showing the real vs padded elements of the inputs, by default None
+    high_level_context : Optional[Union[T.Tensor, List[T.Tensor]]], optional
+        Added high level context information to be passed through the model
+        By high level we mean that this has less dimension than the inputs.
+        Example: graph global properties.
+    padval : float, optional
+        The value for all padded outputs, by default 0.0
+    output_dim : int, optional
+        The shape of the output tensor, if None will attempt to infer from module
+
+    Returns
+    -------
+    T.Tensor
+        Padded tensor as if you had simply called module(inputs)
+
+    Raises
+    ------
+    ValueError
+        Needs to know what the desired output shape of the model should be
     """
 
-    ## For generalisability, if the mask is none then we just return the normal pass
+    # For generalisability, if the mask is none then we just return the normal pass
     if mask is None:
-        if context is None:
+
+        # Without context this is a simple pass
+        if high_level is None:
             return module(inputs)
 
-        ## Mask is typically one dimension less than the tensor
-        return module(inputs, context.unsqueeze(-2).expand(*inputs.shape[:-1], -1))
+        # Reshape the high level so it can be concatenated with the inputs
+        dim_diff = inputs.dim() - high_level.dim()
+        for d in range(dim_diff):
+            high_level = high_level.unsqueeze(-2)
+        high_level = high_level.expand(*inputs.shape[:-1], -1)
 
-    ## Get the output dimension from the passed module (mine=outp_dim, torch=features)
-    if hasattr(module, "outp_dim"):
-        outp_dim = module.outp_dim
-    elif hasattr(module, "out_features"):
-        outp_dim = module.out_features
-    else:
-        raise ValueError("Dont know how to infer the output dimension from the model")
+        # Pass through with the conditioning information
+        return module(inputs, high_level)
 
-    ## Create an output of the correct shape on the right device using the padval
-    exp_size = (*inputs.shape[:-1], outp_dim)
+    # Try to infer the output shape if it has not been provided
+    if output_dim is None:
+        if hasattr(module, "outp_dim"):
+            outp_dim = module.outp_dim
+        elif hasattr(module, "out_features"):
+            outp_dim = module.out_features
+        elif hasattr(module, "output_size"):
+            outp_dim = module.output_size
+        else:
+            raise ValueError("Dont know how to infer the output size from the model")
+
+    # Determine the output type depending on if mixed precision is being used
     if T.is_autocast_enabled():
         out_type = T.float16
     elif T.is_autocast_cpu_enabled():
         out_type = T.bfloat16
     else:
         out_type = inputs.dtype
+
+    # Create an output of the correct shape on the right device using the padval
+    exp_size = (*inputs.shape[:-1], outp_dim)
     outputs = T.full(exp_size, padval, device=inputs.device, dtype=out_type)
 
-    ## Onnx safe operation, but slow, use only when exporting
+    # Onnx safe operation, but slow, use only when exporting
     if ONNX_SAFE:
         o_mask = mask.unsqueeze(-1).expand(exp_size)
-        if context is None:
+        if high_level is None:
             outputs.masked_scatter_(o_mask, module(inputs[mask]))
         else:
             outputs.masked_scatter_(
-                o_mask, module(inputs[mask], ctxt=ctxt_from_mask(context, mask))
+                o_mask, module(inputs[mask], ctxt=ctxt_from_mask(high_level, mask))
             )
 
-    ## Inplace allocation, not onnx safe but quick
+    # Inplace allocation, not onnx safe but quick
     else:
-        if context is None:
+        if high_level is None:
             outputs[mask] = module(inputs[mask])
         else:
-            outputs[mask] = module(inputs[mask], ctxt=ctxt_from_mask(context, mask))
+            outputs[mask] = module(inputs[mask], ctxt=ctxt_from_mask(high_level, mask))
 
     return outputs
 
@@ -547,7 +585,7 @@ def to_np(tensor: T.Tensor) -> np.ndarray:
     pytorch tensor to numpy array
     - Includes gradient deletion, and device migration
     """
-    if tensor.dtype == T.bfloat16:  ## Numpy conversions don't support bfloat16s
+    if tensor.dtype == T.bfloat16:  # Numpy conversions don't support bfloat16s
         tensor = tensor.half()
     return tensor.detach().cpu().numpy()
 
@@ -593,12 +631,6 @@ def apply_residual(rsdl_type: str, res: T.Tensor, outp: T.Tensor) -> T.Tensor:
     if rsdl_type == "add":
         return outp + res
     raise ValueError(f"Unknown residual type: {rsdl_type}")
-
-
-@T.jit.script
-def falling_sigmoid(x):
-    """Falling sigmoid used in some of my distance functions"""
-    return T.sigmoid(-x - 3)
 
 
 def aggr_via_sparse(cmprsed: T.Tensor, mask: T.BoolTensor, reduction: str, dim: int):
@@ -681,36 +713,3 @@ def get_max_cpu_suggest():
 def log_squash(data: T.Tensor) -> T.Tensor:
     """Apply a log squashing function for distributions with high tails"""
     return T.sign(data) * T.log(T.abs(data) + 1)
-
-
-def load_for_fine_tuning(net_conf: DotMap, flag: str = "best") -> tuple:
-    """Used for fine tuning a model. Loads a previous best model and also modifies
-    the net_conf to match the model being loaded other than the base kwargs
-    """
-    net_path = Path(net_conf.base_kwargs.fine_tune)
-
-    print("Loading previous instance of model for fine tuning")
-    print(f"template: {net_path / flag}")
-    print(f"(will update the net_conf accordingly)")
-
-    ## Load the previous instance of the network
-    dev = sel_device(net_conf.base_kwargs.device)
-    network = T.load(net_path / flag, map_location=dev)
-    network.device = dev
-
-    ## Load the previous network's config
-    with open(net_path / "config/net.yaml", encoding="utf-8") as f:
-        new_net_conf = yaml.load(f, Loader=yaml.Loader)
-
-    ## Combine combine the new and old net conf
-    for k, v in new_net_conf.items():
-        if k != "base_kwargs":
-            net_conf[k] = v
-
-    ## Ensure that the loaded's base_kwargs are the new ones
-    network.name = net_conf.base_kwargs.name
-    network.save_dir = net_conf.base_kwargs.save_dir
-    network.full_name = Path(network.name, network.save_dir)
-    network.device = sel_device(net_conf.base_kwargs.device)
-
-    return network, net_conf

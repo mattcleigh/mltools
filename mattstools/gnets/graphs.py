@@ -3,7 +3,7 @@ Defines the graph object type and other operations specific to handing them
 """
 from __future__ import annotations
 
-from typing import Iterable, Union
+from typing import Iterable, Self, Union, _type_repr
 
 import torch as T
 from torch.utils.data._utils.collate import default_collate
@@ -51,37 +51,42 @@ class Graph:
         self.mask = mask
 
         ## Save the device where the graph will be stored
-        dev = dev if dev != "same" else nodes.device
-        self.to(dev)
+        if dev == "same":
+            dev = nodes.device
+        else:
+            self.to(dev)
 
     @property
-    def dtype(self):
+    def dtype(self) -> _type_repr:
         """Inherits the dtype from the node tensor"""
         return self.nodes.dtype
 
-    def dim(self):
+    def dim(self) -> list[int]:
         """Return the dimensions of the graph"""
         return [self.edges.shape[-1], self.nodes.shape[-1], self.globs.shape[-1]]
 
-    def __len__(self):
+    def __len__(self) -> int:
         """Return the masking length of the graph"""
         return len(self.mask)
 
-    def max_n(self):
+    def max_n(self) -> int:
         """Return the number of nodes that the graph can hold"""
         return self.mask.shape[-1]
 
-    def to(self, dev: str):
+    def to(self, dev: str) -> Self:
         """Move the graph to a selected device"""
         self.edges = self.edges.to(dev)
         self.nodes = self.nodes.to(dev)
         self.globs = self.globs.to(dev)
         self.adjmat = self.adjmat.to(dev)
         self.mask = self.mask.to(dev)
-        self.device = self.nodes.device
         return self  ## Needed for the pytorch move dev
 
-    def _clone(self):
+    @property
+    def device(self) -> T.device:
+        return self.nodes.device
+
+    def _clone(self) -> None:
         """Create an inplace clone of its tensors"""
         self.edges = self.edges.clone()
         self.nodes = self.nodes.clone()
@@ -106,30 +111,29 @@ class GraphBatch(Graph):
         """Inherits the dtype from the node tensor"""
         return self.nodes.dtype
 
-    def __getitem__(self, idx: int):
+    def __getitem__(self, idx: int) -> Graph:
         """Retrieve a particular graph from within the graph batch using an index"""
 
-        ## Work out the indexes of the edge tensor
+        ## Work out the indexes of the edge tensor which is compressed
         start = self.adjmat[:idx].sum()
-        end = self.adjmat[idx].sum()
+        size = self.adjmat[idx].sum()
 
         return Graph(
-            self.edges[start:end],
+            self.edges[start : start + size],
             self.nodes[idx],
             self.globs[idx],
             self.adjmat[idx],
             self.mask[idx],
-            dev=self.device,
         )
 
-    def dim(self):
+    def dim(self) -> tuple[int, list]:
         """Return the dimensions of the graph object starting with the batch length"""
         return (
             len(self),
             [self.edges.shape[-1], self.nodes.shape[-1], self.globs.shape[-1]],
         )
 
-    def has_nan(self):
+    def has_nan(self) -> list[bool]:
         """Check if there is any nan values in the graph's tensors"""
         result = [
             T.isnan(self.edges).any().item(),
@@ -140,7 +144,7 @@ class GraphBatch(Graph):
         ]
         return result
 
-    def batch_select(self, b_mask: T.BoolTensor):
+    def batch_select(self, b_mask: T.BoolTensor) -> GraphBatch:
         """Returns a batched graph object made from the subset of another batched graph
         This function needs to exist to account for the edges which have no batch
         dimension
@@ -176,7 +180,7 @@ class GraphBatch(Graph):
         """Return the name of the graph and its dimension for printing"""
         return f"GraphBatch({self.dim()})"
 
-    def clone(self):
+    def clone(self) -> GraphBatch:
         """Return an out of place clone of its tensors"""
         return GraphBatch(
             self.edges.clone(),
@@ -184,7 +188,6 @@ class GraphBatch(Graph):
             self.globs.clone(),
             self.adjmat.clone(),
             self.mask.clone(),
-            "same",
         )
 
 

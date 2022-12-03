@@ -17,7 +17,7 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 from scipy.interpolate import make_interp_spline
 from scipy.stats import pearsonr
 
-from .utils import mid_points, undo_mid
+from .numpy_utils import mid_points, undo_mid
 
 ## Some defaults for my plots to make them look nicer
 plt.rcParams["xaxis.labellocation"] = "right"

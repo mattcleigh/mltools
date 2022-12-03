@@ -413,7 +413,7 @@ class NodeBlock(nn.Module):
         ## Pass the nodes through the feature network
         if self.use_net:
             nodes = pass_with_mask(
-                nodes, self.feat_net, graph.mask, context=[graph.globs, ctxt]
+                nodes, self.feat_net, graph.mask, high_level=[graph.globs, ctxt]
             )
 
         ## Apply the residual update

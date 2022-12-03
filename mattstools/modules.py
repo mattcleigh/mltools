@@ -259,8 +259,15 @@ class DenseNetwork(nn.Module):
                 do_bayesian=do_bayesian,
             )
 
-    def forward(self, inputs: T.Tensor, ctxt: T.Tensor = Optional[None]) -> T.Tensor:
+    def forward(self, inputs: T.Tensor, ctxt: Optional[T.Tensor] = None) -> T.Tensor:
         """Pass through all layers of the dense network"""
+
+        ## Reshape the context if it is available
+        if ctxt is not None:
+            dim_diff = inputs.dim() - ctxt.dim()
+            if dim_diff > 0:
+                ctxt = ctxt.view(ctxt.shape[0], *dim_diff * (1,), *ctxt.shape[1:])
+                ctxt = ctxt.expand(*inputs.shape[:-1], -1)
 
         ## Pass through the input block
         inputs = self.input_block(inputs, ctxt)
@@ -388,7 +395,7 @@ class DeepSet(nn.Module):
             ctxt = smart_cat(ctxt)
 
         ## Pass the non_zero values through the feature network
-        feat_outs = pass_with_mask(inpt, self.feat_net, mask, context=ctxt)
+        feat_outs = pass_with_mask(inpt, self.feat_net, mask, high_level=ctxt)
 
         ## For attention
         if self.pool_type == "attn":
@@ -396,7 +403,7 @@ class DeepSet(nn.Module):
                 inpt,
                 self.attn_net,
                 mask,
-                context=ctxt,
+                high_level=ctxt,
                 padval=0 if self.attn_type == "raw" else -T.inf,
             )
 
