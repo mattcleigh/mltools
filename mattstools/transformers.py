@@ -7,10 +7,9 @@ from typing import Mapping, Optional, Union
 
 import torch as T
 import torch.nn as nn
-from torch.nn.functional import dropout, softmax
+from torch.nn.functional import softmax
 
 from .modules import DenseNetwork
-from .torch_utils import pass_with_mask
 
 
 def merge_masks(
@@ -28,16 +27,10 @@ def merge_masks(
 
     # If either pad mask exists, create
     if q_mask is not None or kv_mask is not None:
-        q_mask = (
-            q_mask
-            if q_mask is not None
-            else T.ones(q_shape[:-1], dtype=T.bool, device=device)
-        )
-        kv_mask = (
-            kv_mask
-            if kv_mask is not None
-            else T.ones(k_shape[:-1], dtype=T.bool, device=device)
-        )
+        if q_mask is None:
+            q_mask = T.full(q_shape[:-1], True, device=device)
+        if kv_mask is None:
+            kv_mask = T.full(k_shape[:-1], True, device=device)
         merged_mask = q_mask.unsqueeze(-1) & kv_mask.unsqueeze(-2)
 
     # If attention mask exists, create
@@ -63,6 +56,10 @@ def attention(
     Note that the attention scores are ordered in recv x send, which is the opposite
     to how I usually do it for the graph network, which is send x recv
 
+    We use masked fill -T.inf as this kills the padded key/values elements but
+    introduces nans for padded query elements. We could used a very small number like
+    -1e9 but this would need to scale with if we are using half precision.
+
     Args:
         query: Batched query sequence of tensors (b, h, s, f)
         key: Batched key sequence of tensors (b, h, s, f)
@@ -78,8 +75,8 @@ def attention(
     scores = T.matmul(query, key.transpose(-2, -1)) / math.sqrt(dim_key)
 
     # Add the bias terms if present
-    if attn_bias is not None:  # Transpose flips the send recv to the right dims
-        scores = scores + attn_bias.unsqueeze(-3).transpose(-3, -1)
+    if attn_bias is not None:  # Move the head dimension to the first
+        scores = scores + attn_bias.permute(0, 3, 1, 2)
 
     # Calculate the dropout mask
     if training and drp:
@@ -88,11 +85,13 @@ def attention(
 
     # Mask away the scores between invalid elements in sequence
     if attn_mask is not None:
-        attn_mask = attn_mask.unsqueeze(-3)
-        scores = scores.masked_fill(~attn_mask, -T.inf)
+        scores = scores.masked_fill(~attn_mask.unsqueeze(-3), -T.inf)
 
     # Apply the softmax function per head feature
     scores = softmax(scores, dim=-1)
+
+    # Kill the nans introduced by the padded query elements
+    scores = T.nan_to_num(scores, 0)
 
     # Finally multiply these scores by the output
     scores = T.matmul(scores, value)
@@ -142,8 +141,7 @@ class MultiHeadedAttentionBlock(nn.Module):
         num_heads: int = 1,
         drp: float = 0,
     ) -> None:
-        """Init method for AttentionBlock
-
+        """
         Args:
             model_dim: The dimension of the model
             num_heads: The number of different attention heads to process in parallel
@@ -202,7 +200,7 @@ class MultiHeadedAttentionBlock(nn.Module):
         attn_mask = merge_masks(q_mask, kv_mask, attn_mask, q.shape, k.shape, q.device)
 
         # Generate the q, k, v projections, break final head dimension in 2
-        shape = (b_size, seq, self.num_heads, self.head_dim)
+        shape = (b_size, -1, self.num_heads, self.head_dim)
         q = self.q_linear(q).view(shape)
         k = self.k_linear(k).view(shape)
         v = self.v_linear(v).view(shape)
@@ -225,13 +223,13 @@ class MultiHeadedAttentionBlock(nn.Module):
         )  # Returned shape is b,h,s,f
 
         # Concatenate the all of the heads together to get shape: b,seq,f
-        q = q.transpose(1, 2).contiguous().view(b_size, seq, self.model_dim)
+        q = q.transpose(1, 2).contiguous().view(b_size, -1, self.model_dim)
 
         # Pass through final linear layer
         q = self.out_linear(q)
 
-        # Due to softmaxing, nans will have been introduced.
-        q = T.nan_to_num(q)
+        # Due to softmaxing and a q_mask, nans will have been introduced.
+        # q = T.nan_to_num(q)
 
         return q
 
@@ -254,18 +252,20 @@ class TransformerEncoderLayer(nn.Module):
     def __init__(
         self,
         model_dim: int,
-        mha_config: Mapping,
-        dense_config: Mapping,
+        mha_config: Optional[Mapping] = None,
+        dense_config: Optional[Mapping] = None,
         ctxt_dim: int = 0,
     ) -> None:
-        """Init method for TransformerEncoderLayer
-
+        """
         Args:
             model_dim: The embedding dimensio of the transformer block
             mha_config: Keyword arguments for multiheaded-attention block
             dense_config: Keyword arguments for feed forward network
+            ctxt_dim: Context dimension,
         """
         super().__init__()
+        mha_config = mha_config or {}
+        dense_config = dense_config or {}
         self.model_dim = model_dim
         self.ctxt_dim = ctxt_dim
 
@@ -291,7 +291,7 @@ class TransformerEncoderLayer(nn.Module):
         "Pass through the layer using residual connections and layer normalisation"
         x = x + self.norm2(
             self.self_attn(
-                self.norm1(x), q_mask=mask, attn_msk=attn_mask, attn_bias=attn_bias
+                self.norm1(x), q_mask=mask, attn_mask=attn_mask, attn_bias=attn_bias
             )
         )
         x = x + self.dense(self.norm3(x), ctxt)
@@ -315,24 +315,27 @@ class TransformerDecoderLayer(nn.Module):
     def __init__(
         self,
         model_dim: int,
-        mha_config: Mapping,
-        dense_config: Mapping,
+        mha_config: Optional[Mapping] = None,
+        dense_config: Optional[Mapping] = None,
+        ctxt_dim: int = 0,
     ) -> None:
-        """Init method for TransformerEncoderLayer
-
-        args:
+        """
+        Args:
             mha_config: Keyword arguments for multiheaded-attention block
             dense_config: Keyword arguments for feed forward network
         """
         super().__init__()
-
-        # Save the model dim as an attribute
+        mha_config = mha_config or {}
+        dense_config = dense_config or {}
         self.model_dim = model_dim
+        self.ctxt_dim = ctxt_dim
 
         # The basic blocks
         self.self_attn = MultiHeadedAttentionBlock(model_dim, **mha_config)
         self.cross_attn = MultiHeadedAttentionBlock(model_dim, **mha_config)
-        self.dense = DenseNetwork(model_dim, outp_dim=model_dim, **dense_config)
+        self.dense = DenseNetwork(
+            model_dim, outp_dim=model_dim, ctxt_dim=ctxt_dim, **dense_config
+        )
 
         # The normalisation layers (lots from NormFormer)
         self.norm_preSA = nn.LayerNorm(model_dim)
@@ -359,7 +362,7 @@ class TransformerDecoderLayer(nn.Module):
             self.self_attn(
                 self.norm_preSA(q_seq),
                 q_mask=q_mask,
-                attn_msk=attn_mask,
+                attn_mask=attn_mask,
                 attn_bias=attn_bias,
             )
         )
@@ -396,10 +399,11 @@ class TransformerCrossAttentionLayer(TransformerEncoderLayer):
     def __init__(
         self,
         model_dim: int,
-        mha_config: Mapping,
-        dense_config: Mapping,
+        mha_config: Optional[Mapping] = None,
+        dense_config: Optional[Mapping] = None,
+        ctxt_dim: int = 0,
     ) -> None:
-        super().__init__(model_dim, mha_config, dense_config)
+        super().__init__(model_dim, mha_config, dense_config, ctxt_dim)
         self.norm0 = nn.LayerNorm(model_dim)
 
     # pylint: disable=arguments-differ,arguments-renamed
@@ -430,10 +434,11 @@ class TransformerEncoder(nn.Module):
 
     def __init__(
         self,
-        model_dim: int,
-        num_layers: int,
-        mha_config: Mapping,
-        dense_config: Mapping,
+        model_dim: int = 64,
+        num_layers: int = 3,
+        mha_config: Optional[Mapping] = None,
+        dense_config: Optional[Mapping] = None,
+        ctxt_dim: int = 0,
     ) -> None:
         """
         Args:
@@ -441,13 +446,14 @@ class TransformerEncoder(nn.Module):
             num_layers: Number of encoder layers used
             mha_config: Keyword arguments for the mha block
             dense_config: Keyword arguments for the dense network in each layer
+            ctxt_dim: Dimension of the context inputs
         """
         super().__init__()
         self.model_dim = model_dim
         self.num_layers = num_layers
         self.layers = nn.ModuleList(
             [
-                TransformerEncoderLayer(model_dim, mha_config, dense_config)
+                TransformerEncoderLayer(model_dim, mha_config, dense_config, ctxt_dim)
                 for _ in range(num_layers)
             ]
         )
@@ -470,8 +476,9 @@ class TransformerDecoder(nn.Module):
         self,
         model_dim: int,
         num_layers: int,
-        mha_config: Mapping,
-        dense_config: Mapping,
+        mha_config: Optional[Mapping] = None,
+        dense_config: Optional[Mapping] = None,
+        ctxt_dim: int = 0,
     ) -> None:
         """
         Args:
@@ -479,12 +486,12 @@ class TransformerDecoder(nn.Module):
             num_layers: Number of encoder layers used
             mha_config: Keyword arguments for the mha block
             dense_config: Keyword arguments for the dense network in each layer
+            ctxt_dim: Dimension of the context input
         """
         super().__init__()
-
         self.layers = nn.ModuleList(
             [
-                TransformerDecoderLayer(model_dim, mha_config, dense_config)
+                TransformerDecoderLayer(model_dim, mha_config, dense_config, ctxt_dim)
                 for _ in range(num_layers)
             ]
         )
@@ -514,11 +521,12 @@ class TransformerVectorEncoder(nn.Module):
 
     def __init__(
         self,
-        model_dim: int,
-        num_sa_layers: int,
-        num_ca_layers: int,
-        mha_config: Mapping,
-        dense_config: Mapping,
+        model_dim: int = 64,
+        num_sa_layers: int = 2,
+        num_ca_layers: int = 2,
+        mha_config: Optional[Mapping] = None,
+        dense_config: Optional[Mapping] = None,
+        ctxt_dim: int = 0,
     ) -> None:
         """
         Args:
@@ -527,6 +535,7 @@ class TransformerVectorEncoder(nn.Module):
             num_ca_layers: Number of cross/class attention encoder layers
             mha_config: Keyword arguments for all multiheaded attention layers
             dense_config: Keyword arguments for the dense network in each layer
+            ctxt_dim: Dimension of the context inputs
         """
         super().__init__()
         self.model_dim = model_dim
@@ -535,13 +544,15 @@ class TransformerVectorEncoder(nn.Module):
 
         self.sa_layers = nn.ModuleList(
             [
-                TransformerEncoderLayer(model_dim, mha_config, dense_config)
+                TransformerEncoderLayer(model_dim, mha_config, dense_config, ctxt_dim)
                 for _ in range(num_sa_layers)
             ]
         )
         self.ca_layers = nn.ModuleList(
             [
-                TransformerCrossAttentionLayer(model_dim, mha_config, dense_config)
+                TransformerCrossAttentionLayer(
+                    model_dim, mha_config, dense_config, ctxt_dim
+                )
                 for _ in range(num_ca_layers)
             ]
         )
@@ -599,10 +610,11 @@ class TransformerVectorDecoder(nn.Module):
 
     def __init__(
         self,
-        model_dim: int,
-        num_layers: int,
-        mha_config: Mapping,
-        dense_config: Mapping,
+        model_dim: int = 64,
+        num_layers: int = 2,
+        mha_config: Optional[Mapping] = None,
+        dense_config: Optional[Mapping] = None,
+        ctxt_dim: int = 0,
     ) -> None:
         """
         Args:
@@ -616,7 +628,7 @@ class TransformerVectorDecoder(nn.Module):
         self.num_layers = num_layers
         self.layers = nn.ModuleList(
             [
-                TransformerDecoderLayer(model_dim, mha_config, dense_config)
+                TransformerDecoderLayer(model_dim, mha_config, dense_config, ctxt_dim)
                 for _ in range(num_layers)
             ]
         )
@@ -659,32 +671,36 @@ class FullTransformerVectorEncoder(nn.Module):
         self,
         inpt_dim: int,
         outp_dim: int,
-        tve_config: Mapping,
-        node_embd_config: Mapping,
-        outp_embd_config: Mapping,
         edge_dim: int = 0,
         ctxt_dim: int = 0,
+        tve_config: Optional[Mapping] = None,
+        node_embd_config: Optional[Mapping] = None,
+        outp_embd_config: Optional[Mapping] = None,
         edge_embd_config: Optional[Mapping] = None,
     ) -> None:
         """
         Args:
             inpt_dim: Dim. of each element of the sequence
             outp_dim: Dim. of of the final output vector
+            ctxt_dim: Dim. of the context vector to pass to the embedding nets
+            edge_dim: Dim. of the input edge features
             tve_config: Keyword arguments to pass to the TVE constructor
             node_embd_config: Keyword arguments for node dense embedder
             outp_embd_config: Keyword arguments for output dense embedder
             edge_embd_config: Keyword arguments for edge dense embedder
-            ctxt_dim: Dim. of the context vector to pass to the embedding nets
-            edge_dim: Dim. of the input edge features
         """
         super().__init__()
         self.inpt_dim = inpt_dim
         self.outp_dim = outp_dim
         self.ctxt_dim = ctxt_dim
         self.edge_dim = edge_dim
+        tve_config = tve_config or {}
+        node_embd_config = node_embd_config or {}
+        outp_embd_config = outp_embd_config or {}
+        edge_embd_config = edge_embd_config or {}
 
         # Initialise the TVE, the main part of this network
-        self.tve = TransformerVectorEncoder(**tve_config)
+        self.tve = TransformerVectorEncoder(**tve_config, ctxt_dim=ctxt_dim)
         self.model_dim = self.tve.model_dim
 
         # Initialise all node (inpt) and vector (output) embedding network
@@ -707,7 +723,7 @@ class FullTransformerVectorEncoder(nn.Module):
                 inpt_dim=self.edge_dim,
                 outp_dim=self.tve.sa_layers[0].self_attn.num_heads,
                 ctxt_dim=self.ctxt_dim,
-                **(edge_embd_config or {}),
+                **edge_embd_config,
             )
 
     def forward(
@@ -729,7 +745,7 @@ class FullTransformerVectorEncoder(nn.Module):
             attn_bias = self.edge_embd(attn_bias, ctxt)
 
         # Pass throught the tve
-        output, seq = self.tve(
+        output = self.tve(
             seq,
             mask,
             ctxt=ctxt,
@@ -738,7 +754,7 @@ class FullTransformerVectorEncoder(nn.Module):
             return_seq=return_seq,
         )
 
-        # If we had ased to return both, then split before embedding
+        # If we had asked to return both, then split before embedding
         if return_seq:
             output, seq = output
         output = self.outp_embd(output, ctxt)
@@ -764,9 +780,9 @@ class FullTransformerVectorDecoder(nn.Module):
         self,
         inpt_dim: int,
         outp_dim: int,
-        tvd_config: Mapping,
-        vect_embd_config: Mapping,
-        outp_embd_config: Mapping,
+        tvd_config: Optional[Mapping] = None,
+        vect_embd_config: Optional[Mapping] = None,
+        outp_embd_config: Optional[Mapping] = None,
         ctxt_dim: int = 0,
     ) -> None:
         """
@@ -782,6 +798,9 @@ class FullTransformerVectorDecoder(nn.Module):
         self.inpt_dim = inpt_dim
         self.outp_dim = outp_dim
         self.ctxt_dim = ctxt_dim
+        tvd_config = tvd_config or {}
+        vect_embd_config = vect_embd_config or {}
+        outp_embd_config = outp_embd_config or {}
 
         # Initialise the TVE, the main part of this network
         self.tvd = TransformerVectorDecoder(**tvd_config)
@@ -808,6 +827,7 @@ class FullTransformerVectorDecoder(nn.Module):
         vec = self.vec_embd(vec, ctxt=ctxt)
         seq = self.tvd(vec, mask, ctxt=ctxt)
         seq = self.outp_embd(seq, ctxt)
+        seq = T.masked_fill(seq, ~mask.unsqueeze(-1), 0)  # Force zero padding
         return seq
 
 
@@ -821,11 +841,11 @@ class FullTransformerEncoder(nn.Module):
         self,
         inpt_dim: int,
         outp_dim: int,
-        te_config: Mapping,
-        node_embd_config: Mapping,
-        outp_embd_config: Mapping,
         edge_dim: int = 0,
         ctxt_dim: int = 0,
+        te_config: Optional[Mapping] = None,
+        node_embd_config: Optional[Mapping] = None,
+        outp_embd_config: Optional[Mapping] = None,
         edge_embd_config: Optional[Mapping] = None,
     ) -> None:
         """
@@ -844,9 +864,13 @@ class FullTransformerEncoder(nn.Module):
         self.outp_dim = outp_dim
         self.ctxt_dim = ctxt_dim
         self.edge_dim = edge_dim
+        te_config = te_config or {}
+        node_embd_config = node_embd_config or {}
+        outp_embd_config = outp_embd_config or {}
+        edge_embd_config = edge_embd_config or {}
 
         # Initialise the TVE, the main part of this network
-        self.te = TransformerEncoder(**te_config)
+        self.te = TransformerEncoder(**te_config, ctxt_dim=ctxt_dim)
         self.model_dim = self.te.model_dim
 
         # Initialise all embedding networks
@@ -869,7 +893,7 @@ class FullTransformerEncoder(nn.Module):
                 inpt_dim=self.edge_dim,
                 outp_dim=self.te.layers[0].self_attn.num_heads,
                 ctxt_dim=self.ctxt_dim,
-                **(edge_embd_config or {}),
+                **edge_embd_config,
             )
 
     def forward(

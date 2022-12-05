@@ -180,7 +180,7 @@ def get_optim(optim_dict: dict, params: Iterable) -> optim.Optimizer:
     return opt
 
 
-def get_loss_fn(name: str) -> nn.Module:
+def get_loss_fn(name: str, **kwargs) -> nn.Module:
     """Return a pytorch loss function given a name"""
     if name == "none":
         return None
@@ -211,7 +211,7 @@ def get_loss_fn(name: str) -> nn.Module:
     if name == "modifiedsinkhorn":
         return ModifiedSinkhorn()
     if name == "energymovers":
-        return EnergyMovers()
+        return EnergyMovers(**kwargs)
 
     ## Encoding losses
     if name == "vaeloss":
@@ -580,14 +580,18 @@ def move_dev(
         return tensor.to(dev)
 
 
-def to_np(tensor: T.Tensor) -> np.ndarray:
+def to_np(inpt: Union[T.Tensor, tuple]) -> np.ndarray:
     """More consicse way of doing all the necc steps to convert a
     pytorch tensor to numpy array
     - Includes gradient deletion, and device migration
     """
-    if tensor.dtype == T.bfloat16:  # Numpy conversions don't support bfloat16s
-        tensor = tensor.half()
-    return tensor.detach().cpu().numpy()
+
+    if isinstance(inpt, tuple):
+        return tuple(to_np(x) for x in inpt)
+
+    if inpt.dtype == T.bfloat16:  # Numpy conversions don't support bfloat16s
+        inpt = inpt.half()
+    return inpt.detach().cpu().numpy()
 
 
 def print_gpu_info(dev=0):

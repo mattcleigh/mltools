@@ -2,12 +2,15 @@
 Custom loss functions and methods to calculate them
 """
 
+from typing import Tuple, Union
+
 import numpy as np
 import torch as T
 import torch.nn as nn
 import torch.nn.functional as F
 from energyflow.emd import emd
 from geomloss import SamplesLoss
+from jetnet.losses import EMDLoss
 
 from .distances import masked_dist_matrix
 
@@ -148,29 +151,14 @@ class ModifiedSinkhorn(nn.Module):
 class EnergyMovers(nn.Module):
     def __init__(self) -> None:
         super().__init__()
+        self.loss_fn = EMDLoss(num_particles=32)
 
-    def forward(self, a_mask, pc_a, b_mask, pc_b):
-        a_pt = a_mask * pc_a[..., -1]
-        b_pt = b_mask * pc_b[..., -1]
-        a_etaphi = pc_a[..., :-1]
-        b_etaphi = pc_b[..., :-1]
-        dist = masked_dist_matrix(pc_a, a_pt > 0, pc_b, b_pt > 0, track_grad=True)[0]
-        f = T.from_numpy(
-            np.array(
-                [
-                    emd(a, b, dists=d, norm=True, return_flow=True)[1]
-                    for a, b, d in zip(
-                        a_pt.detach().cpu().numpy(),
-                        b_pt.detach().cpu().numpy(),
-                        dist.detach().cpu().numpy(),
-                    )
-                ]
-            )
-        ).to(a_mask.device)
-        loss = (dist**2 * f).sum(dim=(-1, -2)) + F.huber_loss(
-            a_pt.sum(dim=-1), b_pt.sum(dim=-1), reduction="none"
-        )
-        return loss
+    def forward(
+        self, a_weights, pc_a, b_weights, pc_b
+    ) -> Union[T.Tensor, Tuple[T.Tensor, T.Tensor]]:
+        pc_a = T.masked_fill(pc_a, (a_weights == 0).unsqueeze(-1), 0)
+        pc_b = T.masked_fill(pc_b, (b_weights == 0).unsqueeze(-1), 0)
+        return self.loss_fn(pc_a, pc_b)
 
 
 class ChampferLoss(nn.Module):

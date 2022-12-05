@@ -3,7 +3,7 @@ Defines the graph object type and other operations specific to handing them
 """
 from __future__ import annotations
 
-from typing import Iterable, Self, Union, _type_repr
+from typing import Iterable, Union, _type_repr
 
 import torch as T
 from torch.utils.data._utils.collate import default_collate
@@ -73,7 +73,7 @@ class Graph:
         """Return the number of nodes that the graph can hold"""
         return self.mask.shape[-1]
 
-    def to(self, dev: str) -> Self:
+    def to(self, dev: str) -> Graph:
         """Move the graph to a selected device"""
         self.edges = self.edges.to(dev)
         self.nodes = self.nodes.to(dev)

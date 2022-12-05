@@ -806,7 +806,7 @@ def plot_latent_space(
     axis[0].legend()
     fig.tight_layout()
     fig.subplots_adjust(wspace=0, hspace=0)
-    fig.savefig(path.with_suffix(".png"))
+    fig.savefig(Path(path).with_suffix(".png"))
     if return_fig:
         return fig
     plt.close(fig)
