@@ -149,9 +149,9 @@ class ModifiedSinkhorn(nn.Module):
 
 
 class EnergyMovers(nn.Module):
-    def __init__(self) -> None:
+    def __init__(self, **kwargs) -> None:
         super().__init__()
-        self.loss_fn = EMDLoss(num_particles=32)
+        self.loss_fn = EMDLoss(**kwargs)
 
     def forward(
         self, a_weights, pc_a, b_weights, pc_b
@@ -202,8 +202,8 @@ def masked_dist_loss(
     """
 
     ## Calculate the weights by normalising the mask for each sample
-    a_weights = pc_a_mask.float()  # / pc_a_mask.sum(dim=-1, keepdim=True)
-    b_weights = pc_b_mask.float()  # / pc_b_mask.sum(dim=-1, keepdim=True)
+    a_weights = pc_a_mask.float() / pc_a_mask.sum(dim=-1, keepdim=True)
+    b_weights = pc_b_mask.float() / pc_b_mask.sum(dim=-1, keepdim=True)
 
     ## Calculate the loss using these weights
     loss = loss_fn(a_weights, pc_a, b_weights, pc_b)
