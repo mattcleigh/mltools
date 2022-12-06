@@ -585,10 +585,8 @@ def to_np(inpt: Union[T.Tensor, tuple]) -> np.ndarray:
     pytorch tensor to numpy array
     - Includes gradient deletion, and device migration
     """
-
-    if isinstance(inpt, tuple):
-        return tuple(to_np(x) for x in inpt)
-
+    if isinstance(inpt, (tuple, list)):
+        return type(inpt)(to_np(x) for x in inpt)
     if inpt.dtype == T.bfloat16:  # Numpy conversions don't support bfloat16s
         inpt = inpt.half()
     return inpt.detach().cpu().numpy()
