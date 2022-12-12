@@ -146,6 +146,7 @@ def plot_corr_heatmaps(
         )
         plt.close(fig)
         return img
+    plt.close(fig)
 
 
 def plot_multi_loss(
@@ -480,6 +481,7 @@ def plot_multi_hists(
         )
         plt.close(fig)
         return img
+    plt.close(fig)
 
 
 def plot_and_save_hists(
