@@ -399,7 +399,7 @@ class NodeBlock(nn.Module):
                     nodes,
                     self.attn_net,
                     graph.mask,
-                    context=[graph.globs, ctxt],
+                    high_level=[graph.globs, ctxt],
                     padval=-T.inf,
                 )
                 / math.sqrt(self.feat_outp_dim),
