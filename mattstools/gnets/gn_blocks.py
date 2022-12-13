@@ -231,7 +231,7 @@ class EdgeBlock(nn.Module):
 
     def __repr__(self):
         """Sort string representation of the block"""
-        string = f"EdgeBock[{self.msg_type}"
+        string = f"EdgeBlock[{self.msg_type}"
         if self.do_ln:
             string += "-LN"
         if self.use_net:
@@ -436,7 +436,7 @@ class NodeBlock(nn.Module):
 
     def __repr__(self):
         """Sort string representation of the block"""
-        string = "NodeBock["
+        string = "NodeBlock["
         if self.do_ln:
             string += "LN-"
         if self.use_net:
@@ -587,7 +587,7 @@ class GlobBlock(nn.Module):
             string.append(f"FF({self.feat_net.one_line_string()})")
         if self.do_rsdl:
             string.append(f"{self.rsdl_type}")
-        string = f"GlobBock[{'-'.join(string)}]"
+        string = f"GlobBlock[{'-'.join(string)}]"
         return string
 
 
