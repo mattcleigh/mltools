@@ -208,7 +208,7 @@ class DenseNetwork(nn.Module):
 
         ## We store the input, hddn (list), output, and ctxt dims to query them later
         self.inpt_dim = inpt_dim
-        if isinstance(hddn_dim, list):
+        if not isinstance(hddn_dim, int):
             self.hddn_dim = hddn_dim
         else:
             self.hddn_dim = num_blocks * [hddn_dim]
