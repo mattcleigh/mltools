@@ -65,7 +65,7 @@ def cosine_encoding(
     """
 
     # Unsqueeze if final dimension is flat
-    if x.shape[-1] != 1:
+    if x.shape[-1] != 1 or x.dim()==1:
         x = x.unsqueeze(-1)
 
     # Check the the bounds are obeyed
@@ -255,7 +255,7 @@ def euler_maruyama_sampler(
         _, noise_rates = diff_sched(t.view(expanded_shape))
         s = -pred_noises / noise_rates
 
-        # Take one step using the eu method
+        # Take one step using the em method
         betas = diff_sched.get_betas(t.view(expanded_shape))
         x_t += 0.5 * betas * (x_t + 2 * s) * delta_t
         x_t += (betas * delta_t).sqrt() * T.randn_like(x_t)
