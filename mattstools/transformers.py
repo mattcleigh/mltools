@@ -184,6 +184,7 @@ class MultiHeadedAttentionBlock(nn.Module):
             q_mask: Shows which elements of the main sequence are real
             kv_mask: Shows which elements of the attn sequence are real
             attn_mask: Extra mask for the attention matrix (eg: look ahead)
+            attn_bias: Extra bias term for the attention matrix (eg: edge features)
         """
 
         # If only q and q_mask are provided then we automatically apply self attention
