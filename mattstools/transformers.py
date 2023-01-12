@@ -123,7 +123,8 @@ class MultiHeadedAttentionBlock(nn.Module):
     - v = v_linear * v
 
     2) Outputs are reshaped to add a head dimension, and transposed for matmul.
-    - dim becomes: batch, heads, sequence, features
+    - features = model_dim = head_dim * num_heads
+    - dim becomes: batch, num_heads, sequence, head_dim
 
     3) Passes these through to the attention module (message passing)
     - In standard transformers this is the scaled dot product attention
@@ -131,8 +132,7 @@ class MultiHeadedAttentionBlock(nn.Module):
 
     4) Flatten out the head dimension and pass through final linear layer
     - results are same as if attention was done seperately for each head and concat
-    - dim: batch, sequence, features*heads
-
+    - dim: batch, q_seq, head_dim * num_heads
     """
 
     def __init__(
@@ -205,7 +205,7 @@ class MultiHeadedAttentionBlock(nn.Module):
         k = self.k_linear(k).view(shape)
         v = self.v_linear(v).view(shape)
 
-        # Transpose to get dimensions: b,h,seq,f (required for matmul)
+        # Transpose to get dimensions: B,H,Seq,HD (required for matmul)
         q = q.transpose(1, 2)
         k = k.transpose(1, 2)
         v = v.transpose(1, 2)
@@ -220,16 +220,13 @@ class MultiHeadedAttentionBlock(nn.Module):
             attn_bias=attn_bias,
             drp=self.drp,
             training=self.training,
-        )  # Returned shape is b,h,s,f
+        )  # Returned shape is B,H,Q_seq,HD
 
-        # Concatenate the all of the heads together to get shape: b,seq,f
+        # Concatenate the all of the heads together to get shape: B,Seq,F
         q = q.transpose(1, 2).contiguous().view(b_size, -1, self.model_dim)
 
         # Pass through final linear layer
         q = self.out_linear(q)
-
-        # Due to softmaxing and a q_mask, nans will have been introduced.
-        # q = T.nan_to_num(q)
 
         return q
 
