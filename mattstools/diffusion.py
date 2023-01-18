@@ -65,7 +65,7 @@ def cosine_encoding(
     """
 
     # Unsqueeze if final dimension is flat
-    if x.shape[-1] != 1 or x.dim()==1:
+    if x.shape[-1] != 1 or x.dim() == 1:
         x = x.unsqueeze(-1)
 
     # Check the the bounds are obeyed
