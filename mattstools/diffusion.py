@@ -183,16 +183,14 @@ def ddim_sampler(
     step_size = 1 / n_steps
 
     # The initial variables needed for the loop
-    next_noisy_data = initial_noise
-    next_diff_times = T.ones(num_samples, device=model.device)
+    noisy_data = initial_noise
+    diff_times = T.ones(num_samples, device=model.device)
     next_signal_rates, next_noise_rates = diff_sched(
         next_diff_times.view(expanded_shape),
     )
     for step in tqdm(range(n_steps), "DDIM-sampling", leave=False):
 
         # Update with the previous 'next' step
-        noisy_data = next_noisy_data
-        diff_times = next_diff_times
         signal_rates = next_signal_rates
         noise_rates = next_noise_rates
 
@@ -205,9 +203,9 @@ def ddim_sampler(
         pred_data = ddim_predict(noisy_data, pred_noises, signal_rates, noise_rates)
 
         # Get the next predicted components using the next signal and noise rates
-        next_diff_times = diff_times - step_size
+        diff_times = diff_times - step_size
         next_signal_rates, next_noise_rates = diff_sched(
-            next_diff_times.view(expanded_shape)
+            diff_times.view(expanded_shape)
         )
 
         # Clamp the predicted X_0 for stability
@@ -215,7 +213,7 @@ def ddim_sampler(
             pred_data.clamp_(*clip_predictions)
 
         # Remix the predicted components to go from estimated X_0 -> X_{t-1}
-        next_noisy_data = next_signal_rates * pred_data + next_noise_rates * pred_noises
+        noisy_data = next_signal_rates * pred_data + next_noise_rates * pred_noises
 
     return pred_data, all_stages
 
