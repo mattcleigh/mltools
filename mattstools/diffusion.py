@@ -185,9 +185,7 @@ def ddim_sampler(
     # The initial variables needed for the loop
     noisy_data = initial_noise
     diff_times = T.ones(num_samples, device=model.device)
-    next_signal_rates, next_noise_rates = diff_sched(
-        next_diff_times.view(expanded_shape),
-    )
+    next_signal_rates, next_noise_rates = diff_sched(diff_times.view(expanded_shape))
     for step in tqdm(range(n_steps), "DDIM-sampling", leave=False):
 
         # Update with the previous 'next' step
