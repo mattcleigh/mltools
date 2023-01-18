@@ -845,17 +845,19 @@ class FullTransformerEncoder(nn.Module):
         node_embd_config: Optional[Mapping] = None,
         outp_embd_config: Optional[Mapping] = None,
         edge_embd_config: Optional[Mapping] = None,
+        ctxt_embd_config: Optional[Mapping] = None,
     ) -> None:
         """
         Args:
             inpt_dim: Dim. of each element of the sequence
             outp_dim: Dim. of of the final output vector
+            edge_dim: Dim. of the input edge features
+            ctxt_dim: Dim. of the context vector to pass to the embedding nets
             te_config: Keyword arguments to pass to the TVE constructor
             node_embd_config: Keyword arguments for node dense embedder
             outp_embd_config: Keyword arguments for output dense embedder
             edge_embd_config: Keyword arguments for edge dense embedder
-            ctxt_dim: Dim. of the context vector to pass to the embedding nets
-            edge_dim: Dim. of the input edge features
+            ctxt_embd_config: Keyword arguments for context dense embedder
         """
         super().__init__()
         self.inpt_dim = inpt_dim
@@ -867,21 +869,31 @@ class FullTransformerEncoder(nn.Module):
         outp_embd_config = outp_embd_config or {}
         edge_embd_config = edge_embd_config or {}
 
+        # Initialise the context embedding network (optional)
+        if self.ctxt_dim:
+            self.ctxt_emdb = DenseNetwork(
+                inpt_dim=self.ctxt_dim,
+                **ctxt_embd_config,
+            )
+            self.ctxt_out = self.ctxt_emdb.outp_dim
+        else:
+            self.ctxt_out = 0
+
         # Initialise the TVE, the main part of this network
-        self.te = TransformerEncoder(**te_config, ctxt_dim=ctxt_dim)
+        self.te = TransformerEncoder(**te_config, ctxt_dim=self.ctxt_out)
         self.model_dim = self.te.model_dim
 
         # Initialise all embedding networks
         self.node_embd = DenseNetwork(
             inpt_dim=self.inpt_dim,
             outp_dim=self.model_dim,
-            ctxt_dim=self.ctxt_dim,
+            ctxt_dim=self.ctxt_out,
             **node_embd_config,
         )
         self.outp_embd = DenseNetwork(
             inpt_dim=self.model_dim,
             outp_dim=self.outp_dim,
-            ctxt_dim=self.ctxt_dim,
+            ctxt_dim=self.ctxt_out,
             **outp_embd_config,
         )
 
@@ -890,7 +902,7 @@ class FullTransformerEncoder(nn.Module):
             self.edge_embd = DenseNetwork(
                 inpt_dim=self.edge_dim,
                 outp_dim=self.te.layers[0].self_attn.num_heads,
-                ctxt_dim=self.ctxt_dim,
+                ctxt_dim=self.ctxt_out,
                 **edge_embd_config,
             )
 
@@ -903,9 +915,11 @@ class FullTransformerEncoder(nn.Module):
         attn_mask: Optional[T.BoolTensor] = None,
     ) -> T.Tensor:
         """Pass the input through all layers sequentially"""
-        x = self.node_embd(x, ctxt)
-        if attn_bias is not None:
+        if self.ctxt_dim:
+            ctxt = self.ctxt_emdb(ctxt)
+        if self.edge_dim:
             attn_bias = self.edge_embd(attn_bias, ctxt)
+        x = self.node_embd(x, ctxt)
         x = self.te(x, mask=mask, ctxt=ctxt, attn_bias=attn_bias, attn_mask=attn_mask)
         x = self.outp_embd(x, ctxt)
         return x
