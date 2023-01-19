@@ -218,6 +218,7 @@ def plot_multi_hists(
     rat_label=None,
     scale: int = 5,
     leg: bool = True,
+    leg_loc: str = "upper left",
     incl_zeros: bool = True,
     already_hists: bool = False,
     hist_fills: list = None,
@@ -251,6 +252,7 @@ def plot_multi_hists(
         rat_label: The label for the ratio plot
         scale: The size in inches for each subplot
         leg: If the legend should be plotted
+        leg_loc: The location of the legend
         incl_zeros: If zero values should be included in the histograms or ignored
         already_hists: If the data is already histogrammed and doesnt need to be binned
         hist_fills: Bool for each histogram in data_list, if it should be filled
@@ -458,7 +460,7 @@ def plot_multi_hists(
 
     ## Only do legend on the first axis
     if leg:
-        axes[0, 0].legend()
+        axes[0, 0].legend(loc=leg_loc)
 
     ## Save the image as a png
     fig.tight_layout()
