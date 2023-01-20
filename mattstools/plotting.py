@@ -436,6 +436,12 @@ def plot_multi_hists(
         axes[i, 0].set_xlim(b[0], b[-1])
         if ylim is not None:
             axes[i, 0].set_ylim(*ylim)
+        else:
+            ylim1, ylim2 = axes[i,0].get_ylim()
+            ylim2 = 10**(np.log10(ylim2) + 0.35 * np.log10(ylim2)) if logy else ylim2 * 1.35
+            ylim = (1, ylim2)
+            axes[i, 0].set_ylim(*ylim)
+
 
         if do_ratio_to_first:
             axes[i, 1].set_xlim(b[0], b[-1])
@@ -458,9 +464,10 @@ def plot_multi_hists(
             else:
                 axes[i, 1].set_ylabel(f"Ratio to {type_labels[0]}")
 
-    ## Only do legend on the first axis
+    ## Only do legend on the first axis - and this continues to be a stupid idea.
     if leg:
-        axes[0, 0].legend(loc=leg_loc)
+        for ax in axes[:, 0]:
+            ax.legend(loc=leg_loc)
 
     ## Save the image as a png
     fig.tight_layout()
