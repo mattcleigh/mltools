@@ -311,7 +311,6 @@ def plot_multi_hists(
     ## Cycle through each axis
     for i in range(n_axis):
         b = bins[i]
-
         ## Reduce bins based on number of unique datapoints
         ## If the number of datapoints is less than 10 then we assume interger types
         if isinstance(b, str) and not already_hists:
@@ -434,14 +433,20 @@ def plot_multi_hists(
 
         ## Set the limits
         axes[i, 0].set_xlim(b[0], b[-1])
+        
         if ylim is not None:
-            axes[i, 0].set_ylim(*ylim)
+            setylim = ylim
+            axes[i, 0].set_ylim(*setylim)
         else:
-            ylim1, ylim2 = axes[i,0].get_ylim()
-            ylim2 = 10**(np.log10(ylim2) + 0.35 * np.log10(ylim2)) if logy else ylim2 * 1.35
-            ylim = (1, ylim2)
-            axes[i, 0].set_ylim(*ylim)
-
+            ylim1, ylim2 = axes[i, 0].get_ylim()
+            if logy:
+                # pad up the ylim (which is in logscale) by 25%
+                ylim2 = 10**(np.log10(ylim2)*1.30)
+                setylim = (1, ylim2)
+            else:
+                ylim2 = ylim2*1.30
+                setylim = (0, ylim2)
+            axes[i, 0].set_ylim(*setylim)
 
         if do_ratio_to_first:
             axes[i, 1].set_xlim(b[0], b[-1])
@@ -468,7 +473,6 @@ def plot_multi_hists(
     if leg:
         for ax in axes[:, 0]:
             ax.legend(loc=leg_loc)
-
     ## Save the image as a png
     fig.tight_layout()
 
