@@ -301,7 +301,10 @@ def plot_multi_hists(
     )
     if n_axis == 1 and not do_ratio_to_first:
         axes = np.array([axes])
-    axes = axes.reshape(dims)
+    if do_ratio_to_first:
+        axes = np.transpose(axes)
+    else:
+        axes = axes.reshape(dims)
 
     ## Replace the zeros
     if not incl_zeros:
@@ -441,7 +444,7 @@ def plot_multi_hists(
             ylim1, ylim2 = axes[i, 0].get_ylim()
             if logy:
                 # pad up the ylim (which is in logscale) by 25%
-                ylim2 = 10**(np.log10(ylim2)*1.35)
+                ylim2 = 10**(np.log10(ylim2)*1.40)
                 setylim = (1, ylim2)
             else:
                 ylim2 = ylim2*1.35
