@@ -472,7 +472,7 @@ def plot_multi_hists(
             else:
                 axes[i, 1].set_ylabel(f"Ratio to {type_labels[0]}")
 
-    ## Only do legend on the first axis - and this continues to be a stupid idea.
+    ## Only do legend on the first axis.
     if leg:
         for ax in axes[:, 0]:
             ax.legend(loc=leg_loc)
