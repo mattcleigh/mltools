@@ -435,8 +435,12 @@ def plot_multi_hists(
             axes[i, 0].set_xlabel(col_labels[i])
 
         ## Set the limits
-        axes[i, 0].set_xlim(b[0], b[-1])
-        
+        if bins is None:
+            x_low, x_high = np.quantile(b, [0.0, 0.85])
+            axes[i, 0].set_xlim(x_low, x_high)
+        else:
+            axes[i, 0].set_xlim(b[0], b[-1])
+
         if ylim is not None:
             setylim = ylim
             axes[i, 0].set_ylim(*setylim)
