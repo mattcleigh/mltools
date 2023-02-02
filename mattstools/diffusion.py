@@ -2,6 +2,40 @@ from typing import Optional, Tuple
 import math
 import torch as T
 from tqdm import tqdm
+from abc import ABC, abstractmethod
+
+class DiffusionSchedule(ABC):
+    def __init__(self, max_sr: float = 1, min_sr: float = 1e-2) -> None:
+        self.max_sr = max_sr
+        self.min_sr = min_sr
+
+    @abstractmethod
+    def __call__(self, time: T.Tensor) -> T.Tensor:
+        pass
+
+    def get_betas(self, time: T.Tensor) -> T.Tensor:
+        pass
+
+class VPDiffusionSchedule(DiffusionSchedule):
+    def __init__(self, max_sr: float = 1, min_sr: float = 1e-2) -> None:
+        self.max_sr = max_sr
+        self.min_sr = min_sr
+
+    def __call__(self, time: T.Tensor) -> T.Tensor:
+        return cosine_diffusion_shedule(time, self.max_sr, self.min_sr)
+
+    def get_betas(self, time: T.Tensor) -> T.Tensor:
+        return cosine_beta_shedule(time, self.max_sr, self.min_sr)
+
+class KarrasDiffusionSchedule(DiffusionSchedule):
+    def __init__(self, max_sigma: float = 1) -> None:
+        self.max_sigma = max_sigma
+
+    def __call__(self, time: T.Tensor) -> T.Tensor:
+        return T.ones_like(time), time * self.max_sigma
+
+    def get_betas(self, time: T.Tensor) -> T.Tensor:
+        return T.zeros_like(time)
 
 
 class CosineEncoding:
@@ -21,19 +55,6 @@ class CosineEncoding:
         return cosine_encoding(
             inpt, self.outp_dim, self.min_value, self.max_value, self.frequency_scaling
         )
-
-
-class DiffusionSchedule:
-    def __init__(self, max_sr: float = 1, min_sr: float = 1e-2) -> None:
-        self.max_sr = max_sr
-        self.min_sr = min_sr
-
-    def __call__(self, time: T.Tensor) -> T.Tensor:
-        return cosine_diffusion_shedule(time, self.max_sr, self.min_sr)
-
-    def get_betas(self, time: T.Tensor) -> T.Tensor:
-        return cosine_beta_shedule(time, self.max_sr, self.min_sr)
-
 
 def cosine_encoding(
     x: T.Tensor,
@@ -292,8 +313,9 @@ def euler_sampler(
     delta_t = 1 / n_steps
 
     # The initial variables needed for the loop
-    x_t = initial_noise
     t = T.ones(num_samples, device=model.device)
+    signal_rates, noise_rates = diff_sched(t.view(expanded_shape))
+    x_t = initial_noise * (signal_rates + noise_rates)
     for step in tqdm(range(n_steps), "Euler-sampling", leave=False):
 
         # Take a step using the euler method and the gradient calculated by the ode
