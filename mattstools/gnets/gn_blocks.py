@@ -3,25 +3,23 @@ Defines the lightweight and streamlined graph object and operations
 """
 import math
 from typing import Tuple
-from dotmap import DotMap
-
-import torch as T
-
-from .graphs import GraphBatch
-from ..modules import DenseNetwork
-from ..torch_utils import (
-    ctxt_from_mask,
-    pass_with_mask,
-    aggr_via_sparse,
-    decompress,
-    smart_cat,
-    masked_pool,
-    empty_0dim_like,
-)
 
 import torch as T
 import torch.nn as nn
 import torch.nn.functional as F
+from dotmap import DotMap
+
+from ..modules import DenseNetwork
+from ..torch_utils import (
+    aggr_via_sparse,
+    ctxt_from_mask,
+    decompress,
+    empty_0dim_like,
+    masked_pool,
+    pass_with_mask,
+    smart_cat,
+)
+from .graphs import GraphBatch
 
 
 class EdgeBlock(nn.Module):
@@ -233,7 +231,7 @@ class EdgeBlock(nn.Module):
 
     def __repr__(self):
         """Sort string representation of the block"""
-        string = f"EdgeBock[{self.msg_type}"
+        string = f"EdgeBlock[{self.msg_type}"
         if self.do_ln:
             string += "-LN"
         if self.use_net:
@@ -401,7 +399,7 @@ class NodeBlock(nn.Module):
                     nodes,
                     self.attn_net,
                     graph.mask,
-                    context=[graph.globs, ctxt],
+                    high_level=[graph.globs, ctxt],
                     padval=-T.inf,
                 )
                 / math.sqrt(self.feat_outp_dim),
@@ -415,7 +413,7 @@ class NodeBlock(nn.Module):
         ## Pass the nodes through the feature network
         if self.use_net:
             nodes = pass_with_mask(
-                nodes, self.feat_net, graph.mask, context=[graph.globs, ctxt]
+                nodes, self.feat_net, graph.mask, high_level=[graph.globs, ctxt]
             )
 
         ## Apply the residual update
@@ -438,7 +436,7 @@ class NodeBlock(nn.Module):
 
     def __repr__(self):
         """Sort string representation of the block"""
-        string = "NodeBock["
+        string = "NodeBlock["
         if self.do_ln:
             string += "LN-"
         if self.use_net:
@@ -589,7 +587,7 @@ class GlobBlock(nn.Module):
             string.append(f"FF({self.feat_net.one_line_string()})")
         if self.do_rsdl:
             string.append(f"{self.rsdl_type}")
-        string = f"GlobBock[{'-'.join(string)}]"
+        string = f"GlobBlock[{'-'.join(string)}]"
         return string
 
 

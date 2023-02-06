@@ -2,6 +2,40 @@ from typing import Optional, Tuple
 import math
 import torch as T
 from tqdm import tqdm
+from abc import ABC, abstractmethod
+
+class DiffusionSchedule(ABC):
+    def __init__(self, max_sr: float = 1, min_sr: float = 1e-2) -> None:
+        self.max_sr = max_sr
+        self.min_sr = min_sr
+
+    @abstractmethod
+    def __call__(self, time: T.Tensor) -> T.Tensor:
+        pass
+
+    def get_betas(self, time: T.Tensor) -> T.Tensor:
+        pass
+
+class VPDiffusionSchedule(DiffusionSchedule):
+    def __init__(self, max_sr: float = 1, min_sr: float = 1e-2) -> None:
+        self.max_sr = max_sr
+        self.min_sr = min_sr
+
+    def __call__(self, time: T.Tensor) -> T.Tensor:
+        return cosine_diffusion_shedule(time, self.max_sr, self.min_sr)
+
+    def get_betas(self, time: T.Tensor) -> T.Tensor:
+        return cosine_beta_shedule(time, self.max_sr, self.min_sr)
+
+class KarrasDiffusionSchedule(DiffusionSchedule):
+    def __init__(self, max_sigma: float = 1) -> None:
+        self.max_sigma = max_sigma
+
+    def __call__(self, time: T.Tensor) -> T.Tensor:
+        return T.ones_like(time), time * self.max_sigma
+
+    def get_betas(self, time: T.Tensor) -> T.Tensor:
+        return T.zeros_like(time)
 
 
 class CosineEncoding:
@@ -21,19 +55,6 @@ class CosineEncoding:
         return cosine_encoding(
             inpt, self.outp_dim, self.min_value, self.max_value, self.frequency_scaling
         )
-
-
-class DiffusionSchedule:
-    def __init__(self, max_sr: float = 1, min_sr: float = 1e-2) -> None:
-        self.max_sr = max_sr
-        self.min_sr = min_sr
-
-    def __call__(self, time: T.Tensor) -> T.Tensor:
-        return cosine_diffusion_shedule(time, self.max_sr, self.min_sr)
-
-    def get_betas(self, time: T.Tensor) -> T.Tensor:
-        return cosine_beta_shedule(time, self.max_sr, self.min_sr)
-
 
 def cosine_encoding(
     x: T.Tensor,
@@ -65,7 +86,7 @@ def cosine_encoding(
     """
 
     # Unsqueeze if final dimension is flat
-    if x.shape[-1] != 1:
+    if x.shape[-1] != 1 or x.dim() == 1:
         x = x.unsqueeze(-1)
 
     # Check the the bounds are obeyed
@@ -183,16 +204,12 @@ def ddim_sampler(
     step_size = 1 / n_steps
 
     # The initial variables needed for the loop
-    next_noisy_data = initial_noise
-    next_diff_times = T.ones(num_samples, device=model.device)
-    next_signal_rates, next_noise_rates = diff_sched(
-        next_diff_times.view(expanded_shape),
-    )
+    noisy_data = initial_noise
+    diff_times = T.ones(num_samples, device=model.device)
+    next_signal_rates, next_noise_rates = diff_sched(diff_times.view(expanded_shape))
     for step in tqdm(range(n_steps), "DDIM-sampling", leave=False):
 
         # Update with the previous 'next' step
-        noisy_data = next_noisy_data
-        diff_times = next_diff_times
         signal_rates = next_signal_rates
         noise_rates = next_noise_rates
 
@@ -205,9 +222,9 @@ def ddim_sampler(
         pred_data = ddim_predict(noisy_data, pred_noises, signal_rates, noise_rates)
 
         # Get the next predicted components using the next signal and noise rates
-        next_diff_times = diff_times - step_size
+        diff_times = diff_times - step_size
         next_signal_rates, next_noise_rates = diff_sched(
-            next_diff_times.view(expanded_shape)
+            diff_times.view(expanded_shape)
         )
 
         # Clamp the predicted X_0 for stability
@@ -215,7 +232,7 @@ def ddim_sampler(
             pred_data.clamp_(*clip_predictions)
 
         # Remix the predicted components to go from estimated X_0 -> X_{t-1}
-        next_noisy_data = next_signal_rates * pred_data + next_noise_rates * pred_noises
+        noisy_data = next_signal_rates * pred_data + next_noise_rates * pred_noises
 
     return pred_data, all_stages
 
@@ -255,7 +272,7 @@ def euler_maruyama_sampler(
         _, noise_rates = diff_sched(t.view(expanded_shape))
         s = -pred_noises / noise_rates
 
-        # Take one step using the eu method
+        # Take one step using the em method
         betas = diff_sched.get_betas(t.view(expanded_shape))
         x_t += 0.5 * betas * (x_t + 2 * s) * delta_t
         x_t += (betas * delta_t).sqrt() * T.randn_like(x_t)
@@ -296,8 +313,9 @@ def euler_sampler(
     delta_t = 1 / n_steps
 
     # The initial variables needed for the loop
-    x_t = initial_noise
     t = T.ones(num_samples, device=model.device)
+    signal_rates, noise_rates = diff_sched(t.view(expanded_shape))
+    x_t = initial_noise * (signal_rates + noise_rates)
     for step in tqdm(range(n_steps), "Euler-sampling", leave=False):
 
         # Take a step using the euler method and the gradient calculated by the ode

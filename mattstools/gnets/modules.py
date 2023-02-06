@@ -4,20 +4,19 @@ These modules are designed to be combined and chained together
 - Each module contains the attributes inpt_dim and outp_dim which allows them to be chained
 """
 
+import math
 import warnings
 from typing import Tuple, Union
-import math
 
 import torch as T
 import torch.nn as nn
 
-from ..utils import merge_dict
-from ..modules import DenseNetwork
-from ..torch_utils import smart_cat, masked_pool, pass_with_mask, reparam_trick
-from ..distances import knn, masked_dist_matrix, masked_diff_matrix
-
-from ..gnets.graphs import GraphBatch
+from ..distances import knn, masked_diff_matrix, masked_dist_matrix
 from ..gnets.gn_blocks import GNBlock
+from ..gnets.graphs import GraphBatch
+from ..modules import DenseNetwork
+from ..torch_utils import masked_pool, pass_with_mask, reparam_trick, smart_cat
+from ..utils import merge_dict
 
 
 class EmbeddingLayer(nn.Module):
@@ -61,7 +60,7 @@ class EmbeddingLayer(nn.Module):
             graph.nodes,
             self.dense_net,
             mask=graph.mask,
-            context=smart_cat([graph.globs, ctxt]),
+            high_level=smart_cat([graph.globs, ctxt]),
         )
         return graph
 

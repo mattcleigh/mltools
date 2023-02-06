@@ -1,184 +1,36 @@
 """
-General mix of utility functions
+General mix of utility functions not related to numpy or pytorch
 """
 
 import argparse
-from pathlib import Path
-from typing import Optional, Union, Tuple, Any
-from functools import reduce
-from dotmap import DotMap
-import operator
 import json
-import yaml
-import numpy as np
+import math
+import operator
+from functools import reduce
+from pathlib import Path
+from typing import Any, Optional, Tuple, Union
 
+import numpy as np
+import yaml
+from dotmap import DotMap
 from sklearn.preprocessing import (
-    RobustScaler,
-    StandardScaler,
     PowerTransformer,
     QuantileTransformer,
+    RobustScaler,
+    StandardScaler,
 )
 
 
-def get_standard_configs(
-    def_train: str = "config/train.yaml",
-    def_net: str = "config/net.yaml",
-    def_data: str = "config/data.yaml",
-) -> Tuple[DotMap, DotMap, DotMap]:
-    """Loads, modifies, and returns three configuration dictionaries using command
-    line arguments for a basic training setup
-    - For configuring the dataset, network and training scheme
-    - One can set the names of the config files to load
-    - One can then modify the returned dictionaries using additional arguments
-
-    Any extra arguments can be manually added in each project
-    args:
-        def_train: Path to default train config file
-        def_net: Path to default net config file
-        def_data: Path to default data config file
-    """
-    print("Loading config files")
-
-    parser = argparse.ArgumentParser()
-
-    ## Config files
-    parser.add_argument(
-        "--data_conf",
-        type=str,
-        default=def_data,
-        help="Path to config file to use as a template for data preperation",
-    )
-    parser.add_argument(
-        "--net_conf",
-        type=str,
-        default=def_net,
-        help="Path to config file to use as a template for network construction",
-    )
-    parser.add_argument(
-        "--train_conf",
-        type=str,
-        default=def_train,
-        help="Path to config file to use as a template for training scheme",
-    )
-
-    ## Network base kwargs
-    parser.add_argument(
-        "--name", type=str, help="The name to use for saving the network"
-    )
-    parser.add_argument(
-        "--save_dir", type=str, help="The directory to use for saving the network"
-    )
-    parser.add_argument(
-        "--fine_tune",
-        type=str,
-        help="Name of another network to use as a template and starting point",
-    )
-
-    ## Learning scheme
-    parser.add_argument(
-        "--lr", type=float, help="Learning rate given to optimiser (max for cyclic)"
-    )
-    parser.add_argument(
-        "--sched_name", type=float, help="Name of the learning rate scheduler"
-    )
-    parser.add_argument(
-        "--batch_size", type=int, help="Number of samples per training batch"
-    )
-    parser.add_argument(
-        "--num_workers", type=int, help="Number of parellel threads to load the batches"
-    )
-    parser.add_argument(
-        "--patience", type=int, help="Number of bad epochs to allow before stopping"
-    )
-    parser.add_argument(
-        "--max_epochs", type=int, help="Max number of epochs to train for"
-    )
-    parser.add_argument(
-        "--quick_mode", type=int, help="For debugging, only pass X batches per epoch"
-    )
-
-    parser.add_argument(
-        "--resume",
-        type=str2bool,
-        help="Resume a job by reloading the original configs and the latest checkpoint",
-        nargs="?",
-        const=True,
-        default=False,
-    )
-    parser.add_argument(
-        "--retry",
-        type=str2bool,
-        help="Retry a job using the original configs, does not load the checkpoint!",
-        nargs="?",
-        const=True,
-        default=False,
-    )
-    parser.add_argument(
-        "--tqdm_quiet",
-        type=str2bool,
-        help="Silences the tqdm output for logging",
-        nargs="?",
-        const=True,
-        default=False,
-    )
-
-    ## Load the arguments
-    args, _ = parser.parse_known_args()
-
-    ## Raise an error if more than resume, retry
-    if sum([args.resume, args.retry, (args.fine_tune is not None)]) > 1:
-        raise ValueError("Please only select one option for resume/retry/fine_tune")
-
-    ## Change the paths to previous configs if resuming, otherwise keep defaults
-    if args.resume or args.retry:
-        args.net_conf = Path(args.save_dir, args.name, "config/net.yaml")
-        args.data_conf = Path(args.save_dir, args.name, "config/data.yaml")
-        args.train_conf = Path(args.save_dir, args.name, "config/train.yaml")
-
-    ## Load the config dictionaries
-    data_conf, net_conf, train_conf = load_yaml_files(
-        [args.data_conf, args.net_conf, args.train_conf]
-    )
-
-    ## Remove all yaml anchors
-    print("- Removing yaml anchors")
-    data_conf = remove_keys_starting_with(data_conf, "__")
-    net_conf = remove_keys_starting_with(net_conf, "__")
-    train_conf = remove_keys_starting_with(train_conf, "__")
-
-    ## Most args need manual placement in the configuration dicts
-    args_into_conf(args, net_conf, "name", "base_kwargs/name")
-    args_into_conf(args, net_conf, "save_dir", "base_kwargs/save_dir")
-    args_into_conf(args, net_conf, "fine_tune", "base_kwargs/fine_tune")
-    args_into_conf(args, train_conf, "batch_size", "loader_kwargs/batch_size")
-    args_into_conf(args, train_conf, "num_workers", "loader_kwargs/num_workers")
-    args_into_conf(args, train_conf, "sched_name", "trainer_kwargs/sched_dict/name")
-    args_into_conf(args, train_conf, "lr", "trainer_kwargs/optim_dict/lr")
-    args_into_conf(args, train_conf, "patience", "trainer_kwargs/patience")
-    args_into_conf(args, train_conf, "max_epochs", "trainer_kwargs/max_epochs")
-    args_into_conf(args, train_conf, "quick_mode", "trainer_kwargs/quick_mode")
-
-    if args.resume:
-        args_into_conf(args, train_conf, "resume", "trainer_kwargs/resume")
-    if args.tqdm_quiet:
-        args_into_conf(args, train_conf, "tqdm_quiet", "trainer_kwargs/tqdm_quiet")
-
-    ## Convert the configs to dotmaps for easier access
-    return (
-        DotMap(data_conf, _dynamic=False),
-        DotMap(net_conf, _dynamic=False),
-        DotMap(train_conf, _dynamic=False),
-    )
-
-
-def standardise(data, means, stds):
-    """Standardise data by using mean subraction and std division"""
-    return (data - means) / (stds + 1e-8)
-
-
-def unstandardise(data, means, stds):
-    """Undo a standardisation operation by multiplying by std and adding mean"""
-    return data * stds + means
+def str2bool(mystring: str) -> bool:
+    """Convert a string object into a boolean"""
+    if isinstance(mystring, bool):
+        return mystring
+    if mystring.lower() in ("yes", "true", "t", "y", "1"):
+        return True
+    if mystring.lower() in ("no", "false", "f", "n", "0"):
+        return False
+    else:
+        raise argparse.ArgumentTypeError("Boolean value expected.")
 
 
 def merge_dict(source: dict, update: dict) -> dict:
@@ -272,104 +124,9 @@ def remove_keys_starting_with(dic: dict, match: str) -> dict:
     return {key: val for key, val in dic.items() if key[: len(match)] != match}
 
 
-def interweave(arr_1: np.ndarray, arr_2: np.ndarray) -> np.ndarray:
-    """Combine two arrays by alternating along the first dimension
-    args:
-        a: array to take even indices
-        b: array to take odd indices
-    returns:
-        combined array
-    """
-    arr_comb = np.empty(
-        (arr_1.shape[0] + arr_2.shape[0], *arr_1.shape[1:]), dtype=arr_1.dtype
-    )
-    arr_comb[0::2] = arr_1
-    arr_comb[1::2] = arr_2
-    return arr_comb
-
-
-def sum_other_axes(array: np.ndarray, axis: int) -> np.ndarray:
-    """Applies numpy sum to all axes except one in an array"""
-    axes_for_sum = [i for i in range(len(array.shape))]
-    axes_for_sum.pop(axis)
-    return array.sum(axis=tuple(axes_for_sum))
-
-
-def mid_points(array: np.ndarray) -> np.ndarray:
-    """Return the midpoints of an array, one smaller"""
-    return (array[1:] + array[:-1]) / 2
-
-
-def undo_mid(array: np.ndarray) -> np.ndarray:
-    """Undo the midpoints, trying to get the bin boundaries"""
-    array = np.array(array)  ## Have to include this because of pandas
-    half_bw = (array[1] - array[0]) / 2  ## Assumes constant bin widths
-    array = np.insert(array + half_bw, 0, array[0] - half_bw)
-    return array
-
-
-def chunk_given_size(a: np.ndarray, size: int, axis: int = 0) -> np.ndarray:
-    """Split an array into chunks along an axis, the final chunk will be smaller"""
-    return np.split(a, np.arange(size, a.shape[axis], size), axis=axis)
-
-
-def apply_mask(arrays: list, mask: np.ndarray):
-    """Applies a mask to a list of arrays"""
-    return [a[mask] for a in arrays]
-
-
-def str2bool(mystring: str) -> bool:
-    """Convert a string object into a boolean"""
-    if isinstance(mystring, bool):
-        return mystring
-    if mystring.lower() in ("yes", "true", "t", "y", "1"):
-        return True
-    if mystring.lower() in ("no", "false", "f", "n", "0"):
-        return False
-    else:
-        raise argparse.ArgumentTypeError("Boolean value expected.")
-
-
-def log_clip(
-    data: np.ndarray, clip_min: Optional[float] = 1e-6, clip_max: Optional[float] = None
-) -> np.ndarray:
-    """Applies a clip and then the log function, typically to prevent neg infs"""
-    return np.log(np.clip(data, clip_min, clip_max))
-
-
-def min_loc(data: np.ndarray) -> tuple:
-    """Returns the idx for the minimum of a multidimensional array"""
-    return np.unravel_index(data.argmin(), data.shape)
-
-
-def log_squash(data: np.ndarray) -> np.ndarray:
-    """Apply a log squashing function for distributions with high tails"""
-    return np.sign(data) * np.log(np.abs(data) + 1)
-
-
-def undo_log_squash(data: np.ndarray) -> np.ndarray:
-    """Undo the log squash function above"""
-    return np.sign(data) * (np.exp(np.abs(data)) - 1)
-
-
-def signed_angle_diff(angle1: Any, angle2: Any) ->Any:
+def signed_angle_diff(angle1: Any, angle2: Any) -> Any:
     """Calculate diff between two angles reduced to the interval of [-pi, pi]"""
-    return (angle1 - angle2 + np.pi) % (2 * np.pi) - np.pi
-
-
-def empty_0dim_like(arr: np.ndarray) -> np.ndarray:
-    """Returns an empty array with similar size as the input but with its final
-    dimension size reduced to 0
-    """
-
-    ## Get all but the final dimension
-    all_but_last = arr.shape[:-1]
-
-    ## Ensure that this is a tuple/list so it can agree with return syntax
-    if isinstance(all_but_last, int):
-        all_but_last = [all_but_last]
-
-    return np.empty((*all_but_last, 0), dtype=arr.dtype)
+    return (angle1 - angle2 + math.pi) % (2 * math.pi) - math.pi
 
 
 def load_yaml_files(files: Union[list, tuple, str]) -> tuple:

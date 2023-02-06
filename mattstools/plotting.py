@@ -17,7 +17,7 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 from scipy.interpolate import make_interp_spline
 from scipy.stats import pearsonr
 
-from .utils import mid_points, undo_mid
+from .numpy_utils import mid_points, undo_mid
 
 ## Some defaults for my plots to make them look nicer
 plt.rcParams["xaxis.labellocation"] = "right"
@@ -219,6 +219,7 @@ def plot_multi_hists(
     rat_label=None,
     scale: int = 5,
     leg: bool = True,
+    leg_loc: str = "upper left",
     incl_zeros: bool = True,
     already_hists: bool = False,
     hist_fills: list = None,
@@ -252,6 +253,7 @@ def plot_multi_hists(
         rat_label: The label for the ratio plot
         scale: The size in inches for each subplot
         leg: If the legend should be plotted
+        leg_loc: The location of the legend
         incl_zeros: If zero values should be included in the histograms or ignored
         already_hists: If the data is already histogrammed and doesnt need to be binned
         hist_fills: Bool for each histogram in data_list, if it should be filled
@@ -300,7 +302,10 @@ def plot_multi_hists(
     )
     if n_axis == 1 and not do_ratio_to_first:
         axes = np.array([axes])
-    axes = axes.reshape(dims)
+    if do_ratio_to_first:
+        axes = np.transpose(axes)
+    else:
+        axes = axes.reshape(dims)
 
     ## Replace the zeros
     if not incl_zeros:
@@ -310,7 +315,6 @@ def plot_multi_hists(
     ## Cycle through each axis
     for i in range(n_axis):
         b = bins[i]
-
         ## Reduce bins based on number of unique datapoints
         ## If the number of datapoints is less than 10 then we assume interger types
         if isinstance(b, str) and not already_hists:
@@ -436,9 +440,25 @@ def plot_multi_hists(
             axes[i, 0].set_xlabel(col_labels[i])
 
         ## Set the limits
-        axes[i, 0].set_xlim(b[0], b[-1])
+        if bins is None:
+            x_low, x_high = np.quantile(b, [0.0, 0.85])
+            axes[i, 0].set_xlim(x_low, x_high)
+        else:
+            axes[i, 0].set_xlim(b[0], b[-1])
+
         if ylim is not None:
-            axes[i, 0].set_ylim(*ylim)
+            setylim = ylim
+            axes[i, 0].set_ylim(*setylim)
+        else:
+            ylim1, ylim2 = axes[i, 0].get_ylim()
+            if logy:
+                # pad up the ylim (which is in logscale) by 25%
+                ylim2 = 10 ** (np.log10(ylim2) * 1.40)
+                setylim = (1, ylim2)
+            else:
+                ylim2 = ylim2 * 1.35
+                setylim = (0, ylim2)
+            axes[i, 0].set_ylim(*setylim)
 
         if do_ratio_to_first:
             axes[i, 1].set_xlim(b[0], b[-1])
@@ -461,10 +481,10 @@ def plot_multi_hists(
             else:
                 axes[i, 1].set_ylabel(f"Ratio to {type_labels[0]}")
 
-    ## Only do legend on the first axis
+    ## Only do legend on the first axis.
     if leg:
-        axes[0, 0].legend()
-
+        for ax in axes[:, 0]:
+            ax.legend(loc=leg_loc)
     ## Save the image as a png
     fig.tight_layout()
 
@@ -812,7 +832,7 @@ def plot_latent_space(
     axis[0].legend()
     fig.tight_layout()
     fig.subplots_adjust(wspace=0, hspace=0)
-    fig.savefig(path.with_suffix(".png"))
+    fig.savefig(Path(path).with_suffix(".png"))
     if return_fig:
         return fig
     plt.close(fig)
