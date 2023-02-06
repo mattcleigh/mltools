@@ -227,7 +227,7 @@ def plot_multi_hists(
     hist_kwargs: dict = None,
     hist_scale: float = 1,
     incl_overflow: bool = False,
-    incl_underflow: bool = True,
+    incl_underflow: bool = False,
     do_step: bool = True,
     do_ratio_to_first: bool = False,
     as_pdf: bool = False,
