@@ -296,6 +296,10 @@ def get_sched(
         return LinearWarmupRootDecay(opt, **dict_copy)
     elif name == "warmup":
         return WarmupToConstant(opt, **dict_copy)
+    elif name == "lr_sheduler.ExponentialLR":
+        return schd.ExponentialLR(opt, **dict_copy)
+    elif name == "lr_scheduler.ConstantLR":
+        return schd.ConstantLR(opt, **dict_copy)
     else:
         raise ValueError(f"No scheduler with name: {name}")
 

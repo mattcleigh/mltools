@@ -338,7 +338,7 @@ class DoublingConvNet(nn.Module):
 
         ## Create the dense network
         self.dense = DenseNetwork(
-            inpt_dim=np.prod(inp_size // 2) * inp_c,
+            inpt_dim=np.prod(inp_size // 2) * out_c,
             outp_dim=outp_dim,
             ctxt_dim=ctxt_dim,
             **dense_kwargs,

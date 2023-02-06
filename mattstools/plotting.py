@@ -146,6 +146,7 @@ def plot_corr_heatmaps(
         )
         plt.close(fig)
         return img
+    plt.close(fig)
 
 
 def plot_multi_loss(
@@ -330,6 +331,10 @@ def plot_multi_hists(
             ## For a multiple histogram
             if multi_hist is not None and multi_hist[j] > 1:
                 data = np.copy(data_list[j][:, i]).reshape(-1, multi_hist[j])
+                if incl_overflow:
+                    data = np.minimum(data, b[-1])
+                if incl_underflow:
+                    data = np.maximum(data, b[0])
                 mh_hists = []
                 for mh in range(multi_hist[j]):
                     mh_hists.append(np.histogram(data[:, mh], b, density=normed)[0])
@@ -500,6 +505,7 @@ def plot_multi_hists(
         )
         plt.close(fig)
         return img
+    plt.close(fig)
 
 
 def plot_and_save_hists(
