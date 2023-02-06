@@ -1,30 +1,29 @@
-"""
-A collection of misculaneous functions usefull for the lighting/hydra template
-"""
+"""A collection of misculaneous functions usefull for the lighting/hydra
+template."""
 
+import logging
 import os
 from pathlib import Path
-import wandb
-import rich
-import rich.tree
-import rich.syntax
-import hydra
-import logging
-from typing import List, Any, Sequence
-from omegaconf import OmegaConf, DictConfig
+from typing import Any, List, Sequence
 
+import hydra
+import rich
+import rich.syntax
+import rich.tree
+import wandb
+from omegaconf import DictConfig, OmegaConf
+from pytorch_lightning import LightningModule, Trainer
 from pytorch_lightning.utilities.rank_zero import rank_zero_only
-from pytorch_lightning import Trainer, LightningModule
 
 log = logging.getLogger(__name__)
 
 
 @rank_zero_only
 def reload_original_config(cfg: OmegaConf) -> OmegaConf:
-    """Replaces the cfg with the one stored at the checkpoint location
+    """Replaces the cfg with the one stored at the checkpoint location.
 
-    Will also set the chkpt_dir to the latest version of the 'last' checkpoint
-
+    Will also set the chkpt_dir to the latest version of the 'last'
+    checkpoint
     """
 
     # Load the original config found in the the file directory
@@ -122,7 +121,8 @@ def save_config(cfg: OmegaConf) -> None:
 def log_hyperparameters(
     cfg: DictConfig, model: LightningModule, trainer: Trainer
 ) -> None:
-    """Passes the config dict to the trainer's logger, also calculates # params"""
+    """Passes the config dict to the trainer's logger, also calculates #
+    params."""
 
     # Convert the config object to a hyperparameter dict
     hparams = OmegaConf.to_container(cfg, resolve=True)
@@ -140,7 +140,7 @@ def log_hyperparameters(
 
 
 def instantiate_collection(cfg_coll: DictConfig) -> List[Any]:
-    """Uses hydra to instantiate a collection of classes and return a list"""
+    """Uses hydra to instantiate a collection of classes and return a list."""
     objs = []
 
     if not cfg_coll:

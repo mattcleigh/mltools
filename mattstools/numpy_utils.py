@@ -20,66 +20,67 @@ def interweave(arr_1: np.ndarray, arr_2: np.ndarray) -> np.ndarray:
 
 
 def sum_other_axes(array: np.ndarray, axis: int) -> np.ndarray:
-    """Applies numpy sum to all axes except one in an array"""
+    """Applies numpy sum to all axes except one in an array."""
     axes_for_sum = [i for i in range(len(array.shape))]
     axes_for_sum.pop(axis)
     return array.sum(axis=tuple(axes_for_sum))
 
 
 def mid_points(array: np.ndarray) -> np.ndarray:
-    """Return the midpoints of an array, one smaller"""
+    """Return the midpoints of an array, one smaller."""
     return (array[1:] + array[:-1]) / 2
 
 
 def undo_mid(array: np.ndarray) -> np.ndarray:
-    """Undo the midpoints, trying to get the bin boundaries"""
-    array = np.array(array)  ## Have to include this because of pandas
-    half_bw = (array[1] - array[0]) / 2  ## Assumes constant bin widths
+    """Undo the midpoints, trying to get the bin boundaries."""
+    array = np.array(array)  # Have to include this because of pandas
+    half_bw = (array[1] - array[0]) / 2  # Assumes constant bin widths
     array = np.insert(array + half_bw, 0, array[0] - half_bw)
     return array
 
 
 def chunk_given_size(a: np.ndarray, size: int, axis: int = 0) -> np.ndarray:
-    """Split an array into chunks along an axis, the final chunk will be smaller"""
+    """Split an array into chunks along an axis, the final chunk will be
+    smaller."""
     return np.split(a, np.arange(size, a.shape[axis], size), axis=axis)
 
 
 def mask_list(arrays: list, mask: np.ndarray) -> list:
-    """Applies a mask to a list of arrays"""
+    """Applies a mask to a list of arrays."""
     return [a[mask] for a in arrays]
 
 
 def log_clip(
     data: np.ndarray, clip_min: Optional[float] = 1e-6, clip_max: Optional[float] = None
 ) -> np.ndarray:
-    """Applies a clip and then the log function, typically to prevent neg infs"""
+    """Applies a clip and then the log function, typically to prevent neg
+    infs."""
     return np.log(np.clip(data, clip_min, clip_max))
 
 
 def min_loc(data: np.ndarray) -> tuple:
-    """Returns the idx for the minimum of a multidimensional array"""
+    """Returns the idx for the minimum of a multidimensional array."""
     return np.unravel_index(data.argmin(), data.shape)
 
 
 def log_squash(data: np.ndarray) -> np.ndarray:
-    """Apply a log squashing function for distributions with high tails"""
+    """Apply a log squashing function for distributions with high tails."""
     return np.sign(data) * np.log(np.abs(data) + 1)
 
 
 def undo_log_squash(data: np.ndarray) -> np.ndarray:
-    """Undo the log squash function above"""
+    """Undo the log squash function above."""
     return np.sign(data) * (np.exp(np.abs(data)) - 1)
 
 
 def empty_0dim_like(arr: np.ndarray) -> np.ndarray:
     """Returns an empty array with similar size as the input but with its final
-    dimension size reduced to 0
-    """
+    dimension size reduced to 0."""
 
-    ## Get all but the final dimension
+    # Get all but the final dimension
     all_but_last = arr.shape[:-1]
 
-    ## Ensure that this is a tuple/list so it can agree with return syntax
+    # Ensure that this is a tuple/list so it can agree with return syntax
     if isinstance(all_but_last, int):
         all_but_last = [all_but_last]
 
@@ -87,8 +88,7 @@ def empty_0dim_like(arr: np.ndarray) -> np.ndarray:
 
 
 def group_by(a: np.ndarray) -> np.ndarray:
-    """A groupby method which runs over a numpy array, binning by the first column
-    and making many seperate arrays as results
-    """
+    """A groupby method which runs over a numpy array, binning by the first
+    column and making many seperate arrays as results."""
     a = a[a[:, 0].argsort()]
     return np.split(a[:, 1:], np.unique(a[:, 0], return_index=True)[1][1:])

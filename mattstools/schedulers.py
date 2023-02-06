@@ -1,10 +1,9 @@
-"""
-Custom pytorch learning rate schedulers
-"""
+"""Custom pytorch learning rate schedulers."""
 
 import warnings
+
 from torch.optim import Optimizer
-from torch.optim.lr_scheduler import _LRScheduler, OneCycleLR
+from torch.optim.lr_scheduler import OneCycleLR, _LRScheduler
 
 
 class LinearWarmupRootDecay(_LRScheduler):
@@ -18,16 +17,16 @@ class LinearWarmupRootDecay(_LRScheduler):
         use_max_lr: bool = False,
     ) -> None:
 
-        ## For calculating the learning rate profile
+        # For calculating the learning rate profile
         self.dim_model = dim_model
         self.warmup_steps = warmup_steps
         self.num_param_groups = len(optimizer.param_groups)
 
-        ## For overwritting the max learning rate (instead of using dim model)
+        # For overwritting the max learning rate (instead of using dim model)
         self.use_max_lr = use_max_lr
         self.max_lr_coef = (self.dim_model * self.warmup_steps) ** (0.5)
 
-        ## Super init at end for some reason
+        # Super init at end for some reason
         super().__init__(optimizer, last_epoch, verbose)
 
     def get_lr(self) -> float:
@@ -40,7 +39,7 @@ class LinearWarmupRootDecay(_LRScheduler):
 
 
 class WarmupToConstant(_LRScheduler):
-    """Gradually warm-up learning rate in optimizer to a constant value"""
+    """Gradually warm-up learning rate in optimizer to a constant value."""
 
     def __init__(self, optimizer: Optimizer, num_steps: int = 100):
         """
@@ -61,15 +60,17 @@ class WarmupToConstant(_LRScheduler):
 
 
 class CyclicWithWarmup(OneCycleLR):
-    """A cyclic scheduler with dedicated warmup periods based on the onecycle LR
+    """A cyclic scheduler with dedicated warmup periods based on the onecycle
+    LR.
 
-    The only difference is the get_lr method, which resets the scheduler after
-    each cycle instead of throwing out an error
+    The only difference is the get_lr method, which resets the scheduler
+    after each cycle instead of throwing out an error
     """
 
     def get_lr(self):
-        """Overloaded method for aquiring new learning rates
-        Only line that is changed from the original method is the step number!
+        """Overloaded method for aquiring new learning rates Only line that is
+        changed from the original method is the step number!
+
         Also removed the warning that step > length
         """
         if not self._get_lr_called_within_step:  # pylint: disable=no-member
@@ -80,7 +81,7 @@ class CyclicWithWarmup(OneCycleLR):
             )
 
         lrs = []
-        step_num = self.last_epoch % self.total_steps  ## Only changed line!!!
+        step_num = self.last_epoch % self.total_steps  # Only changed line!!!
 
         for group in self.optimizer.param_groups:
             start_step = 0
