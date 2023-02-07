@@ -1,8 +1,10 @@
-from typing import Optional, Tuple
 import math
+from abc import ABC, abstractmethod
+from typing import Optional, Tuple
+
 import torch as T
 from tqdm import tqdm
-from abc import ABC, abstractmethod
+
 
 class DiffusionSchedule(ABC):
     def __init__(self, max_sr: float = 1, min_sr: float = 1e-2) -> None:
@@ -16,6 +18,7 @@ class DiffusionSchedule(ABC):
     def get_betas(self, time: T.Tensor) -> T.Tensor:
         pass
 
+
 class VPDiffusionSchedule(DiffusionSchedule):
     def __init__(self, max_sr: float = 1, min_sr: float = 1e-2) -> None:
         self.max_sr = max_sr
@@ -26,6 +29,7 @@ class VPDiffusionSchedule(DiffusionSchedule):
 
     def get_betas(self, time: T.Tensor) -> T.Tensor:
         return cosine_beta_shedule(time, self.max_sr, self.min_sr)
+
 
 class KarrasDiffusionSchedule(DiffusionSchedule):
     def __init__(self, max_sigma: float = 1) -> None:
@@ -56,6 +60,7 @@ class CosineEncoding:
             inpt, self.outp_dim, self.min_value, self.max_value, self.frequency_scaling
         )
 
+
 def cosine_encoding(
     x: T.Tensor,
     outp_dim: int = 32,
@@ -63,7 +68,8 @@ def cosine_encoding(
     max_value: float = 1.0,
     frequency_scaling: str = "exponential",
 ) -> T.Tensor:
-    """Computes a positional cosine encodings with an increasing series of frequencies
+    """Computes a positional cosine encodings with an increasing series of
+    frequencies.
 
     The frequencies either increase linearly or exponentially (default).
     The latter is good for when max_value is large and extremely high sensitivity to the
@@ -109,7 +115,8 @@ def cosine_encoding(
 def cosine_diffusion_shedule(
     diff_time: T.Tensor, max_sr: float = 1, min_sr: float = 1e-2
 ) -> Tuple[T.Tensor, T.Tensor]:
-    """Calculates the signal and noise rate for any point in the diffusion processes
+    """Calculates the signal and noise rate for any point in the diffusion
+    processes.
 
     Using continuous diffusion times between 0 and 1 which make switching between
     different numbers of diffusion steps between training and testing much easier.
@@ -133,7 +140,7 @@ def cosine_diffusion_shedule(
             (can't be zero due to log)
     """
 
-    ## Use cosine annealing, which requires switching from times -> angles
+    # Use cosine annealing, which requires switching from times -> angles
     start_angle = math.acos(max_sr)
     end_angle = math.acos(min_sr)
     diffusion_angles = start_angle + diff_time * (end_angle - start_angle)
@@ -145,7 +152,8 @@ def cosine_diffusion_shedule(
 def cosine_beta_shedule(
     diff_time: T.Tensor, max_sr: float = 1, min_sr: float = 1e-2
 ) -> T.Tensor:
-    """Returns the beta values for the continuous flows using the above cosine scheduler"""
+    """Returns the beta values for the continuous flows using the above cosine
+    scheduler."""
     start_angle = math.acos(max_sr)
     end_angle = math.acos(min_sr)
     diffusion_angles = start_angle + diff_time * (end_angle - start_angle)
@@ -158,9 +166,8 @@ def ddim_predict(
     signal_rates: T.Tensor,
     noise_rates: T.Tensor,
 ) -> T.Tensor:
-    """Use a single ddim step to predict the final image from anywhere in the diffusion
-    process
-    """
+    """Use a single ddim step to predict the final image from anywhere in the
+    diffusion process."""
     return (noisy_data - noise_rates * pred_noises) / signal_rates
 
 
@@ -175,7 +182,8 @@ def ddim_sampler(
     ctxt: Optional[T.BoolTensor] = None,
     clip_predictions: Optional[tuple] = None,
 ) -> Tuple[T.Tensor, list]:
-    """Apply the DDIM sampling process to generate a batch of samples from noise
+    """Apply the DDIM sampling process to generate a batch of samples from
+    noise.
 
     Args:
         model: A denoising diffusion model
@@ -248,7 +256,8 @@ def euler_maruyama_sampler(
     ctxt: Optional[T.BoolTensor] = None,
     clip_predictions: Optional[tuple] = None,
 ) -> Tuple[T.Tensor, list]:
-    """Apply the full reverse process to noise to generate a batch of samples"""
+    """Apply the full reverse process to noise to generate a batch of
+    samples."""
 
     # Get the initial noise for generation and the number of sammples
     num_samples = initial_noise.shape[0]
@@ -300,7 +309,8 @@ def euler_sampler(
     ctxt: Optional[T.BoolTensor] = None,
     clip_predictions: Optional[tuple] = None,
 ) -> Tuple[T.Tensor, list]:
-    """Apply the full reverse process to noise to generate a batch of samples"""
+    """Apply the full reverse process to noise to generate a batch of
+    samples."""
 
     # Get the initial noise for generation and the number of sammples
     num_samples = initial_noise.shape[0]
@@ -344,20 +354,19 @@ def runge_kutta_sampler(
     ctxt: Optional[T.BoolTensor] = None,
     clip_predictions: Optional[tuple] = None,
 ) -> Tuple[T.Tensor, list]:
-    """Apply the full reverse process to noise to generate a batch of samples"""
+    """Apply the full reverse process to noise to generate a batch of
+    samples."""
 
     # Get the initial noise for generation and the number of sammples
     num_samples = initial_noise.shape[0]
-
-    # The shape needed for expanding the time encodings
-    expanded_shape = [-1] + [1] * (initial_noise.dim() - 1)
 
     # Check the input argument for the n_steps, must be less than what was trained
     all_stages = []
     delta_t = 1 / n_steps
 
     # Wrap the ode gradient in a lambda function depending only on xt and t
-    ode_grad = lambda t, x_t: get_ode_gradient(model, diff_sched, x_t, t, mask, ctxt)
+    def ode_grad(t, x_t):
+        return get_ode_gradient(model, diff_sched, x_t, t, mask, ctxt)
 
     # The initial variables needed for the loop
     x_t = initial_noise

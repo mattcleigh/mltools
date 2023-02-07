@@ -1,6 +1,4 @@
-"""
-Some classes to describe transformer architectures
-"""
+"""Some classes to describe transformer architectures."""
 
 import math
 from typing import Mapping, Optional, Union
@@ -20,7 +18,8 @@ def merge_masks(
     k_shape: T.Size,
     device: T.device,
 ) -> Union[None, T.BoolTensor]:
-    """Create a full attention mask which incoporates the padding information"""
+    """Create a full attention mask which incoporates the padding
+    information."""
 
     # Create the full mask which combines the attention and padding masks
     merged_mask = None
@@ -50,8 +49,8 @@ def attention(
     drp: float = 0.0,
     training: bool = True,
 ) -> T.Tensor:
-    """Apply the attention using the scaled dot product between the key query and
-    key tensors, then matrix multiplied by the value.
+    """Apply the attention using the scaled dot product between the key query
+    and key tensors, then matrix multiplied by the value.
 
     Note that the attention scores are ordered in recv x send, which is the opposite
     to how I usually do it for the graph network, which is send x recv
@@ -100,7 +99,7 @@ def attention(
 
 
 class MultiHeadedAttentionBlock(nn.Module):
-    """Generic Multiheaded Attention
+    """Generic Multiheaded Attention.
 
     Takes in three sequences with dim: (batch, sqeuence, features)
     - q: The primary sequence queries (determines output sequence length)
@@ -150,16 +149,16 @@ class MultiHeadedAttentionBlock(nn.Module):
         """
         super().__init__()
 
-        ## Define model base attributes
+        # Define model base attributes
         self.model_dim = model_dim
         self.num_heads = num_heads
         self.head_dim = model_dim // num_heads
 
-        ## Check that the dimension of each head makes internal sense
+        # Check that the dimension of each head makes internal sense
         if self.head_dim * num_heads != model_dim:
             raise ValueError("Model dimension must be divisible by number of heads!")
 
-        ## Initialise the weight matrices
+        # Initialise the weight matrices
         self.q_linear = nn.Linear(model_dim, model_dim)
         self.k_linear = nn.Linear(model_dim, model_dim)
         self.v_linear = nn.Linear(model_dim, model_dim)
@@ -233,7 +232,8 @@ class MultiHeadedAttentionBlock(nn.Module):
 
 
 class TransformerEncoderLayer(nn.Module):
-    """A transformer encoder layer based on the GPT-2+Normformer style arcitecture.
+    """A transformer encoder layer based on the GPT-2+Normformer style
+    arcitecture.
 
     We choose Normformer as it has often proved to be the most stable to train
     https://arxiv.org/abs/2210.06423
@@ -297,7 +297,8 @@ class TransformerEncoderLayer(nn.Module):
 
 
 class TransformerDecoderLayer(nn.Module):
-    """A transformer dencoder layer based on the GPT-2+Normformer style arcitecture.
+    """A transformer dencoder layer based on the GPT-2+Normformer style
+    arcitecture.
 
     It contains:
     - self-attention-block
@@ -382,7 +383,7 @@ class TransformerDecoderLayer(nn.Module):
 
 
 class TransformerCrossAttentionLayer(TransformerEncoderLayer):
-    """A transformer cross attention layer
+    """A transformer cross attention layer.
 
     It contains:
     - cross-attention-block
@@ -425,7 +426,8 @@ class TransformerCrossAttentionLayer(TransformerEncoderLayer):
 
 
 class TransformerEncoder(nn.Module):
-    """A stack of N transformer encoder layers followed by a final normalisation step
+    """A stack of N transformer encoder layers followed by a final
+    normalisation step.
 
     Sequence -> Sequence
     """
@@ -458,14 +460,15 @@ class TransformerEncoder(nn.Module):
         self.final_norm = nn.LayerNorm(model_dim)
 
     def forward(self, x: T.Tensor, **kwargs) -> T.Tensor:
-        """Pass the input through all layers sequentially"""
+        """Pass the input through all layers sequentially."""
         for layer in self.layers:
             x = layer(x, **kwargs)
         return self.final_norm(x)
 
 
 class TransformerDecoder(nn.Module):
-    """A stack of N transformer dencoder layers followed by a final normalisation step
+    """A stack of N transformer dencoder layers followed by a final
+    normalisation step.
 
     Sequence x Sequence -> Sequence
     """
@@ -498,14 +501,15 @@ class TransformerDecoder(nn.Module):
         self.final_norm = nn.LayerNorm(model_dim)
 
     def forward(self, q_seq: T.Tensor, kv_seq: T.Tensor, **kwargs) -> T.Tensor:
-        """Pass the input through all layers sequentially"""
+        """Pass the input through all layers sequentially."""
         for layer in self.layers:
             q_seq = layer(q_seq, kv_seq, **kwargs)
         return self.final_norm(q_seq)
 
 
 class TransformerVectorEncoder(nn.Module):
-    """A type of transformer encoder which procudes a single vector for the whole seq
+    """A type of transformer encoder which procudes a single vector for the
+    whole seq.
 
     Sequence -> Vector
 
@@ -568,7 +572,7 @@ class TransformerVectorEncoder(nn.Module):
         attn_mask: Optional[T.BoolTensor] = None,
         return_seq: bool = False,
     ) -> Union[T.Tensor, tuple]:
-        """Pass the input through all layers sequentially"""
+        """Pass the input through all layers sequentially."""
 
         # Pass through the self attention encoder
         for layer in self.sa_layers:
@@ -588,7 +592,7 @@ class TransformerVectorEncoder(nn.Module):
         # Pop out the unneeded sequence dimension of 1
         class_token = class_token.squeeze(1)
 
-        ## Return the class token and optionally the sequence as well
+        # Return the class token and optionally the sequence as well
         if return_seq:
             return class_token, seq
         return class_token
@@ -596,7 +600,7 @@ class TransformerVectorEncoder(nn.Module):
 
 class TransformerVectorDecoder(nn.Module):
     """A type of transformer decoder which creates a sequence given a starting
-    vector and a desired mask
+    vector and a desired mask.
 
     Vector -> Sequence
 
@@ -635,7 +639,7 @@ class TransformerVectorDecoder(nn.Module):
     def forward(
         self, vec: T.Tensor, mask: T.BoolTensor, ctxt: Optional[T.Tensor] = None
     ) -> T.Tensor:
-        """Pass the input through all layers sequentially"""
+        """Pass the input through all layers sequentially."""
 
         # Initialise the q-sequence randomly (adhere to mask)
         q_seq = T.randn(
@@ -652,7 +656,7 @@ class TransformerVectorDecoder(nn.Module):
 
 
 class FullTransformerVectorEncoder(nn.Module):
-    """A TVE with added input and output dense embedding networks
+    """A TVE with added input and output dense embedding networks.
 
     Sequence -> Vector
 
@@ -733,7 +737,7 @@ class FullTransformerVectorEncoder(nn.Module):
         attn_bias: Optional[T.Tensor] = None,
         return_seq: bool = False,
     ) -> Union[T.Tensor, tuple]:
-        """Pass the input through all layers sequentially"""
+        """Pass the input through all layers sequentially."""
 
         # Embed the sequence
         seq = self.node_embd(seq, ctxt)
@@ -764,7 +768,7 @@ class FullTransformerVectorEncoder(nn.Module):
 
 
 class FullTransformerVectorDecoder(nn.Module):
-    """A TVD with added input and output embedding networks
+    """A TVD with added input and output embedding networks.
 
     Vector -> Sequence
 
@@ -821,7 +825,7 @@ class FullTransformerVectorDecoder(nn.Module):
     def forward(
         self, vec: T.Tensor, mask: T.BoolTensor, ctxt: Optional[T.Tensor] = None
     ) -> T.Tensor:
-        """Pass the input through all layers sequentially"""
+        """Pass the input through all layers sequentially."""
         vec = self.vec_embd(vec, ctxt=ctxt)
         seq = self.tvd(vec, mask, ctxt=ctxt)
         seq = self.outp_embd(seq, ctxt)
@@ -830,7 +834,7 @@ class FullTransformerVectorDecoder(nn.Module):
 
 
 class FullTransformerEncoder(nn.Module):
-    """A transformer encoder with added input and output embedding networks
+    """A transformer encoder with added input and output embedding networks.
 
     Sequence -> Sequence
     """
@@ -914,7 +918,7 @@ class FullTransformerEncoder(nn.Module):
         attn_bias: Optional[T.Tensor] = None,
         attn_mask: Optional[T.BoolTensor] = None,
     ) -> T.Tensor:
-        """Pass the input through all layers sequentially"""
+        """Pass the input through all layers sequentially."""
         if self.ctxt_dim:
             ctxt = self.ctxt_emdb(ctxt)
         if self.edge_dim:

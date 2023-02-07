@@ -12,7 +12,8 @@ def merge_masks(
     q: T.Tensor,
     k: T.Tensor,
 ) -> T.Tensor:
-    """Create a full attention mask which incoporates the padding information"""
+    """Create a full attention mask which incoporates the padding
+    information."""
 
     # If either pad mask exists, create
     if q_mask is not None or kv_mask is not None:
@@ -52,8 +53,8 @@ def attention(
     dim_key: int,
     attn_mask: T.Tensor = None,
 ) -> T.Tensor:
-    """Apply the attention using the scaled dot product between the key query and
-    key tensors, then matrix multiplied by the value.
+    """Apply the attention using the scaled dot product between the key query
+    and key tensors, then matrix multiplied by the value.
 
     Note that the attention scores are ordered in recv x send, which is the opposite
     to how I usually do it for the graph network, which is send x recv
@@ -91,16 +92,16 @@ class NewHeadedAttentionBlock(nn.Module):
     ) -> None:
         super().__init__()
 
-        ## Define model base attributes
+        # Define model base attributes
         self.model_dim = model_dim
         self.num_heads = num_heads
         self.head_dim = model_dim // num_heads
 
-        ## Check that the dimension of each head makes internal sense
+        # Check that the dimension of each head makes internal sense
         if self.head_dim * num_heads != model_dim:
             raise ValueError("Model dimension must be divisible by number of heads!")
 
-        ## Initialise the weight matrices
+        # Initialise the weight matrices
         self.q_linear = nn.Linear(model_dim, model_dim)
         self.k_linear = nn.Linear(model_dim, model_dim)
         self.v_linear = nn.Linear(model_dim, model_dim)
