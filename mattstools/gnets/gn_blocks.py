@@ -7,6 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from dotmap import DotMap
 
+from ..modules import DenseNetwork
 from ..torch_utils import (
     aggr_via_sparse,
     ctxt_from_mask,
@@ -17,7 +18,6 @@ from ..torch_utils import (
     smart_cat,
 )
 from .graphs import GraphBatch
-from .modules import DenseNetwork
 
 
 class EdgeBlock(nn.Module):

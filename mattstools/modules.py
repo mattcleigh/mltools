@@ -465,13 +465,21 @@ class GRL(nn.Module):
 class IterativeNormLayer(nn.Module):
     """A basic normalisation layer so it can be part of the model.
 
+    Calculates the stats of an input vector over the batch dimension
+    Must always be passed batched data!
+    Any additional dimension to calculate the stats must be provided as extra_dims
+
+    For example: Providing an image with inpt_dim = batch, width, heigh, channels
+    Will result in an operation with independant stats per pixel, per channel
+    If instead you want the mean and shift only for each channel you will have to give
+    extra_dims = (1, 2) or (-2, -3)
+
     Note! If a mask is provided in the forward pass, then this must be
     the dimension to apply over the masked inputs! For example: Graph
-    nodes are usually batch x n_nodes x features so to normalise over
-    the features one would typically give extra_dims as (0,) But nodes
-    are always passed with the mask which flattens it to batch x
-    features. Batch dimension is done automatically, so we dont pass any
-    extra_dims!!!
+    nodes are usually batch x n_nodes x features so to average out the n_nodes
+    one would typically give extra_dims as (0,). But nodes
+    are always passed with the mask which flattens it to batch x features.
+    Batch dimension is done automatically, so we dont pass any extra_dims!!!
     """
 
     def __init__(

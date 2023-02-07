@@ -310,6 +310,7 @@ def plot_multi_hists(
     # Cycle through each axis
     for i in range(n_axis):
         b = bins[i]
+
         # Reduce bins based on number of unique datapoints
         # If the number of datapoints is less than 10 then we assume interger types
         if isinstance(b, str) and not already_hists:
