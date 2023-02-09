@@ -468,7 +468,7 @@ class FullGraphVectorGenerator(nn.Module):
 
 class FullGraphVectorEncoder(nn.Module):
     """A graph network encoder which produces a vector representation passed
-    through dns graph to vector."""
+    through a dense network graph -> vector."""
 
     def __init__(
         self,

@@ -1,6 +1,6 @@
 """Defines the lightweight and streamlined graph object and operations."""
 import math
-from typing import Tuple
+from typing import Optional, Tuple
 
 import torch as T
 import torch.nn as nn
@@ -138,7 +138,7 @@ class EdgeBlock(nn.Module):
 
         return feat_inpt_dim, feat_outp_dim, ctxt_inpt_dim
 
-    def _build_messages(self, graph: GraphBatch):
+    def _build_messages(self, graph: GraphBatch) -> T.Tensor:
         """Create the messages passed between the two nodes."""
 
         # Expand the node contributions (No mem is allocated in expand!)
@@ -224,7 +224,7 @@ class EdgeBlock(nn.Module):
         # Decompress the pooled information as nodes are not comp!
         pooled_edges = decompress(pooled_edges, graph.adjmat.any(1))
 
-        # Return the new edge features and the pooled edges (undo the compression)
+        # Return the new edge features and the pooled edges
         return edges, pooled_edges
 
     def __repr__(self):
@@ -599,9 +599,9 @@ class GNBlock(nn.Module):
         ctxt_dim: int = 0,
         do_globs: bool = True,
         pers_edges: bool = True,
-        edge_block_kwargs: DotMap = None,
-        node_block_kwargs: DotMap = None,
-        glob_block_kwargs: DotMap = None,
+        edge_block_kwargs: Optional[DotMap] = None,
+        node_block_kwargs: Optional[DotMap] = None,
+        glob_block_kwargs: Optional[DotMap] = None,
     ) -> None:
         """
         args:
