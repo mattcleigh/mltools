@@ -5,7 +5,7 @@ from typing import Mapping, Optional, Union
 
 import torch as T
 import torch.nn as nn
-from torch.nn.functional import softmax
+from torch.nn.functional import dropout, softmax
 
 from .modules import DenseNetwork
 
@@ -77,10 +77,8 @@ def attention(
     if attn_bias is not None:  # Move the head dimension to the first
         scores = scores + attn_bias.permute(0, 3, 1, 2)
 
-    # Calculate the dropout mask
-    if training and drp:
-        drop_mask = T.rand(scores.shape[:-1], device=scores.device) < drp
-        scores = scores.masked_fill(drop_mask.unsqueeze(-1), -T.inf)
+    # Apply dropout to the attention scores
+    scores = dropout(scores, p=drp, training=training)
 
     # Mask away the scores between invalid elements in sequence
     if attn_mask is not None:
