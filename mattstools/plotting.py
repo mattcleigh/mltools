@@ -450,11 +450,11 @@ def plot_multi_hists(
             if logy:
                 # pad up the ylim (which is in logscale) by 25%
                 ylim2 = 10 ** (np.log10(ylim2) * 1.40)
-                setylim = (1, ylim2)
+                setylim = (ylim1, ylim2)
             else:
                 ylim2 = ylim2 * 1.35
-                setylim = (0, ylim2)
-            axes[i, 0].set_ylim(*setylim)
+                setylim = (ylim1, ylim2)
+            # axes[i, 0].set_ylim(*setylim)
 
         if do_ratio_to_first:
             axes[i, 1].set_xlim(b[0], b[-1])
