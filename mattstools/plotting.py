@@ -780,7 +780,12 @@ def plot_2d_hists(path, hist_list, hist_labels, ax_labels, bins):
 
 
 def plot_latent_space(
-    path, latents, labels=None, n_classes=None, return_fig: bool = False
+    path,
+    latents,
+    labels=None,
+    n_classes=None,
+    return_fig: bool = False,
+    return_img=False,
 ):
     """Plot the latent space marginal distributions of a VAE."""
 
@@ -831,4 +836,10 @@ def plot_latent_space(
     fig.savefig(Path(path).with_suffix(".png"))
     if return_fig:
         return fig
+    if return_img:
+        img = PIL.Image.frombytes(
+            "RGB", fig.canvas.get_width_height(), fig.canvas.tostring_rgb()
+        )
+        plt.close(fig)
+        return img
     plt.close(fig)

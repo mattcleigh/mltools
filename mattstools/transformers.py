@@ -77,9 +77,6 @@ def attention(
     if attn_bias is not None:  # Move the head dimension to the first
         scores = scores + attn_bias.permute(0, 3, 1, 2)
 
-    # Apply dropout to the attention scores
-    scores = dropout(scores, p=drp, training=training)
-
     # Mask away the scores between invalid elements in sequence
     if attn_mask is not None:
         scores = scores.masked_fill(~attn_mask.unsqueeze(-3), -T.inf)
@@ -89,6 +86,9 @@ def attention(
 
     # Kill the nans introduced by the padded query elements
     scores = T.nan_to_num(scores, 0)
+
+    # Apply dropout to the attention scores
+    scores = dropout(scores, p=drp, training=training)
 
     # Finally multiply these scores by the output
     scores = T.matmul(scores, value)
