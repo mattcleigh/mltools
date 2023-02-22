@@ -101,7 +101,7 @@ def plot_corr_heatmaps(
 
     ## Add line
     if incl_line:
-        ax.plot([min(hist[1]), max(hist[1])], [min(hist[2]), max(hist[2])], "k--")
+        ax.plot([min(hist[1]), max(hist[1])], [min(hist[2]), max(hist[2])], "k--", lw=1)
 
     ## Add colourbar
     if incl_cbar:
