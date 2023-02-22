@@ -1,8 +1,5 @@
-"""
-Mix of utility functions specifically for pytorch
-"""
+"""Mix of utility functions specifically for pytorch."""
 import os
-from pathlib import Path
 from typing import Iterable, List, Optional, Tuple, Union
 
 import numpy as np
@@ -10,8 +7,6 @@ import torch as T
 import torch.nn as nn
 import torch.optim as optim
 import torch.optim.lr_scheduler as schd
-import yaml
-from dotmap import DotMap
 from geomloss import SamplesLoss
 from torch.utils.data import Dataset, Subset, random_split
 
@@ -26,12 +21,13 @@ from .loss import (
 )
 from .schedulers import CyclicWithWarmup, LinearWarmupRootDecay, WarmupToConstant
 
-## An onnx save argument which is for the pass with mask function (makes it slower)
+# An onnx save argument which is for the pass with mask function (makes it slower)
 ONNX_SAFE = False
 
 
 class GradsOff:
-    """Context manager for passing through a model without it tracking gradients"""
+    """Context manager for passing through a model without it tracking
+    gradients."""
 
     def __init__(self, model) -> None:
         self.model = model
@@ -44,8 +40,9 @@ class GradsOff:
 
 
 class RunningAverage:
-    """A class which tracks the sum and data count so can calculate
-    the running average on demand
+    """A class which tracks the sum and data count so can calculate the running
+    average on demand.
+
     - Uses a tensor for the sum so not to require copying back to cpu which breaks
     GPU asynchronousity
     """
@@ -55,33 +52,33 @@ class RunningAverage:
         self.count = 0
 
     def reset(self):
-        """Resets all statistics"""
+        """Resets all statistics."""
         self.sum *= 0
         self.count *= 0
 
     def update(self, val: T.Tensor, quant: int = 1) -> None:
-        """Updates the running average with a new batched average"""
+        """Updates the running average with a new batched average."""
         self.sum += val * quant
         self.count += quant
 
     @property
     def avg(self) -> float:
-        """Return the current average as a python scalar"""
+        """Return the current average as a python scalar."""
         return (self.sum / self.count).item()
 
 
 def rms(tens: T.Tensor, dim: int = 0) -> T.Tensor:
-    """Returns RMS of a tensor along a dimension"""
+    """Returns RMS of a tensor along a dimension."""
     return tens.pow(2).mean(dim=dim).sqrt()
 
 
 def rmse(tens_a: T.Tensor, tens_b: T.Tensor, dim: int = 0) -> T.Tensor:
-    """Returns RMSE without using torch's warning filled mseloss method"""
+    """Returns RMSE without using torch's warning filled mseloss method."""
     return (tens_a - tens_b).pow(2).mean(dim=dim).sqrt()
 
 
 def get_act(name: str) -> nn.Module:
-    """Return a pytorch activation function given a name"""
+    """Return a pytorch activation function given a name."""
     if name == "relu":
         return nn.ReLU()
     if name == "lrlu":
@@ -104,7 +101,7 @@ def get_act(name: str) -> nn.Module:
 
 
 def base_modules(module: nn.Module) -> list:
-    """Return a list of all of the base modules in a network"""
+    """Return a list of all of the base modules in a network."""
     total = []
     children = list(module.children())
     if not children:
@@ -116,9 +113,8 @@ def base_modules(module: nn.Module) -> list:
 
 
 def empty_0dim_like(inpt: Union[T.Tensor, np.ndarray]) -> Union[T.Tensor, np.ndarray]:
-    """Returns an empty tensor with similar size as the input but with its final
-    dimension reduced to 0
-    """
+    """Returns an empty tensor with similar size as the input but with its
+    final dimension reduced to 0."""
 
     # Get all but the final dimension
     all_but_last = inpt.shape[:-1]
@@ -134,8 +130,7 @@ def empty_0dim_like(inpt: Union[T.Tensor, np.ndarray]) -> Union[T.Tensor, np.nda
 
 def get_nrm(name: str, outp_dim: int) -> nn.Module:
     """Return a 1D pytorch normalisation layer given a name and a output size
-    Returns None object if name is none
-    """
+    Returns None object if name is none."""
     if name == "batch":
         return nn.BatchNorm1d(outp_dim)
     if name == "layer":
@@ -147,19 +142,19 @@ def get_nrm(name: str, outp_dim: int) -> nn.Module:
 
 
 def get_optim(optim_dict: dict, params: Iterable) -> optim.Optimizer:
-    """Return a pytorch optimiser given a dict containing a name and kwargs
+    """Return a pytorch optimiser given a dict containing a name and kwargs.
 
     args:
         optim_dict: A dictionary of kwargs used to select and configure the optimiser
         params: A pointer to the parameters that will be updated by the optimiser
     """
 
-    ## Pop off the name and the lookahead setting
+    # Pop off the name and the lookahead setting
     dict_copy = optim_dict.copy()
     name = dict_copy.pop("name")
     lookahead = dict_copy.pop("lookahead", False)
 
-    ## Load the optimiser
+    # Load the optimiser
     if name == "adam":
         opt = optim.Adam(params, **dict_copy)
     elif name == "adamw":
@@ -173,7 +168,7 @@ def get_optim(optim_dict: dict, params: Iterable) -> optim.Optimizer:
     else:
         raise ValueError("No optimiser with name: ", name)
 
-    ## Switch to lookahead version
+    # Switch to lookahead version
     if lookahead:
         opt = Lookahead(opt, k=5, alpha=0.5)
 
@@ -181,17 +176,17 @@ def get_optim(optim_dict: dict, params: Iterable) -> optim.Optimizer:
 
 
 def get_loss_fn(name: str, **kwargs) -> nn.Module:
-    """Return a pytorch loss function given a name"""
+    """Return a pytorch loss function given a name."""
     if name == "none":
         return None
 
-    ## Classification losses
+    # Classification losses
     if name == "crossentropy":
         return nn.CrossEntropyLoss(reduction="none")
     if name == "bcewithlogit":
         return MyBCEWithLogit(reduction="none")
 
-    ## Regression losses
+    # Regression losses
     if name == "huber":
         return nn.HuberLoss(reduction="none")
     if name == "mse":
@@ -199,7 +194,7 @@ def get_loss_fn(name: str, **kwargs) -> nn.Module:
     if name == "mae":
         return nn.L1Loss(reduction="none")
 
-    ## Distribution matching losses
+    # Distribution matching losses
     if name == "energymmd":
         return GeomWrapper(SamplesLoss("energy"))
     if name == "sinkhorn":
@@ -213,7 +208,7 @@ def get_loss_fn(name: str, **kwargs) -> nn.Module:
     if name == "energymovers":
         return EnergyMovers(**kwargs)
 
-    ## Encoding losses
+    # Encoding losses
     if name == "vaeloss":
         return VAELoss()
 
@@ -228,8 +223,8 @@ def get_sched(
     max_lr: float = None,
     max_epochs: float = None,
 ) -> schd._LRScheduler:
-    """Return a pytorch learning rate schedular given a dict containing a name and
-    other kwargs.
+    """Return a pytorch learning rate schedular given a dict containing a name
+    and other kwargs.
 
     I still prefer this method as opposed to the hydra implementation as
     it allows us to specify the cyclical scheduler periods as a function of epochs
@@ -244,34 +239,34 @@ def get_sched(
         max_epochs: The maximum number of epochs to train for
     """
 
-    ## Pop off the name and learning rate for the optimiser
+    # Pop off the name and learning rate for the optimiser
     dict_copy = sched_dict.copy()
     name = dict_copy.pop("name")
 
-    ## Get the max_lr from the optimiser if not specified
+    # Get the max_lr from the optimiser if not specified
     max_lr = max_lr or opt.defaults["lr"]
 
-    ## Exit if the name indicates no scheduler
+    # Exit if the name indicates no scheduler
     if name in ["", "none", "None"]:
         return None
 
-    ## If the steps per epoch is 0, try and get it from the sched_dict
+    # If the steps per epoch is 0, try and get it from the sched_dict
     if steps_per_epoch == 0:
         try:
             steps_per_epoch = dict_copy.pop("steps_per_epoch")
-        except:
+        except KeyError:
             raise ValueError(
                 "steps_per_epoch was not passed to get_sched and was ",
                 "not in the scheduler dictionary!",
             )
 
-    ## Pop off the number of epochs per cycle (needed as arg)
+    # Pop off the number of epochs per cycle (needed as arg)
     if "epochs_per_cycle" in dict_copy:
         epochs_per_cycle = dict_copy.pop("epochs_per_cycle")
     else:
         epochs_per_cycle = 1
 
-    ## Use the same div_factor for cyclic with warmup
+    # Use the same div_factor for cyclic with warmup
     if name == "cyclicwithwarmup":
         if "div_factor" not in dict_copy:
             dict_copy["div_factor"] = 1e4
@@ -296,6 +291,10 @@ def get_sched(
         return LinearWarmupRootDecay(opt, **dict_copy)
     elif name == "warmup":
         return WarmupToConstant(opt, **dict_copy)
+    elif name == "lr_sheduler.ExponentialLR":
+        return schd.ExponentialLR(opt, **dict_copy)
+    elif name == "lr_scheduler.ConstantLR":
+        return schd.ConstantLR(opt, **dict_copy)
     else:
         raise ValueError(f"No scheduler with name: {name}")
 
@@ -303,7 +302,7 @@ def get_sched(
 def train_valid_split(
     dataset: Dataset, v_frac: float, split_type="interweave"
 ) -> Tuple[Subset, Subset]:
-    """Split a pytorch dataset into a training and validation pytorch Subsets
+    """Split a pytorch dataset into a training and validation pytorch Subsets.
 
     args:
         dataset: The dataset to split
@@ -347,15 +346,15 @@ def masked_pool(
 
     """
 
-    ## Automatically get the pooling dimension from the shape of the mask
+    # Automatically get the pooling dimension from the shape of the mask
     if axis is None:
         axis = len(mask.shape) - 1
 
-    ## Or at least ensure that the axis is a positive number
+    # Or at least ensure that the axis is a positive number
     elif axis < 0:
         axis = len(tensor.shape) - axis
 
-    ## Apply the pooling method
+    # Apply the pooling method
     if pool_type == "max":
         tensor[~mask] = -T.inf
         return tensor.max(dim=axis)
@@ -370,23 +369,23 @@ def masked_pool(
 
 
 def smart_cat(inputs: Iterable, dim=-1) -> T.Tensor:
-    """A concatenation option that ensures no memory is copied if tensors are empty or
-    saved as None"""
+    """A concatenation option that ensures no memory is copied if tensors are
+    empty or saved as None."""
 
-    ## Check number of non-empty tensors in the dimension for pooling
+    # Check number of non-empty tensors in the dimension for pooling
     n_nonempt = [0 if i is None else bool(i.size(dim=dim)) for i in inputs]
 
-    ## If there is only one non-empty tensor then we just return it directly
+    # If there is only one non-empty tensor then we just return it directly
     if sum(n_nonempt) == 1:
         return inputs[np.argmax(n_nonempt)]
 
-    ## Otherwise concatenate the not None variables
+    # Otherwise concatenate the not None variables
     return T.cat([i for i in inputs if i is not None], dim=dim)
 
 
 def ctxt_from_mask(context: Union[list, T.Tensor], mask: T.BoolTensor) -> T.Tensor:
-    """Concatenates and returns conditional information expanded and then sampled
-    using a mask.
+    """Concatenates and returns conditional information expanded and then
+    sampled using a mask.
 
     The returned tensor is compressed but repeated the appropriate number
     of times for each sample. Method uses pytorch's expand function so is light on
@@ -408,20 +407,19 @@ def ctxt_from_mask(context: Union[list, T.Tensor], mask: T.BoolTensor) -> T.Tens
         A tensor or a list of tensors containing the sample context info
     mask : T.BoolTensor
         A mask which determines the size and sampling of the context
-
     """
 
-    ## Get the expanded veiw sizes (Use shape[0] not len as it is ONNX safe!)
+    # Get the expanded veiw sizes (Use shape[0] not len as it is ONNX safe!)
     b_size = mask.shape[0]
     new_dims = (len(mask.shape) - 1) * [1]
-    veiw_size = (b_size, *new_dims, -1)  ## Must be: (b, 1, ..., 1, features)
+    veiw_size = (b_size, *new_dims, -1)  # Must be: (b, 1, ..., 1, features)
     ex_size = (*mask.shape, -1)
 
-    ## If there is only one context tensor
+    # If there is only one context tensor
     if not isinstance(context, list):
         return context.view(veiw_size).expand(ex_size)[mask]
 
-    ## For multiple context tensors
+    # For multiple context tensors
     all_context = []
     for ctxt in context:
         if ctxt is not None:
@@ -437,8 +435,8 @@ def pass_with_mask(
     padval: float = 0.0,
     output_dim: Optional[int] = None,
 ) -> T.Tensor:
-    """Pass a collection of padded tensors through a module without wasting computation
-    on the padded elements.
+    """Pass a collection of padded tensors through a module without wasting
+    computation on the padded elements.
 
     Ensures that: output[mask] = module(input[mask], high_level)
     Reliably for models.dense.Dense and nn.Linear
@@ -536,18 +534,19 @@ def pass_with_mask(
 
 def sel_device(dev: Union[str, T.device]) -> T.device:
     """Returns a pytorch device given a string (or a device)
+
     - giving cuda or gpu will run a hardware check first
     """
-    ## Not from config, but when device is specified already
+    # Not from config, but when device is specified already
     if isinstance(dev, T.device):
         return dev
 
-    ## Tries to get gpu if available
+    # Tries to get gpu if available
     if dev in ["cuda", "gpu"]:
         print("Trying to select cuda based on available hardware")
         dev = "cuda" if T.cuda.is_available() else "cpu"
 
-    ## Tries to get specific gpu
+    # Tries to get specific gpu
     elif "cuda" in dev:
         print(f"Trying to select {dev} based on available hardware")
         dev = dev if T.cuda.is_available() else "cpu"
@@ -559,14 +558,15 @@ def sel_device(dev: Union[str, T.device]) -> T.device:
 def move_dev(
     tensor: Union[T.Tensor, tuple, list, dict], dev: Union[str, T.device]
 ) -> Union[T.Tensor, tuple, list, dict]:
-    """Returns a copy of a tensor on the targetted device.
-    This function calls pytorch's .to() but allows for values to be a
+    """Returns a copy of a tensor on the targetted device. This function calls
+    pytorch's .to() but allows for values to be a.
+
     - list of tensors
     - tuple of tensors
     - dict of tensors
     """
 
-    ## Select the pytorch device object if dev was a string
+    # Select the pytorch device object if dev was a string
     if isinstance(dev, str):
         dev = sel_device(dev)
 
@@ -581,8 +581,9 @@ def move_dev(
 
 
 def to_np(inpt: Union[T.Tensor, tuple]) -> np.ndarray:
-    """More consicse way of doing all the necc steps to convert a
-    pytorch tensor to numpy array
+    """More consicse way of doing all the necc steps to convert a pytorch
+    tensor to numpy array.
+
     - Includes gradient deletion, and device migration
     """
     if isinstance(inpt, (tuple, list)):
@@ -593,7 +594,7 @@ def to_np(inpt: Union[T.Tensor, tuple]) -> np.ndarray:
 
 
 def print_gpu_info(dev=0):
-    """Prints current gpu usage"""
+    """Prints current gpu usage."""
     total = T.cuda.get_device_properties(dev).total_memory / 1024**3
     reser = T.cuda.memory_reserved(dev) / 1024**3
     alloc = T.cuda.memory_allocated(dev) / 1024**3
@@ -601,12 +602,12 @@ def print_gpu_info(dev=0):
 
 
 def count_parameters(model: nn.Module) -> int:
-    """Return the number of trainable parameters in a pytorch model"""
+    """Return the number of trainable parameters in a pytorch model."""
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
 def get_grad_norm(model: nn.Module, norm_type: float = 2.0):
-    """Return the norm of the gradients of a given model"""
+    """Return the norm of the gradients of a given model."""
     return to_np(
         T.norm(
             T.stack([T.norm(p.grad.detach(), norm_type) for p in model.parameters()]),
@@ -616,7 +617,9 @@ def get_grad_norm(model: nn.Module, norm_type: float = 2.0):
 
 
 def reparam_trick(tensor: T.Tensor) -> Tuple[T.Tensor, T.Tensor, T.Tensor]:
-    """Apply the reparameterisation trick to split a tensor into means and devs
+    """Apply the reparameterisation trick to split a tensor into means and
+    devs.
+
     - Returns a sample, the means and devs as a tuple
     - Splitting is along the final dimension
     - Used primarily in variational autoencoders
@@ -627,7 +630,7 @@ def reparam_trick(tensor: T.Tensor) -> Tuple[T.Tensor, T.Tensor, T.Tensor]:
 
 
 def apply_residual(rsdl_type: str, res: T.Tensor, outp: T.Tensor) -> T.Tensor:
-    """Apply a residual connection by either adding or concatenating"""
+    """Apply a residual connection by either adding or concatenating."""
     if rsdl_type == "cat":
         return smart_cat([res, outp], dim=-1)
     if rsdl_type == "add":
@@ -636,7 +639,8 @@ def apply_residual(rsdl_type: str, res: T.Tensor, outp: T.Tensor) -> T.Tensor:
 
 
 def aggr_via_sparse(cmprsed: T.Tensor, mask: T.BoolTensor, reduction: str, dim: int):
-    """Aggregate a compressed tensor by first blowing up to a sparse representation
+    """Aggregate a compressed tensor by first blowing up to a sparse
+    representation.
 
     The tensor is blown up to full size such that: full[mask] = cmprsed
     This is suprisingly quick and the fastest method I have tested to do sparse
@@ -654,10 +658,10 @@ def aggr_via_sparse(cmprsed: T.Tensor, mask: T.BoolTensor, reduction: str, dim: 
         dim: Which dimension to apply the reduction
     """
 
-    ## Create a sparse representation of the tensor
+    # Create a sparse representation of the tensor
     sparse_rep = sparse_from_mask(cmprsed, mask, is_compressed=True)
 
-    ## Apply the reduction
+    # Apply the reduction
     if reduction == "sum":
         return T.sparse.sum(sparse_rep, dim).values()
     if reduction == "mean":
@@ -672,6 +676,7 @@ def aggr_via_sparse(cmprsed: T.Tensor, mask: T.BoolTensor, reduction: str, dim: 
 
 def sparse_from_mask(inpt: T.Tensor, mask: T.BoolTensor, is_compressed: bool = False):
     """Create a pytorch sparse matrix given a tensor and a mask.
+
     - Shape is infered from the mask, meaning the final dim will be dense
     """
     return T.sparse_coo_tensor(
@@ -688,19 +693,20 @@ def decompress(cmprsed: T.Tensor, mask: T.BoolTensor):
     """Take a compressed input and use the mask to blow it to its original shape
     such that full[mask] = cmprsed
     """
-    ## We first create the zero padded tensor of the right size then replace
+    # We first create the zero padded tensor of the right size then replace
     full = T.zeros(
         (*mask.shape, cmprsed.shape[-1]), dtype=cmprsed.dtype, device=cmprsed.device
     )
 
-    ## Place the nonpadded samples into the full shape
+    # Place the nonpadded samples into the full shape
     full[mask] = cmprsed
 
     return full
 
 
 def get_max_cpu_suggest():
-    """try to compute a suggested max number of worker based on system's resource"""
+    """try to compute a suggested max number of worker based on system's
+    resource."""
     max_num_worker_suggest = None
     if hasattr(os, "sched_getaffinity"):
         try:
@@ -713,5 +719,5 @@ def get_max_cpu_suggest():
 
 
 def log_squash(data: T.Tensor) -> T.Tensor:
-    """Apply a log squashing function for distributions with high tails"""
+    """Apply a log squashing function for distributions with high tails."""
     return T.sign(data) * T.log(T.abs(data) + 1)

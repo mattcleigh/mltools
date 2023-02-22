@@ -1,8 +1,5 @@
-"""
-A collection of plotting scripts for standard uses
-"""
+"""A collection of plotting scripts for standard uses."""
 
-from distutils.log import Log
 from pathlib import Path
 from typing import Optional, Union
 
@@ -19,7 +16,7 @@ from scipy.stats import pearsonr
 
 from .numpy_utils import mid_points, undo_mid
 
-## Some defaults for my plots to make them look nicer
+# Some defaults for my plots to make them look nicer
 plt.rcParams["xaxis.labellocation"] = "right"
 plt.rcParams["yaxis.labellocation"] = "top"
 plt.rcParams["legend.edgecolor"] = "1"
@@ -31,7 +28,7 @@ plt.rcParams["legend.fontsize"] = 11
 
 
 def gaussian(x_data, mu=0, sig=1):
-    """Return the value of the gaussian distribution"""
+    """Return the value of the gaussian distribution."""
     return (
         1
         / np.sqrt(2 * np.pi * sig**2)
@@ -59,8 +56,7 @@ def plot_corr_heatmaps(
     return_fig: bool = False,
     return_img: bool = False,
 ) -> None:
-    """
-    Plot and save a 2D heatmap, usually for correlation plots
+    """Plot and save a 2D heatmap, usually for correlation plots.
 
     args:
         path: Location of the output file
@@ -82,11 +78,11 @@ def plot_corr_heatmaps(
         do_pdf: If the output should also contain a pdf version
     """
 
-    ## Create the histogram
+    # Create the histogram
     if len(bins) != 2:
         bins = [bins, bins]
 
-    ## Initialise the figure
+    # Initialise the figure
     fig, ax = plt.subplots(1, 1, figsize=figsize)
     hist = ax.hist2d(
         x_vals,
@@ -99,28 +95,26 @@ def plot_corr_heatmaps(
     if equal_aspect:
         ax.set_aspect("equal")
 
-    ## Add line
+    # Add line
     if incl_line:
         ax.plot([min(hist[1]), max(hist[1])], [min(hist[2]), max(hist[2])], "k--", lw=1)
 
-    ## Add colourbar
+    # Add colourbar
     if incl_cbar:
         divider = make_axes_locatable(ax)
         cax = divider.append_axes("right", size="5%", pad=0.05)
         try:  # Hacky solution to fix this sometimes failing if the values are shit
-            clb = fig.colorbar(
-                hist[3], cax=cax, orientation="vertical", label="frequency"
-            )
-        except:
+            fig.colorbar(hist[3], cax=cax, orientation="vertical", label="frequency")
+        except Exception:
             pass
 
-    ## Axis labels and titles
+    # Axis labels and titles
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     if title != "":
         ax.set_title(title)
 
-    ## Correlation coeficient
+    # Correlation coeficient
     if do_pearson:
         ax.text(
             0.05,
@@ -131,7 +125,7 @@ def plot_corr_heatmaps(
             bbox=dict(facecolor="white", edgecolor="black"),
         )
 
-    ## Save the image
+    # Save the image
     fig.tight_layout()
     if path is not None:
         path = Path(path)
@@ -146,6 +140,7 @@ def plot_corr_heatmaps(
         )
         plt.close(fig)
         return img
+    plt.close(fig)
 
 
 def plot_multi_loss(
@@ -166,21 +161,21 @@ def plot_multi_loss(
         logx: Using a log scale on the x-axis
     """
 
-    ## Get the x-axis values using the length of the total loss in the trainset
-    ## This should always be present
+    # Get the x-axis values using the length of the total loss in the trainset
+    # This should always be present
     if xvals is None:
         xvals = np.arange(1, len(loss_hist["total"]["train"]) + 1)
 
-    ## Create the main figure and subplots
+    # Create the main figure and subplots
     fig, axes = plt.subplots(
         len(loss_hist), 1, sharex=True, figsize=(4, 4 * len(loss_hist))
     )
 
-    ## Account for the fact that there may be a single loss
+    # Account for the fact that there may be a single loss
     if len(loss_hist) == 1:
         axes = [axes]
 
-    ## Cycle though the different loss types, each on their own axis
+    # Cycle though the different loss types, each on their own axis
     for ax, lnm in zip(axes, loss_hist.keys()):
         ax.set_ylabel(lnm)
         ax.set_xlabel(xlabel)
@@ -188,16 +183,16 @@ def plot_multi_loss(
         if logx:
             ax.set_xscale("log")
 
-        ## Plot each dataset's history ontop of each other
+        # Plot each dataset's history ontop of each other
         for dset, vals in loss_hist[lnm].items():
 
-            ## Skip empty loss dictionaries (sometimes we dont have valid loss)
+            # Skip empty loss dictionaries (sometimes we dont have valid loss)
             if not vals:
                 continue
 
             ax.plot(xvals, vals, label=dset)
 
-    ## Put the legend only on the top plot and save
+    # Put the legend only on the top plot and save
     axes[0].legend()
     fig.tight_layout()
     fig.savefig(Path(path).with_suffix(".png"))
@@ -226,14 +221,15 @@ def plot_multi_hists(
     hist_kwargs: dict = None,
     hist_scale: float = 1,
     incl_overflow: bool = False,
-    incl_underflow: bool = True,
+    incl_underflow: bool = False,
     do_step: bool = True,
     do_ratio_to_first: bool = False,
     as_pdf: bool = False,
     return_fig: bool = False,
     return_img: bool = False,
 ) -> Union[plt.Figure, None]:
-    """Plot multiple histograms given a list of 2D tensors/arrays
+    """Plot multiple histograms given a list of 2D tensors/arrays.
+
     - Performs the histogramming here
     - Each column the arrays will be a seperate axis
     - Matching columns in each array will be superimposed on the same axis
@@ -268,7 +264,7 @@ def plot_multi_hists(
         return_img: Return a PIL image (will close the figure)
     """
 
-    ## Make the arguments lists for generality
+    # Make the arguments lists for generality
     if not isinstance(data_list, list):
         data_list = [data_list]
     if isinstance(type_labels, str):
@@ -280,15 +276,15 @@ def plot_multi_hists(
     if not isinstance(hist_colours, list):
         hist_colours = len(data_list) * [hist_colours]
 
-    ## Check the number of histograms to plot
+    # Check the number of histograms to plot
     n_data = len(data_list)
     n_axis = len(data_list[0][0])
 
-    ## Make sure the there are not too many subplots
+    # Make sure the there are not too many subplots
     if n_axis > 20:
         raise RuntimeError("You are asking to create more than 20 subplots!")
 
-    ## Create the figure and axes listss
+    # Create the figure and axes listss
     dims = np.array([n_axis, 1])
     size = np.array([n_axis, 1.0])
     if do_ratio_to_first:
@@ -306,98 +302,103 @@ def plot_multi_hists(
     else:
         axes = axes.reshape(dims)
 
-    ## Replace the zeros
+    # Replace the zeros
     if not incl_zeros:
         for d in data_list:
             d[d == 0] = np.nan
 
-    ## Cycle through each axis
+    # Cycle through each axis
     for i in range(n_axis):
         b = bins[i]
-        ## Reduce bins based on number of unique datapoints
-        ## If the number of datapoints is less than 10 then we assume interger types
+
+        # Reduce bins based on number of unique datapoints
+        # If the number of datapoints is less than 10 then we assume interger types
         if isinstance(b, str) and not already_hists:
             unq = np.unique(data_list[0][:, i])
             n_unique = len(unq)
             if 1 < n_unique < 10:
-                b = (unq[1:] + unq[:-1]) / 2  ## Use midpoints
-                b = np.append(b, unq.max() + unq.max() - b[-1])  ## Add final bin
-                b = np.insert(b, 0, unq.min() + unq.min() - b[0])  ## Add initial bin
+                b = (unq[1:] + unq[:-1]) / 2  # Use midpoints
+                b = np.append(b, unq.max() + unq.max() - b[-1])  # Add final bin
+                b = np.insert(b, 0, unq.min() + unq.min() - b[0])  # Add initial bin
 
-        ## Cycle through the different data arrays
+        # Cycle through the different data arrays
         for j in range(n_data):
 
-            ## For a multiple histogram
-            if multi_hist is not None and multi_hist[j] > 1:
-                data = np.copy(data_list[j][:, i]).reshape(-1, multi_hist[j])
-                mh_hists = []
-                for mh in range(multi_hist[j]):
-                    mh_hists.append(np.histogram(data[:, mh], b, density=normed)[0])
-                mh_means = np.mean(mh_hists, axis=0)
-                mh_unc = np.std(mh_hists, axis=0)
-                mh_means = [mh_means[0]] + mh_means.tolist()
-                mh_unc = [mh_unc[0]] + mh_unc.tolist()
-                axes[i, 0].step(
-                    b, mh_means, label=type_labels[j], color=hist_colours[j], **kwargs
-                )
-                axes[i, 0].fill_between(
-                    b,
-                    np.subtract(mh_means, mh_unc),
-                    np.add(mh_means, mh_unc),
-                    color=hist_colours[j],
-                    step="pre",
-                    alpha=0.4,
-                )
-                if do_ratio_to_first:
-                    d = [denom_hist[0]] + denom_hist.tolist()
-                    axes[i, 1].step(
-                        b, np.divide(mh_means, d), color=hist_colours[j], **kwargs
-                    )
-                    axes[i, 1].fill_between(
-                        b,
-                        np.divide(np.subtract(mh_means, mh_unc), d),
-                        np.divide(np.add(mh_means, mh_unc), d),
-                        color=hist_colours[j],
-                        step="pre",
-                        alpha=0.4,
-                    )
-                continue
+            # For a multiple histogram
+            # if multi_hist is not None and multi_hist[j] > 1:
+            #     data = np.copy(data_list[j][:, i]).reshape(-1, multi_hist[j])
+            #     if incl_overflow:
+            #         data = np.minimum(data, b[-1])
+            #     if incl_underflow:
+            #         data = np.maximum(data, b[0])
+            #     mh_hists = []
+            #     for mh in range(multi_hist[j]):
+            #         mh_hists.append(np.histogram(data[:, mh], b, density=normed)[0])
+            #     mh_means = np.mean(mh_hists, axis=0)
+            #     mh_unc = np.std(mh_hists, axis=0)
+            #     mh_means = [mh_means[0]] + mh_means.tolist()
+            #     mh_unc = [mh_unc[0]] + mh_unc.tolist()
+            #     axes[i, 0].step(
+            #         b, mh_means, label=type_labels[j], color=hist_colours[j], **kwargs
+            #     )
+            #     axes[i, 0].fill_between(
+            #         b,
+            #         np.subtract(mh_means, mh_unc),
+            #         np.add(mh_means, mh_unc),
+            #         color=hist_colours[j],
+            #         step="pre",
+            #         alpha=0.4,
+            #     )
+            #     if do_ratio_to_first:
+            #         d = [denom_hist[0]] + denom_hist.tolist()
+            #         axes[i, 1].step(
+            #             b, np.divide(mh_means, d), color=hist_colours[j], **kwargs
+            #         )
+            #         axes[i, 1].fill_between(
+            #             b,
+            #             np.divide(np.subtract(mh_means, mh_unc), d),
+            #             np.divide(np.add(mh_means, mh_unc), d),
+            #             color=hist_colours[j],
+            #             step="pre",
+            #             alpha=0.4,
+            #         )
+            #     continue
 
-            ## Read the binned data from the array
+            # Read the binned data from the array
             if already_hists:
                 histo = data_list[j][:, i]
 
-            ## Calculate histogram of the column and remember the bins
+            # Calculate histogram of the column and remember the bins
             else:
 
-                ## Get the bins for the histogram based on the first plot
+                # Get the bins for the histogram based on the first plot
                 if j == 0:
                     b = np.histogram_bin_edges(data_list[j][:, i], bins=b)
 
-                ## Apply overflow and underflow (make a copy)
+                # Apply overflow and underflow (make a copy)
                 data = np.copy(data_list[j][:, i])
                 if incl_overflow:
                     data = np.minimum(data, b[-1])
                 if incl_underflow:
                     data = np.maximum(data, b[0])
 
-                ## Calculate the histogram
+                # Calculate the histogram
                 histo, _ = np.histogram(data, b, density=normed)
 
-            ## Apply the scaling factor
+            # Apply the scaling factor
             histo = histo * hist_scale
 
-            ## Save the first histogram for the ratio plots
+            # Save the first histogram for the ratio plots
             if j == 0:
                 denom_hist = histo
 
-            ## Get the additional keywork arguments
+            # Get the additional keywork arguments
             if hist_kwargs is not None:
                 kwargs = {key: val[j] for key, val in hist_kwargs.items()}
             else:
                 kwargs = {}
 
-            ## Plot the fill
+            # Plot the fill
             ydata = histo.tolist()
             ydata = [ydata[0]] + ydata
             if hist_fills is not None and hist_fills[j]:
@@ -410,7 +411,7 @@ def plot_multi_hists(
                     color=hist_colours[j],
                 )
 
-            ## Plot the histogram as a step graph
+            # Plot the histogram as a step graph
             elif do_step:
                 axes[i, 0].step(
                     b, ydata, label=type_labels[j], color=hist_colours[j], **kwargs
@@ -421,20 +422,20 @@ def plot_multi_hists(
                     b, ydata, label=type_labels[j], color=hist_colours[j], **kwargs
                 )
 
-            ## Plot the ratio plot
+            # Plot the ratio plot
             if do_ratio_to_first:
                 ydata = (histo / denom_hist).tolist()
                 ydata = [ydata[0]] + ydata
                 axes[i, 1].step(b, ydata, color=hist_colours[j], **kwargs)
 
-        ## Set the x_axis label
+        # Set the x_axis label
         if do_ratio_to_first:
             axes[i, 0].set_xticklabels([])
             axes[i, 1].set_xlabel(col_labels[i])
         else:
             axes[i, 0].set_xlabel(col_labels[i])
 
-        ## Set the limits
+        # Set the limits
         if bins is None:
             x_low, x_high = np.quantile(b, [0.0, 0.85])
             axes[i, 0].set_xlim(x_low, x_high)
@@ -449,21 +450,21 @@ def plot_multi_hists(
             if logy:
                 # pad up the ylim (which is in logscale) by 25%
                 ylim2 = 10 ** (np.log10(ylim2) * 1.40)
-                setylim = (1, ylim2)
+                setylim = (ylim1, ylim2)
             else:
                 ylim2 = ylim2 * 1.35
-                setylim = (0, ylim2)
-            axes[i, 0].set_ylim(*setylim)
+                setylim = (ylim1, ylim2)
+            # axes[i, 0].set_ylim(*setylim)
 
         if do_ratio_to_first:
             axes[i, 1].set_xlim(b[0], b[-1])
             axes[i, 1].set_ylim(rat_ylim)
 
-        ## Set the y scale to be logarithmic
+        # Set the y scale to be logarithmic
         if logy:
             axes[i, 0].set_yscale("log")
 
-        ## Set the y axis
+        # Set the y axis
         if normed:
             axes[i, 0].set_ylabel("Normalised Entries")
         elif hist_scale != 1:
@@ -476,14 +477,14 @@ def plot_multi_hists(
             else:
                 axes[i, 1].set_ylabel(f"Ratio to {type_labels[0]}")
 
-    ## Only do legend on the first axis.
+    # Only do legend on the first axis.
     if leg:
         for ax in axes[:, 0]:
             ax.legend(loc=leg_loc)
-    ## Save the image as a png
+    # Save the image as a png
     fig.tight_layout()
 
-    ## For ratio plots minimise the h_space
+    # For ratio plots minimise the h_space
     if do_ratio_to_first:
         fig.subplots_adjust(hspace=0.08)
 
@@ -500,6 +501,7 @@ def plot_multi_hists(
         )
         plt.close(fig)
         return img
+    plt.close(fig)
 
 
 def plot_and_save_hists(
@@ -524,22 +526,22 @@ def plot_and_save_hists(
         is_mid: If the bins provided are already the midpoints
     """
 
-    ## Make the arguments lists for generality
+    # Make the arguments lists for generality
     if not isinstance(hist_list, list):
         hist_list = [hist_list]
 
-    ## Get the midpoints of the bins
+    # Get the midpoints of the bins
     mid_bins = bins if is_mid else mid_points(bins)
     bins = undo_mid(mid_bins) if is_mid else bins
 
-    ## Save the histograms to text
+    # Save the histograms to text
     if do_csv:
         df = pd.DataFrame(
             np.vstack([mid_bins] + hist_list).T, columns=["bins"] + labels
         )
         df.to_csv(path.with_suffix(".csv"), index=False)
 
-    ## Create the plot of the histograms
+    # Create the plot of the histograms
     fig, ax = plt.subplots()
     base = np.zeros_like(hist_list[0])
     for i, h in enumerate(hist_list):
@@ -549,7 +551,7 @@ def plot_and_save_hists(
         else:
             ax.step(bins, [0] + h.tolist(), label=labels[i])
 
-    ## Add the axis labels, set limits and save
+    # Add the axis labels, set limits and save
     ax.set_xlabel(ax_labels[0])
     ax.set_ylabel(ax_labels[1])
     ax.set_xlim(bins[0], bins[-1])
@@ -591,7 +593,7 @@ def parallel_plot(
         class_thresh: Minimum unique values before ticks are treated as classes
     """
 
-    ## Make sure that the rank column is the final column in the list
+    # Make sure that the rank column is the final column in the list
     if rank_col is not None:
         if rank_col in cols:
             cols.append(cols.pop(cols.index(rank_col)))
@@ -599,61 +601,61 @@ def parallel_plot(
             cols.append(rank_col)
     rank_col = cols[-1]
 
-    ## Sort the dataframe by the rank column
+    # Sort the dataframe by the rank column
     if do_sort:
         df.sort_values(by=rank_col, ascending=False, inplace=True)
 
-    ## Load the colourmap
+    # Load the colourmap
     colmap = matplotlib.cm.get_cmap(cmap)
 
-    ## Create a value matrix for the y intercept points on each column for each line
+    # Create a value matrix for the y intercept points on each column for each line
     y_matrix = np.zeros((len(cols), len(df)))
     x_values = np.arange(len(cols))
-    ax_info = {}  ## Dict which will contain tick labels and values for each col
+    ax_info = {}  # Dict which will contain tick labels and values for each col
 
-    ## Cycle through each column
+    # Cycle through each column
     for i, col in enumerate(cols):
 
-        ## Pull the column data from the dataframe
+        # Pull the column data from the dataframe
         col_data = df[col]
 
-        ## For continuous data (more than class_thresh unique values)
+        # For continuous data (more than class_thresh unique values)
         if (col_data.dtype == float) & (len(np.unique(col_data)) > class_thresh):
 
-            ## Scale the range of data to [0,1] and save to matrix
+            # Scale the range of data to [0,1] and save to matrix
             y_min = np.min(col_data)
             y_max = np.max(col_data)
             y_range = y_max - y_min
             y_matrix[i] = (col_data - y_min) / y_range
 
-            ## Create the ticks and tick labels for the axis
-            nticks = 5  ## Good number for most cases
+            # Create the ticks and tick labels for the axis
+            nticks = 5  # Good number for most cases
             tick_labels = np.linspace(y_min, y_max, nticks, endpoint=True)
             tick_labels = [f"{s:.2f}" for s in tick_labels]
             tick_values = np.linspace(0, 1, nticks, endpoint=True)
             ax_info[col] = [tick_labels, tick_values]
 
-        ## For categorical data (less than class_thresh unique values)
+        # For categorical data (less than class_thresh unique values)
         else:
 
-            ## Set the type for the data to categorical to pull out stats using pandas
+            # Set the type for the data to categorical to pull out stats using pandas
             col_data = col_data.astype("category")
             cats = col_data.cat.categories
             cat_vals = col_data.cat.codes
 
-            ## Scale to the range [0,1] (special case for data with only one cat)
+            # Scale to the range [0,1] (special case for data with only one cat)
             if len(cats) == 1:
                 y_matrix[i] = 0.5
             else:
                 y_matrix[i] = cat_vals / cat_vals.max()
 
-            ## The tick labels include average performance using groupby
+            # The tick labels include average performance using groupby
             if groupby_methods is not None and col != rank_col:
                 groups = (
                     df[[col, rank_col]].groupby([col]).agg(groupby_methods)[rank_col]
                 )
 
-                ## Create the tick labels by using all groupy results
+                # Create the tick labels by using all groupy results
                 tick_labels = [
                     str(cat)
                     + "".join(
@@ -665,104 +667,104 @@ def parallel_plot(
                     for cat in list(cats)
                 ]
 
-            ## Or they simply use the cat names
+            # Or they simply use the cat names
             else:
                 tick_labels = cats
 
-            ## Create the tick locations and save in dict
+            # Create the tick locations and save in dict
             tick_values = np.unique(y_matrix[i])
             ax_info[col] = [tick_labels, tick_values]
 
-    ## Get the index of the best row
+    # Get the index of the best row
     best_idx = np.argmin(y_matrix[-1]) if highlight_best else -1
 
-    ## Create the plot
+    # Create the plot
     fig, axes = plt.subplots(
         1, len(cols) - 1, sharey=False, figsize=(3 * len(cols) + 3, 5)
     )
 
-    ## Amount by which to extend the y axis ranges above the data range
+    # Amount by which to extend the y axis ranges above the data range
     y_ax_ext = curved_extend if curved else 0.05
 
-    ## Cycle through each line (singe row in the original dataframe)
+    # Cycle through each line (singe row in the original dataframe)
     for lne in range(len(df)):
 
-        ## Calculate spline function to use across all axes
+        # Calculate spline function to use across all axes
         if curved:
             spline_fn = make_interp_spline(
                 x_values, y_matrix[:, lne], k=3, bc_type="clamped"
             )
 
-        ## Keyword arguments for drawing the line
+        # Keyword arguments for drawing the line
         lne_kwargs = {
             "color": colmap(y_matrix[-1, lne]),
             "alpha": 1 if lne == best_idx else alpha,
             "linewidth": 4 if lne == best_idx else None,
         }
 
-        ## Cycle through each axis (bridges one column to the next)
+        # Cycle through each axis (bridges one column to the next)
         for i, ax in enumerate(axes):
 
-            ## For splines
+            # For splines
             if curved:
 
-                ## Plot the spline using a more dense x space spanning the axis window
+                # Plot the spline using a more dense x space spanning the axis window
                 x_space = np.linspace(i, i + 1, 20)
                 ax.plot(x_space, spline_fn(x_space), **lne_kwargs)
 
-            ## For simple line connectors
+            # For simple line connectors
             else:
                 ax.plot(x_values[[i, i + 1]], y_matrix[[i, i + 1], lne], **lne_kwargs)
 
-            ## Set the axis limits, y included extensions, x is limited to window
+            # Set the axis limits, y included extensions, x is limited to window
             ax.set_ylim(0 - y_ax_ext, 1 + y_ax_ext)
             ax.set_xlim(i, i + 1)
 
-    ## For setting the axis ticklabels
+    # For setting the axis ticklabels
     for dim, (ax, col) in enumerate(zip(axes, cols)):
 
-        ## Reduce the x axis ticks to the start of the plot for column names
+        # Reduce the x axis ticks to the start of the plot for column names
         ax.xaxis.set_major_locator(ticker.FixedLocator([dim]))
         ax.set_xticklabels([cols[dim]])
 
-        ## The y axis ticks were calculated and saved in the info dict
+        # The y axis ticks were calculated and saved in the info dict
         ax.yaxis.set_major_locator(ticker.FixedLocator(ax_info[col][1]))
         ax.set_yticklabels(ax_info[col][0])
 
-    ## Create the colour bar on the far right side of the plot
-    norm = matplotlib.colors.Normalize(0, 1)  ## Map data into the colour range [0, 1]
-    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)  ## Required for colourbar
+    # Create the colour bar on the far right side of the plot
+    norm = matplotlib.colors.Normalize(0, 1)  # Map data into the colour range [0, 1]
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)  # Required for colourbar
     cbar = fig.colorbar(
         sm,
         pad=0,
-        ticks=ax_info[rank_col][1],  ## Uses ranking attribute
-        extend="both",  ## Extending to match the y extension passed 0 and 1
+        ticks=ax_info[rank_col][1],  # Uses ranking attribute
+        extend="both",  # Extending to match the y extension passed 0 and 1
         extendrect=True,
         extendfrac=y_ax_ext,
     )
 
-    ## The colour bar also needs axis labels
+    # The colour bar also needs axis labels
     cbar.ax.set_yticklabels(ax_info[rank_col][0])
     cbar.ax.set_xlabel(rank_col)  # For some reason this is not showing up now?
     cbar.set_label(rank_col)
 
-    ## Change the plot layout and save
+    # Change the plot layout and save
     plt.tight_layout()
     plt.subplots_adjust(wspace=0, right=0.95)
     plt.savefig(Path(path + "_" + rank_col).with_suffix(".png"))
 
 
 def plot_2d_hists(path, hist_list, hist_labels, ax_labels, bins):
-    """Given a list of 2D histograms, plot them side by side as imshows"""
+    """Given a list of 2D histograms, plot them side by side as imshows."""
 
-    ## Calculate the axis limits from the bins
+    # Calculate the axis limits from the bins
     limits = (min(bins[0]), max(bins[0]), min(bins[1]), max(bins[1]))
     mid_bins = [(b[1:] + b[:-1]) / 2 for b in bins]
 
-    ## Create the subplots
+    # Create the subplots
     fig, axes = plt.subplots(1, len(hist_list), figsize=(8, 4))
 
-    ## For each histogram to be plotted
+    # For each histogram to be plotted
     for i in range(len(hist_list)):
         axes[i].set_xlabel(ax_labels[0])
         axes[i].set_title(hist_labels[i])
@@ -778,11 +780,16 @@ def plot_2d_hists(path, hist_list, hist_labels, ax_labels, bins):
 
 
 def plot_latent_space(
-    path, latents, labels=None, n_classes=None, return_fig: bool = False
+    path,
+    latents,
+    labels=None,
+    n_classes=None,
+    return_fig: bool = False,
+    return_img=False,
 ):
-    """Plot the latent space marginal distributions of a VAE"""
+    """Plot the latent space marginal distributions of a VAE."""
 
-    ## If there are labels then we do multiple lines per datapoint
+    # If there are labels then we do multiple lines per datapoint
     if labels is not None and n_classes is None:
         unique_lab = np.unique(labels)
     elif n_classes is not None:
@@ -790,36 +797,36 @@ def plot_latent_space(
     else:
         unique_lab = [-1]
 
-    ## Get the number of plots based on the dimension of the latents
+    # Get the number of plots based on the dimension of the latents
     lat_dim = min(8, latents.shape[-1])
 
-    ## Create the figure with the  correct number of plots
+    # Create the figure with the  correct number of plots
     fig, axis = plt.subplots(2, int(np.ceil(lat_dim / 2)), figsize=(8, 4))
     axis = axis.flatten()
 
-    ## Plot the distributions of the marginals
+    # Plot the distributions of the marginals
     for dim in range(lat_dim):
 
-        ## Make a seperate plot for each of the unique labels
+        # Make a seperate plot for each of the unique labels
         for lab in unique_lab:
 
-            ## If the lab is -1 then it means use all
+            # If the lab is -1 then it means use all
             if lab == -1:
-                mask = np.ones((len(latents))).astype("bool")
+                mask = np.ones(len(latents)).astype("bool")
             else:
                 mask = labels == lab
 
-            ## Use the selected info for making the histogram
+            # Use the selected info for making the histogram
             x_data = latents[mask, dim]
             hist, edges = np.histogram(x_data, bins=30, density=True)
             hist = np.insert(hist, 0, hist[0])
             axis[dim].step(edges, hist, label=lab)
 
-        ## Plot the standard gaussian which should be the latent distribution
+        # Plot the standard gaussian which should be the latent distribution
         x_space = np.linspace(-4, 4, 100)
         axis[dim].plot(x_space, gaussian(x_space), "--k")
 
-        ## Remove the axis ticklabels
+        # Remove the axis ticklabels
         axis[dim].set_xticklabels([])
         axis[dim].set_yticklabels([])
 
@@ -829,4 +836,10 @@ def plot_latent_space(
     fig.savefig(Path(path).with_suffix(".png"))
     if return_fig:
         return fig
+    if return_img:
+        img = PIL.Image.frombytes(
+            "RGB", fig.canvas.get_width_height(), fig.canvas.tostring_rgb()
+        )
+        plt.close(fig)
+        return img
     plt.close(fig)

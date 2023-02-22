@@ -1,9 +1,6 @@
-"""
-Collection of pytorch modules that make up the common networks used in my projects
-"""
+"""Collection of pytorch modules that make up the common networks used in my
+projects."""
 
-from copy import copy
-from multiprocessing.sharedctypes import Value
 from typing import Optional, Union
 
 import torch as T
@@ -16,8 +13,7 @@ from .torch_utils import get_act, get_nrm, masked_pool, pass_with_mask, smart_ca
 
 
 class MLPBlock(nn.Module):
-    """
-    A simple MLP block that makes up a dense network.
+    """A simple MLP block that makes up a dense network.
 
     Made up of several layers containing:
     - linear map
@@ -41,7 +37,7 @@ class MLPBlock(nn.Module):
         do_res: bool = False,
         do_bayesian: bool = False,
     ) -> None:
-        """Init method for MLPBlock
+        """Init method for MLPBlock.
 
         Parameters
         ----------
@@ -66,22 +62,22 @@ class MLPBlock(nn.Module):
         """
         super().__init__()
 
-        ## Save the input and output dimensions of the module
+        # Save the input and output dimensions of the module
         self.inpt_dim = inpt_dim
         self.outp_dim = outp_dim
         self.ctxt_dim = ctxt_dim
 
-        ## If this layer includes an additive residual connection
+        # If this layer includes an additive residual connection
         self.do_res = do_res and (inpt_dim == outp_dim)
 
-        ## Initialise the block layers as a module list
+        # Initialise the block layers as a module list
         self.block = nn.ModuleList()
         for n in range(n_layers):
 
-            ## Increase the input dimension of the first layer to include context
+            # Increase the input dimension of the first layer to include context
             lyr_in = inpt_dim + ctxt_dim if n == 0 else outp_dim
 
-            ## Linear transform, activation, normalisation, dropout
+            # Linear transform, activation, normalisation, dropout
             self.block.append(
                 BayesianLinear(lyr_in, outp_dim)
                 if do_bayesian
@@ -101,25 +97,26 @@ class MLPBlock(nn.Module):
             ctxt: The conditioning tensor, can be ignored
         """
 
-        ## Concatenate the context information to the input of the block
+        # Concatenate the context information to the input of the block
         if self.ctxt_dim and ctxt is None:
             raise ValueError(
                 "Was expecting contextual information but none has been provided!"
             )
         temp = T.cat([inpt, ctxt], dim=-1) if self.ctxt_dim else inpt
 
-        ## Pass through each transform in the block
+        # Pass through each transform in the block
         for layer in self.block:
             temp = layer(temp)
 
-        ## Add the original inputs again for the residual connection
+        # Add the original inputs again for the residual connection
         if self.do_res:
             temp = temp + inpt
 
         return temp
 
     def __repr__(self) -> str:
-        """Generate a one line string summing up the components of the block"""
+        """Generate a one line string summing up the components of the
+        block."""
         string = str(self.inpt_dim)
         if self.ctxt_dim:
             string += f"({self.ctxt_dim})"
@@ -132,8 +129,8 @@ class MLPBlock(nn.Module):
 
 
 class DenseNetwork(nn.Module):
-    """A dense neural network made from a series of consecutive MLP blocks and context
-    injection layers"""
+    """A dense neural network made from a series of consecutive MLP blocks and
+    context injection layers."""
 
     def __init__(
         self,
@@ -201,12 +198,12 @@ class DenseNetwork(nn.Module):
         """
         super().__init__()
 
-        ## Check that the context is used somewhere
+        # Check that the context is used somewhere
         if ctxt_dim:
             if not ctxt_in_hddn and not ctxt_in_inpt:
                 raise ValueError("Network has context inputs but nowhere to use them!")
 
-        ## We store the input, hddn (list), output, and ctxt dims to query them later
+        # We store the input, hddn (list), output, and ctxt dims to query them later
         self.inpt_dim = inpt_dim
         if not isinstance(hddn_dim, int):
             self.hddn_dim = hddn_dim
@@ -217,10 +214,10 @@ class DenseNetwork(nn.Module):
         self.ctxt_dim = ctxt_dim
         self.do_out = do_out
 
-        ## Necc for this module to work with the nflows package
+        # Necc for this module to work with the nflows package
         self.hidden_features = self.hddn_dim[-1]
 
-        ## Input MLP block
+        # Input MLP block
         self.input_block = MLPBlock(
             inpt_dim=self.inpt_dim,
             outp_dim=self.hddn_dim[0],
@@ -231,7 +228,7 @@ class DenseNetwork(nn.Module):
             do_bayesian=do_bayesian,
         )
 
-        ## All hidden blocks as a single module list
+        # All hidden blocks as a single module list
         self.hidden_blocks = []
         if self.num_blocks > 1:
             self.hidden_blocks = nn.ModuleList()
@@ -250,7 +247,7 @@ class DenseNetwork(nn.Module):
                     )
                 )
 
-        ## Output block (optional and there is no normalisation, dropout or context)
+        # Output block (optional and there is no normalisation, dropout or context)
         if do_out:
             self.output_block = MLPBlock(
                 inpt_dim=self.hddn_dim[-1],
@@ -260,23 +257,23 @@ class DenseNetwork(nn.Module):
             )
 
     def forward(self, inputs: T.Tensor, ctxt: Optional[T.Tensor] = None) -> T.Tensor:
-        """Pass through all layers of the dense network"""
+        """Pass through all layers of the dense network."""
 
-        ## Reshape the context if it is available
+        # Reshape the context if it is available
         if ctxt is not None:
             dim_diff = inputs.dim() - ctxt.dim()
             if dim_diff > 0:
                 ctxt = ctxt.view(ctxt.shape[0], *dim_diff * (1,), *ctxt.shape[1:])
                 ctxt = ctxt.expand(*inputs.shape[:-1], -1)
 
-        ## Pass through the input block
+        # Pass through the input block
         inputs = self.input_block(inputs, ctxt)
 
-        ## Pass through each hidden block
-        for h_block in self.hidden_blocks:  ## Context tensor will only be used if
-            inputs = h_block(inputs, ctxt)  ## block was initialised with a ctxt dim
+        # Pass through each hidden block
+        for h_block in self.hidden_blocks:  # Context tensor will only be used if
+            inputs = h_block(inputs, ctxt)  # block was initialised with a ctxt dim
 
-        ## Pass through the output block
+        # Pass through the output block
         if self.do_out:
             inputs = self.output_block(inputs)
 
@@ -292,7 +289,7 @@ class DenseNetwork(nn.Module):
         return string
 
     def one_line_string(self):
-        """Return a one line string that sums up the network structure"""
+        """Return a one line string that sums up the network structure."""
         string = str(self.inpt_dim)
         if self.ctxt_dim:
             string += f"({self.ctxt_dim})"
@@ -314,7 +311,7 @@ class DenseNetwork(nn.Module):
 
 
 class DeepSet(nn.Module):
-    """A deep set network that can provide attention pooling"""
+    """A deep set network that can provide attention pooling."""
 
     def __init__(
         self,
@@ -341,42 +338,42 @@ class DeepSet(nn.Module):
         """
         super().__init__()
 
-        ## Dict default arguments
+        # Dict default arguments
         feat_net_kwargs = feat_net_kwargs or {}
         attn_net_kwargs = attn_net_kwargs or {}
         post_net_kwargs = post_net_kwargs or {}
 
-        ## For the attention network the default output must be set to 1
-        ## The dense network default output is the same as the input
+        # For the attention network the default output must be set to 1
+        # The dense network default output is the same as the input
         if "outp_dim" not in attn_net_kwargs:
             attn_net_kwargs["outp_dim"] = 1
 
-        ## Save the class attributes
+        # Save the class attributes
         self.inpt_dim = inpt_dim
         self.outp_dim = outp_dim
         self.ctxt_dim = ctxt_dim
         self.pool_type = pool_type
         self.attn_type = attn_type
 
-        ## Create the feature extraction network
+        # Create the feature extraction network
         self.feat_net = DenseNetwork(
             self.inpt_dim, ctxt_dim=self.ctxt_dim, **feat_net_kwargs
         )
 
-        ## For an attention deepset
+        # For an attention deepset
         if self.pool_type == "attn":
 
-            ## Create the attention network
+            # Create the attention network
             self.attn_net = DenseNetwork(
                 self.inpt_dim, ctxt_dim=self.ctxt_dim, **attn_net_kwargs
             )
 
-            ## Check that the dimension of each head makes internal sense
+            # Check that the dimension of each head makes internal sense
             self.n_heads = self.attn_net.outp_dim
             assert self.feat_net.outp_dim % self.n_heads == 0
             self.head_dim = self.feat_net.outp_dim // self.n_heads
 
-        ## Create the post network to update the pooled features of the set
+        # Create the post network to update the pooled features of the set
         self.post_net = DenseNetwork(
             self.feat_net.outp_dim, outp_dim, ctxt_dim=self.ctxt_dim, **post_net_kwargs
         )
@@ -384,20 +381,21 @@ class DeepSet(nn.Module):
     def forward(
         self, inpt: T.tensor, mask: T.BoolTensor, ctxt: Union[T.Tensor, list] = None
     ):
-        """The expected shapes of the inputs are
+        """The expected shapes of the inputs are.
+
         - tensor: batch x setsize x features
         - mask: batch x setsize
         - ctxt: batch x features
         """
 
-        ## Combine the context information if it is a list
+        # Combine the context information if it is a list
         if isinstance(ctxt, list):
             ctxt = smart_cat(ctxt)
 
-        ## Pass the non_zero values through the feature network
+        # Pass the non_zero values through the feature network
         feat_outs = pass_with_mask(inpt, self.feat_net, mask, high_level=ctxt)
 
-        ## For attention
+        # For attention
         if self.pool_type == "attn":
             attn_outs = pass_with_mask(
                 inpt,
@@ -407,41 +405,42 @@ class DeepSet(nn.Module):
                 padval=0 if self.attn_type == "raw" else -T.inf,
             )
 
-            ## Apply either a softmax for weighted mean or softplus for weighted sum
+            # Apply either a softmax for weighted mean or softplus for weighted sum
             if self.attn_type == "mean":
                 attn_outs = F.softmax(attn_outs, dim=-2)
             elif self.attn_type == "sum":
                 attn_outs = F.softplus(attn_outs)
 
-            ## Broadcast the attention to get the multiple poolings and sum
+            # Broadcast the attention to get the multiple poolings and sum
             attn_outs = (
                 attn_outs.unsqueeze(-1).expand(-1, -1, -1, self.head_dim).flatten(2)
             )
             feat_outs = (feat_outs * attn_outs).sum(dim=-2)
 
-        ## For the other types of pooling use the masked pool method
+        # For the other types of pooling use the masked pool method
         else:
             feat_outs = masked_pool(self.pool_type, feat_outs, mask)
 
-        ## Pass the pooled information through post network and return
+        # Pass the pooled information through post network and return
         return self.post_net(feat_outs, ctxt)
 
 
 class GRF(Function):
-    """A gradient reversal function
+    """A gradient reversal function.
+
     - The forward pass is the identity function
     - The backward pass multiplies the upstream gradients by -1
     """
 
     @staticmethod
     def forward(ctx, inpt, alpha):
-        """Pass inputs without chaning them"""
+        """Pass inputs without chaning them."""
         ctx.alpha = alpha
         return inpt.clone()
 
     @staticmethod
     def backward(ctx, grads):
-        """Inverse the gradients"""
+        """Inverse the gradients."""
         alpha = ctx.alpha
         neg_grads = -alpha * grads
         return neg_grads, None
@@ -449,8 +448,9 @@ class GRF(Function):
 
 class GRL(nn.Module):
     """A gradient reversal layer.
-    This layer has no parameters, and simply reverses the gradient
-    in the backward pass.
+
+    This layer has no parameters, and simply reverses the gradient in
+    the backward pass.
     """
 
     def __init__(self, alpha=1.0):
@@ -458,19 +458,27 @@ class GRL(nn.Module):
         self.alpha = T.tensor(alpha, requires_grad=False)
 
     def forward(self, inpt):
-        """Pass to the GRF"""
+        """Pass to the GRF."""
         return GRF.apply(inpt, self.alpha)
 
 
 class IterativeNormLayer(nn.Module):
-    """A basic normalisation layer so it can be part of the model
+    """A basic normalisation layer so it can be part of the model.
+
+    Tracks the runnning mean and variances of an input vector over the batch dimension.
+    Must always be passed batched data!
+    Any additional dimension to calculate the stats must be provided as extra_dims.
+
+    For example: Providing an image with inpt_dim = batch, width, height, channels
+    Will result in an operation with independant stats per pixel, per channel
+    If instead you want the mean and shift only for each channel you will have to give
+    extra_dims = (0, 1) or (-2, -3)
 
     Note! If a mask is provided in the forward pass, then this must be
-    the dimension to apply over the masked inputs!
-    For example: Graph nodes are usually batch x n_nodes x features
-    so to normalise over the features one would typically give extra_dims as (0,)
-    But nodes are always passed with the mask which flattens it to
-    batch x features.
+    the dimension to apply over the masked inputs! For example: Graph
+    nodes are usually batch x n_nodes x features so to average out the n_nodes
+    one would typically give extra_dims as (0,). But nodes
+    are always passed with the mask which flattens it to batch x features.
     Batch dimension is done automatically, so we dont pass any extra_dims!!!
     """
 
@@ -483,7 +491,7 @@ class IterativeNormLayer(nn.Module):
         max_n: int = 5_00_000,
         extra_dims: Union[tuple, int] = (),
     ) -> None:
-        """Init method for Normalisatiion module
+        """Init method for Normalisatiion module.
 
         Args:
             inpt_dim: Shape of the input tensor, required for reloading
@@ -557,7 +565,7 @@ class IterativeNormLayer(nn.Module):
     def fit(
         self, inpt: T.Tensor, mask: Optional[T.BoolTensor] = None, freeze: bool = True
     ) -> None:
-        """Set the stats given a population of data"""
+        """Set the stats given a population of data."""
         inpt = self._mask(inpt, mask)
         self.vars, self.means = T.var_mean(
             inpt, dim=(0, *self.extra_dims), keepdim=True
@@ -567,8 +575,8 @@ class IterativeNormLayer(nn.Module):
         self.frozen = freeze
 
     def forward(self, inpt: T.Tensor, mask: Optional[T.BoolTensor] = None) -> T.Tensor:
-        """Applies the standardisation to a batch of inputs, also uses the inputs to
-        update the running stats if in training mode"""
+        """Applies the standardisation to a batch of inputs, also uses the
+        inputs to update the running stats if in training mode."""
         with T.no_grad():
             sel_inpt = self._mask(inpt, mask)
             if not self.frozen and self.training:
@@ -586,7 +594,7 @@ class IterativeNormLayer(nn.Module):
             return normed_inpt
 
     def reverse(self, inpt: T.Tensor, mask: Optional[T.BoolTensor] = None) -> T.Tensor:
-        """Unnormalises the inputs given the recorded stats"""
+        """Unnormalises the inputs given the recorded stats."""
         sel_inpt = self._mask(inpt, mask)
         unnormed_inpt = sel_inpt * self.vars.sqrt() + self.means
 
@@ -599,7 +607,7 @@ class IterativeNormLayer(nn.Module):
         return unnormed_inpt
 
     def update(self, inpt: T.Tensor, mask: Optional[T.BoolTensor] = None) -> None:
-        """Update the running stats using a batch of data"""
+        """Update the running stats using a batch of data."""
         inpt = self._mask(inpt, mask)
 
         # For first iteration

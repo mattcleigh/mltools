@@ -1,11 +1,12 @@
-"""
-Script to define the lookahead optimiser copied from:
+"""Script to define the lookahead optimiser copied from:
+
 https://github.com/alphadl/lookahead.pytorch
 """
 
 from collections import defaultdict
-from torch.optim import Optimizer
+
 import torch
+from torch.optim import Optimizer
 
 
 class Lookahead(Optimizer):
