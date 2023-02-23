@@ -5,7 +5,8 @@ from typing import Tuple, Union
 import torch as T
 import torch.nn as nn
 from geomloss import SamplesLoss
-from jetnet.losses import EMDLoss
+
+# from jetnet.losses import EMDLoss
 
 
 class VAELoss(nn.Module):
@@ -142,7 +143,7 @@ class ModifiedSinkhorn(nn.Module):
 class EnergyMovers(nn.Module):
     def __init__(self, **kwargs) -> None:
         super().__init__()
-        self.loss_fn = EMDLoss(**kwargs)
+        # self.loss_fn = EMDLoss(**kwargs)
 
     def forward(
         self, a_weights, pc_a, b_weights, pc_b
