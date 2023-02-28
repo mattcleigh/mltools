@@ -466,10 +466,11 @@ class IterativeNormLayer(nn.Module):
     Must always be passed batched data!
     Any additional dimension to calculate the stats must be provided as extra_dims.
 
-    For example: Providing an image with inpt_dim = batch, width, height, channels
+    For example: Providing an image with inpt_dim = channels, width, height
     Will result in an operation with independant stats per pixel, per channel
     If instead you want the mean and shift only for each channel you will have to give
-    extra_dims = (0, 1) or (-2, -3)
+    extra_dims = (1, 2) or (-2, -1)
+    This will tell the layer to average out the width and height dimensions
 
     Note! If a mask is provided in the forward pass, then this must be
     the dimension to apply over the masked inputs! For example: Graph
@@ -491,7 +492,7 @@ class IterativeNormLayer(nn.Module):
         """Init method for Normalisatiion module.
 
         Args:
-            inpt_dim: Shape of the input tensor, required for reloading
+            inpt_dim: Shape of the input tensor (non batched), required for reloading
             means: Calculated means for the mapping. Defaults to None.
             vars: Calculated variances for the mapping. Defaults to None.
             n: Number of samples used to make the mapping. Defaults to None.
@@ -547,6 +548,9 @@ class IterativeNormLayer(nn.Module):
 
         # If the means are set here then the model is "frozen" and not updated
         self.frozen = means is not None
+
+    def __str__(self) -> str:
+        return f"IterativeNormLayer(means={self.means}, vars={self.vars})"
 
     def _mask(self, inpt: T.Tensor, mask: Optional[T.BoolTensor] = None) -> T.Tensor:
         if mask is None:
