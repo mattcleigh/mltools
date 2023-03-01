@@ -9,7 +9,7 @@ import torch.nn.functional as F
 from torch.autograd import Function
 
 from .bayesian import BayesianLinear
-from .torch_utils import get_act, get_nrm, masked_pool, pass_with_mask, smart_cat
+from .torch_utils import get_act, get_nrm, masked_pool, smart_cat
 
 
 class MLPBlock(nn.Module):
@@ -393,17 +393,14 @@ class DeepSet(nn.Module):
             ctxt = smart_cat(ctxt)
 
         # Pass the non_zero values through the feature network
-        feat_outs = pass_with_mask(inpt, self.feat_net, mask, high_level=ctxt)
+        feat_outs = self.feat_net(inpt, ctxt)
 
         # For attention
         if self.pool_type == "attn":
-            attn_outs = pass_with_mask(
-                inpt,
-                self.attn_net,
-                mask,
-                high_level=ctxt,
-                padval=0 if self.attn_type == "raw" else -T.inf,
-            )
+            attn_outs = self.attn_net(inpt, ctxt)
+
+            # Change the attention weights of the padded elements
+            attn_outs[mask] = 0 if self.attn_type == "raw" else -T.inf
 
             # Apply either a softmax for weighted mean or softplus for weighted sum
             if self.attn_type == "mean":

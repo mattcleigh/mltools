@@ -97,7 +97,7 @@ def plot_corr_heatmaps(
 
     # Add line
     if incl_line:
-        ax.plot([min(hist[1]), max(hist[1])], [min(hist[2]), max(hist[2])], "k--")
+        ax.plot([min(hist[1]), max(hist[1])], [min(hist[2]), max(hist[2])], "k--", lw=1)
 
     # Add colourbar
     if incl_cbar:
@@ -446,15 +446,15 @@ def plot_multi_hists(
             setylim = ylim
             axes[i, 0].set_ylim(*setylim)
         else:
-            ylim1, ylim2 = axes[i, 0].get_ylim()
+            _, ylim2 = axes[i, 0].get_ylim()
             if logy:
                 # pad up the ylim (which is in logscale) by 25%
                 ylim2 = 10 ** (np.log10(ylim2) * 1.40)
-                setylim = (ylim1, ylim2)
+                setylim = (1, ylim2)
             else:
                 ylim2 = ylim2 * 1.35
-                setylim = (ylim1, ylim2)
-            # axes[i, 0].set_ylim(*setylim)
+                setylim = (0, ylim2)
+            axes[i, 0].set_ylim(top=ylim2)
 
         if do_ratio_to_first:
             axes[i, 1].set_xlim(b[0], b[-1])
