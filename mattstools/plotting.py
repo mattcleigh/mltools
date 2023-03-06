@@ -1,8 +1,9 @@
 """A collection of plotting scripts for standard uses."""
 
+from functools import partial
 from pathlib import Path
 from typing import Optional, Union
-from functools import partial
+
 import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
@@ -353,8 +354,8 @@ def plot_multi_hists_2(
                     h.append(np.histogram(data[:, dim], ax_bins, density=do_norm)[0])
 
                 # Nominal and err is based on chi2 of same value, mult measurements
-                hist = 1 / np.mean(1/np.array(h), axis=0)
-                hist_err = np.sqrt(1/np.sum(1/np.array(h), axis=0))
+                hist = 1 / np.mean(1 / np.array(h), axis=0)
+                hist_err = np.sqrt(1 / np.sum(1 / np.array(h), axis=0))
 
             # Otherwise just calculate a single histogram
             else:
@@ -385,11 +386,7 @@ def plot_multi_hists_2(
             if err_kwargs[data_idx] is not None and bool(err_kwargs[data_idx]):
                 e_kwargs = err_kwargs[data_idx]
             else:
-                e_kwargs = {
-                    "color": line._edgecolor,
-                    "alpha": 0.2,
-                    "fill": True
-                }
+                e_kwargs = {"color": line._edgecolor, "alpha": 0.2, "fill": True}
 
             # Include the uncertainty in the plots as a shaded region
             if do_err:
@@ -795,61 +792,61 @@ def plot_multi_hists(
     plt.close(fig)
 
 
-def plot_and_save_hists(
-    path: str,
-    hist_list: list,
-    labels: list,
-    ax_labels: list,
-    bins: np.ndarray,
-    do_csv: bool = False,
-    stack: bool = False,
-    is_mid: bool = False,
-) -> None:
-    """Plot a list of hitograms on the same axis and save the results to a csv file
-    args:
-        path: The path to the output file, will get png and csv suffix
-        hist_list: A list of histograms to plot
-        labels: List of labels for each histogram
-        ax_labels: Name of the x and y axis
-        bins: Binning used to create the histograms
-        do_csv: If the histograms should also be saved as csv files
-        stack: If the histograms are stacked or overlayed
-        is_mid: If the bins provided are already the midpoints
-    """
+# def plot_and_save_hists(
+#     path: str,
+#     hist_list: list,
+#     labels: list,
+#     ax_labels: list,
+#     bins: np.ndarray,
+#     do_csv: bool = False,
+#     stack: bool = False,
+#     is_mid: bool = False,
+# ) -> None:
+#     """Plot a list of hitograms on the same axis and save the results to a csv file
+#     args:
+#         path: The path to the output file, will get png and csv suffix
+#         hist_list: A list of histograms to plot
+#         labels: List of labels for each histogram
+#         ax_labels: Name of the x and y axis
+#         bins: Binning used to create the histograms
+#         do_csv: If the histograms should also be saved as csv files
+#         stack: If the histograms are stacked or overlayed
+#         is_mid: If the bins provided are already the midpoints
+#     """
 
-    # Make the arguments lists for generality
-    if not isinstance(hist_list, list):
-        hist_list = [hist_list]
+#     # Make the arguments lists for generality
+#     if not isinstance(hist_list, list):
+#         hist_list = [hist_list]
 
-    # Get the midpoints of the bins
-    mid_bins = bins if is_mid else mid_points(bins)
-    bins = undo_mid(mid_bins) if is_mid else bins
+#     # Get the midpoints of the bins
+#     mid_bins = bins if is_mid else mid_points(bins)
+#     bins = undo_mid(mid_bins) if is_mid else bins
 
-    # Save the histograms to text
-    if do_csv:
-        df = pd.DataFrame(
-            np.vstack([mid_bins] + hist_list).T, columns=["bins"] + labels
-        )
-        df.to_csv(path.with_suffix(".csv"), index=False)
+#     # Save the histograms to text
+#     if do_csv:
+#         df = pd.DataFrame(
+#             np.vstack([mid_bins] + hist_list).T, columns=["bins"] + labels
+#         )
+#         df.to_csv(path.with_suffix(".csv"), index=False)
 
-    # Create the plot of the histograms
-    fig, ax = plt.subplots()
-    base = np.zeros_like(hist_list[0])
-    for i, h in enumerate(hist_list):
-        if stack:
-            ax.fill_between(mid_bins, base, base + h, label=labels[i])
-            base += h
-        else:
-            ax.step(bins, [0] + h.tolist(), label=labels[i])
+#     # Create the plot of the histograms
+#     fig, ax = plt.subplots()
+#     base = np.zeros_like(hist_list[0])
+#     for i, h in enumerate(hist_list):
+#         if stack:
+#             ax.fill_between(mid_bins, base, base + h, label=labels[i])
+#             base += h
+#         else:
+#             ax.step(bins, [0] + h.tolist(), label=labels[i])
 
-    # Add the axis labels, set limits and save
-    ax.set_xlabel(ax_labels[0])
-    ax.set_ylabel(ax_labels[1])
-    ax.set_xlim(bins[0], bins[-1])
-    ax.set_ylim(bottom=0)
-    ax.legend()
-    fig.savefig(path.with_suffix(".png"))
-    plt.close(fig)
+#     # Add the axis labels, set limits and save
+#     ax.set_xlabel(ax_labels[0])
+#     ax.set_ylabel(ax_labels[1])
+#     ax.set_xlim(bins[0], bins[-1])
+#     ax.set_ylim(bottom=0)
+#     ax.legend()
+#     fig.savefig(path.with_suffix(".png"))
+#     plt.close(fig)
 
 
 def parallel_plot(
