@@ -2,7 +2,7 @@
 
 from pathlib import Path
 from typing import Optional, Union
-
+from functools import partial
 import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
@@ -14,7 +14,7 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 from scipy.interpolate import make_interp_spline
 from scipy.stats import pearsonr
 
-from .numpy_utils import mid_points, undo_mid
+# from .numpy_utils import mid_points, undo_mid
 
 # Some defaults for my plots to make them look nicer
 plt.rcParams["xaxis.labellocation"] = "right"
@@ -78,15 +78,17 @@ def plot_corr_heatmaps(
         do_pdf: If the output should also contain a pdf version
     """
 
-    # Create the histogram
+    # Define the bins for the data
+    if isinstance(bins, partial):
+        bins = bins()
     if len(bins) != 2:
         bins = [bins, bins]
 
     # Initialise the figure
     fig, ax = plt.subplots(1, 1, figsize=figsize)
     hist = ax.hist2d(
-        x_vals,
-        y_vals,
+        x_vals.flatten(),
+        y_vals.flatten(),
         bins=bins,
         weights=weights,
         cmap=cmap,
@@ -207,7 +209,7 @@ def plot_multi_hists_2(
     scale_factors: Optional[list] = None,
     do_err: bool = False,
     do_norm: bool = False,
-    bins: Union[list, str] = "auto",
+    bins: Union[list, str, partial] = "auto",
     logy: bool = False,
     y_label: Optional[str] = None,
     ylim: Optional[list] = None,
@@ -215,9 +217,9 @@ def plot_multi_hists_2(
     rat_label: Optional[str] = None,
     scale: int = 5,
     do_legend: bool = True,
-    legend_loc: str = "upper right",
-    hist_kwargs: Optional[dict] = None,
-    err_kwargs: Optional[dict] = None,
+    hist_kwargs: Optional[list] = None,
+    err_kwargs: Optional[list] = None,
+    legend_kwargs: Optional[dict] = None,
     incl_overflow: bool = True,
     incl_underflow: bool = True,
     do_ratio_to_first: bool = False,
@@ -229,6 +231,7 @@ def plot_multi_hists_2(
     - Performs the histogramming here
     - Each column the arrays will be a seperate axis
     - Matching columns in each array will be superimposed on the same axis
+    - If the tensor being passed is 3D it will average them and combine the uncertainty
 
     args:
         data_list: A list of tensors or numpy arrays, each col will be a seperate axis
@@ -246,8 +249,8 @@ def plot_multi_hists_2(
         rat_label: The label for the ratio plot
         scale: The size in inches for each subplot
         do_legend: If the legend should be plotted
-        legend_loc: The location of the legend
         hist_kwargs: Additional keyword arguments for the line for each histogram
+        legend_kwargs: Extra keyword arguments to pass to the legend constructor
         incl_overflow: Have the final bin include the overflow
         incl_underflow: Have the first bin include the underflow
         do_ratio_to_first: Include a ratio plot to the first histogram in the list
@@ -264,9 +267,13 @@ def plot_multi_hists_2(
     if isinstance(col_labels, str):
         col_labels = [col_labels]
     if not isinstance(bins, list):
-        bins = len(data_list[0][0]) * [bins]
+        bins = data_list[0].shape[-1] * [bins]
     if not isinstance(scale_factors, list):
         scale_factors = len(data_list) * [scale_factors]
+    if not isinstance(hist_kwargs, list):
+        hist_kwargs = len(data_list) * [hist_kwargs]
+    if not isinstance(err_kwargs, list):
+        err_kwargs = len(data_list) * [err_kwargs]
 
     # Cycle through the datalist and ensure that they are 2D, as each column is an axis
     for data_idx in range(len(data_list)):
@@ -275,7 +282,7 @@ def plot_multi_hists_2(
 
     # Check the number of histograms to plot
     n_data = len(data_list)
-    n_axis = len(data_list[0][0])
+    n_axis = data_list[0].shape[-1]
 
     # Make sure that all the list lengths are consistant
     assert len(data_labels) == n_data
@@ -303,6 +310,8 @@ def plot_multi_hists_2(
     # Automatic/Interger bins are replaced using the first item in the data list
     for ax_idx in range(n_axis):
         ax_bins = bins[ax_idx]
+        if isinstance(ax_bins, partial):
+            ax_bins = ax_bins()
 
         # If the axis bins was specified to be 'auto' or another numpy string
         if isinstance(ax_bins, str):
@@ -331,15 +340,26 @@ def plot_multi_hists_2(
         for data_idx in range(n_data):
 
             # Apply overflow and underflow (make a copy)
-            data = np.copy(data_list[data_idx][:, ax_idx])
+            data = np.copy(data_list[data_idx][..., ax_idx]).squeeze()
             if incl_overflow:
                 data = np.minimum(data, ax_bins[-1])
             if incl_underflow:
                 data = np.maximum(data, ax_bins[0])
 
-            # Calculate the histogram and the statistical uncertainties
-            hist, _ = np.histogram(data, ax_bins, density=do_norm)
-            hist_err = np.sqrt(hist)
+            # If the data is still a 2D tensor treat it as a collection of histograms
+            if data.ndim > 1:
+                h = []
+                for dim in range(data.shape[-1]):
+                    h.append(np.histogram(data[:, dim], ax_bins, density=do_norm)[0])
+
+                # Nominal and err is based on chi2 of same value, mult measurements
+                hist = 1 / np.mean(1/np.array(h), axis=0)
+                hist_err = np.sqrt(1/np.sum(1/np.array(h), axis=0))
+
+            # Otherwise just calculate a single histogram
+            else:
+                hist, _ = np.histogram(data, ax_bins, density=do_norm)
+                hist_err = np.sqrt(hist)
 
             # Apply the scale factors
             if scale_factors[data_idx] is not None:
@@ -352,19 +372,24 @@ def plot_multi_hists_2(
                 denom_err = hist_err
 
             # Get the additional keyword arguments for the histograms and errors
-            if hist_kwargs is not None:
-                h_kwargs = {key: val[data_idx] for key, val in hist_kwargs.items()}
+            if hist_kwargs[data_idx] is not None and bool(hist_kwargs[data_idx]):
+                h_kwargs = hist_kwargs[data_idx]
             else:
                 h_kwargs = {}
-            if err_kwargs is not None:
-                e_kwargs = {key: val[data_idx] for key, val in err_kwargs.items()}
-            else:
-                e_kwargs = {}
 
             # Use the stair function to plot the histograms
             line = axes[0, ax_idx].stairs(
                 hist, ax_bins, label=data_labels[data_idx], **h_kwargs
             )
+
+            if err_kwargs[data_idx] is not None and bool(err_kwargs[data_idx]):
+                e_kwargs = err_kwargs[data_idx]
+            else:
+                e_kwargs = {
+                    "color": line._edgecolor,
+                    "alpha": 0.2,
+                    "fill": True
+                }
 
             # Include the uncertainty in the plots as a shaded region
             if do_err:
@@ -372,9 +397,6 @@ def plot_multi_hists_2(
                     hist + hist_err,
                     ax_bins,
                     baseline=hist - hist_err,
-                    color=line._edgecolor,
-                    alpha=0.2,
-                    fill=True,
                     **e_kwargs,
                 )
 
@@ -400,9 +422,6 @@ def plot_multi_hists_2(
                         rat_hist + rat_err,
                         ax_bins,
                         baseline=rat_hist - rat_err,
-                        color=line._edgecolor,
-                        alpha=0.2,
-                        fill=True,
                         **e_kwargs,
                     )
 
@@ -420,6 +439,8 @@ def plot_multi_hists_2(
             axes[0, ax_idx].set_xlabel(col_labels[ax_idx])
 
         # Y axis
+        if logy:
+            axes[0, ax_idx].set_yscale("log")
         if ylim is not None:
             axes[0, ax_idx].set_ylim(*ylim)
         else:
@@ -434,8 +455,6 @@ def plot_multi_hists_2(
             axes[0, ax_idx].set_ylabel("Normalised Entries")
         else:
             axes[0, ax_idx].set_ylabel("Entries")
-        if logy:
-            axes[0, ax_idx].set_yscale("log")
 
         # Ratio Y axis
         if do_ratio_to_first:
@@ -447,7 +466,8 @@ def plot_multi_hists_2(
 
         # Legend
         if do_legend:
-            axes[0, ax_idx].legend(loc=legend_loc)
+            legend_kwargs = legend_kwargs or {}
+            axes[0, ax_idx].legend(**legend_kwargs)
 
     # Final figure layout
     fig.tight_layout()

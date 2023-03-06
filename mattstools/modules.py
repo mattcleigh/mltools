@@ -392,7 +392,7 @@ class DeepSet(nn.Module):
         if isinstance(ctxt, list):
             ctxt = smart_cat(ctxt)
 
-        # Pass the non_zero values through the feature network
+        # Pass the values through the feature network
         feat_outs = self.feat_net(inpt, ctxt)
 
         # For attention
@@ -400,13 +400,17 @@ class DeepSet(nn.Module):
             attn_outs = self.attn_net(inpt, ctxt)
 
             # Change the attention weights of the padded elements
-            attn_outs[mask] = 0 if self.attn_type == "raw" else -T.inf
+            attn_outs[~mask] = 0 if self.attn_type == "raw" else -T.inf
 
             # Apply either a softmax for weighted mean or softplus for weighted sum
             if self.attn_type == "mean":
                 attn_outs = F.softmax(attn_outs, dim=-2)
             elif self.attn_type == "sum":
                 attn_outs = F.softplus(attn_outs)
+
+            # Kill the nans introduced by the empty sets
+            attn_outs = T.nan_to_num(attn_outs, 0)
+            # attn_outs[~mask] = 0
 
             # Broadcast the attention to get the multiple poolings and sum
             attn_outs = (
