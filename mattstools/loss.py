@@ -5,7 +5,8 @@ from typing import Tuple, Union
 import torch as T
 import torch.nn as nn
 from geomloss import SamplesLoss
-from jetnet.losses import EMDLoss
+
+# from jetnet.losses import EMDLoss
 
 
 class VAELoss(nn.Module):
@@ -78,8 +79,8 @@ def kld_with_OE(
 
 class GeomWrapper(nn.Module):
     """This is a wrapper class for the geomloss package which by default
-    renables all gradients after a forward pass, thereby causing the gradients
-    to explode during evaluation."""
+    renables all gradients after a forward pass, thereby causing the gradient
+    memory to explode during evaluation."""
 
     def __init__(self, loss_fn) -> None:
         super().__init__()
@@ -142,7 +143,7 @@ class ModifiedSinkhorn(nn.Module):
 class EnergyMovers(nn.Module):
     def __init__(self, **kwargs) -> None:
         super().__init__()
-        self.loss_fn = EMDLoss(**kwargs)
+        # self.loss_fn = EMDLoss(**kwargs)
 
     def forward(
         self, a_weights, pc_a, b_weights, pc_b
@@ -195,8 +196,8 @@ def masked_dist_loss(
     """
 
     # Calculate the weights by normalising the mask for each sample
-    a_weights = pc_a_mask.float() / pc_a_mask.sum(dim=-1, keepdim=True)
-    b_weights = pc_b_mask.float() / pc_b_mask.sum(dim=-1, keepdim=True)
+    a_weights = pc_a_mask.float()
+    b_weights = pc_b_mask.float()
 
     # Calculate the loss using these weights
     loss = loss_fn(a_weights, pc_a, b_weights, pc_b)

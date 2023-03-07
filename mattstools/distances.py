@@ -175,7 +175,7 @@ def masked_fc_adjmat(
 
 
 def knn(
-    distmat: T.Tensor, k_val: int, k_restr_dim: str = "recv", topk: bool = False
+    distmat: T.Tensor, k_val: int, k_restr_dim: str = "recv", top_k: bool = False
 ) -> T.BoolTensor:
     """Creates edges based on an infinite padded distance matrix.
 
@@ -183,7 +183,7 @@ def knn(
         distmat: A batched infinite padded distance matrix with no self loops
         k_val: The value of K for the clustering
         k_restr_dim: The dimension over which to restrict (send or recv)
-        topk: If the top k distances should be used for clustering instead
+        top_k: If the top k distances should be used for clustering instead
     returns:
         adjmat: A new adjmat using knn over one of the dimensions in the dist mat
     """
@@ -202,7 +202,7 @@ def knn(
             return distmat < distmat + EPS  # (Inf < Inf + EPS) is always false!
 
         # If looking for the top k connections then flip sign
-        if topk:
+        if top_k:
             distmat = distmat * -1
 
         # Check which dimension is being restricted

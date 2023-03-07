@@ -165,7 +165,7 @@ class EdgeBuilder(nn.Module):
 
         # Trim the adjmat using the cluster type
         if self.clus_type == "knn":
-            new_adjmat = knn(distmat, self.clus_val, topk=(self.measure == "dot"))
+            new_adjmat = knn(distmat, self.clus_val, top_k=(self.measure == "dot"))
         elif self.clus_type == "thresh":
             if self.measure == "eucl":
                 new_adjmat = distmat < self.clus_val
@@ -468,7 +468,7 @@ class FullGraphVectorGenerator(nn.Module):
 
 class FullGraphVectorEncoder(nn.Module):
     """A graph network encoder which produces a vector representation passed
-    through dns graph to vector."""
+    through a dense network graph -> vector."""
 
     def __init__(
         self,
