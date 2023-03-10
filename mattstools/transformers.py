@@ -137,6 +137,7 @@ class MultiHeadedAttentionBlock(nn.Module):
         model_dim: int,
         num_heads: int = 1,
         drp: float = 0,
+        init_zeros: bool = False,
     ) -> None:
         """
         Args:
@@ -144,6 +145,7 @@ class MultiHeadedAttentionBlock(nn.Module):
             num_heads: The number of different attention heads to process in parallel
                 - Must allow interger division into model_dim
             drp: The dropout probability used in the MHA operation
+            init_zeros: If the final linear layer is initialised with zero weights
         """
         super().__init__()
 
@@ -162,6 +164,11 @@ class MultiHeadedAttentionBlock(nn.Module):
         self.v_linear = nn.Linear(model_dim, model_dim)
         self.out_linear = nn.Linear(model_dim, model_dim)
         self.drp = drp
+
+        # Set the output linear layer weights and bias terms to zero
+        if init_zeros:
+            self.out_linear.weight.data.fill_(0)
+            self.out_linear.bias.data.fill_(0)
 
     def forward(
         self,

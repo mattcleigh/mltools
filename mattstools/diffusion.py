@@ -16,6 +16,7 @@ class DiffusionSchedule(ABC):
         pass
 
     def get_betas(self, time: T.Tensor) -> T.Tensor:
+        """Return the drift coefficient for the reverse SDE"""
         pass
 
 

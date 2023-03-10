@@ -2,7 +2,7 @@
 projects."""
 
 from typing import Optional, Union
-
+import math
 import torch as T
 import torch.nn as nn
 import torch.nn.functional as F
@@ -36,6 +36,7 @@ class MLPBlock(nn.Module):
         drp: float = 0,
         do_res: bool = False,
         do_bayesian: bool = False,
+        init_zeros: bool = False
     ) -> None:
         """Init method for MLPBlock.
 
@@ -59,6 +60,9 @@ class MLPBlock(nn.Module):
             The number of transform layers in this block, by default False
         do_bayesian : bool, optional
             If to fill the block with bayesian linear layers, by default False
+        init_zeros : bool, optional,
+            If the final layer weights and bias values are set to zero
+            Does not apply to bayesian layers
         """
         super().__init__()
 
@@ -83,6 +87,12 @@ class MLPBlock(nn.Module):
                 if do_bayesian
                 else nn.Linear(lyr_in, outp_dim)
             )
+
+            # Initialise the final layer with zeros
+            if init_zeros and n == n_layers - 1 and not do_bayesian:
+                self.block[-1].weight.data.fill_(0)
+                self.block[-1].bias.data.fill_(0)
+
             if act != "none":
                 self.block.append(get_act(act))
             if nrm != "none":
@@ -149,6 +159,7 @@ class DenseNetwork(nn.Module):
         ctxt_in_inpt: bool = True,
         ctxt_in_hddn: bool = False,
         do_bayesian: bool = False,
+        output_init_zeros: bool = False,
     ) -> None:
         """Initialise the DenseNetwork.
 
@@ -189,6 +200,8 @@ class DenseNetwork(nn.Module):
             Include the ctxt tensor in the hidden blocks, by default False
         do_bayesian : bool, optional
             Create the network with bayesian linear layers, by default False
+        output_init_zeros : bool, optional
+            Initialise the output layer weights as zeros
 
         Raises
         ------
@@ -254,6 +267,7 @@ class DenseNetwork(nn.Module):
                 outp_dim=self.outp_dim,
                 act=act_o,
                 do_bayesian=do_bayesian,
+                init_zeros=output_init_zeros,
             )
 
     def forward(self, inputs: T.Tensor, ctxt: Optional[T.Tensor] = None) -> T.Tensor:
