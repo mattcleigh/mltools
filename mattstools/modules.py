@@ -635,3 +635,73 @@ class IterativeNormLayer(nn.Module):
 
         # Freeze the model if we exceed the requested stats
         self.frozen = self.n >= self.max_n
+
+
+class CosineEncoding:
+    def __init__(
+        self,
+        outp_dim: int = 32,
+        min_value: float = 0.0,
+        max_value: float = 1.0,
+        frequency_scaling: str = "exponential",
+    ) -> None:
+        self.outp_dim = outp_dim
+        self.min_value = min_value
+        self.max_value = max_value
+        self.frequency_scaling = frequency_scaling
+
+    def __call__(self, inpt: T.Tensor) -> T.Tensor:
+        return cosine_encoding(
+            inpt, self.outp_dim, self.min_value, self.max_value, self.frequency_scaling
+        )
+
+
+def cosine_encoding(
+    x: T.Tensor,
+    outp_dim: int = 32,
+    min_value: float = 0.0,
+    max_value: float = 1.0,
+    frequency_scaling: str = "exponential",
+) -> T.Tensor:
+    """Computes a positional cosine encodings with an increasing series of
+    frequencies.
+
+    The frequencies either increase linearly or exponentially (default).
+    The latter is good for when max_value is large and extremely high sensitivity to the
+    input is required.
+    If inputs greater than the max value are provided, the outputs become degenerate.
+    If inputs smaller than the min value are provided, the inputs the the cosine will
+    be both positive and negative, which may lead degenerate outputs.
+
+    Always make sure that the min and max bounds are not exceeded!
+
+    Args:
+        x: The input, the final dimension is encoded. If 1D then it will be unqueezed
+        out_dim: The dimension of the output encoding
+        min_value: Added to x (and max) as cosine embedding works with positive inputs
+        max_value: The maximum expected value, sets the scale of the lowest frequency
+        frequency_scaling: Either 'linear' or 'exponential'
+
+    Returns:
+        The cosine embeddings of the input using (out_dim) many frequencies
+    """
+
+    # Unsqueeze if final dimension is flat
+    if x.shape[-1] != 1 or x.dim() == 1:
+        x = x.unsqueeze(-1)
+
+    # Check the the bounds are obeyed
+    if T.any(x > max_value):
+        print("Warning! Passing values to cosine_encoding encoding that exceed max!")
+    if T.any(x < min_value):
+        print("Warning! Passing values to cosine_encoding encoding below min!")
+
+    # Calculate the various frequencies
+    if frequency_scaling == "exponential":
+        freqs = T.arange(outp_dim, device=x.device).exp()
+    elif frequency_scaling == "linear":
+        freqs = T.arange(1, outp_dim + 1, device=x.device)
+    else:
+        raise RuntimeError(f"Unrecognised frequency scaling: {frequency_scaling}")
+
+    return T.cos((x + min_value) * freqs * math.pi / (max_value + min_value))
