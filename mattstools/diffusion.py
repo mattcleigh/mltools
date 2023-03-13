@@ -119,7 +119,7 @@ def ddim_sampler(
     Args:
         model: A denoising diffusion model
             Requires: inpt_dim, device, forward() method that outputs pred noise
-        diif_sched: A diffusion schedule object to calculate signal and noise rates
+        diff_sched: A diffusion schedule object to calculate signal and noise rates
         initial_noise: The initial noise to pass through the process
             If none it will be generated here
         n_steps: The number of iterations to generate the samples
