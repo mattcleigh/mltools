@@ -1,8 +1,9 @@
 """Collection of pytorch modules that make up the common networks used in my
 projects."""
 
-from typing import Optional, Union
 import math
+from typing import Optional, Union
+
 import torch as T
 import torch.nn as nn
 import torch.nn.functional as F
@@ -36,7 +37,7 @@ class MLPBlock(nn.Module):
         drp: float = 0,
         do_res: bool = False,
         do_bayesian: bool = False,
-        init_zeros: bool = False
+        init_zeros: bool = False,
     ) -> None:
         """Init method for MLPBlock.
 

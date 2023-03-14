@@ -2,13 +2,17 @@ from typing import Optional
 
 import numpy as np
 
-def onehot_encode(a: np.ndarray, max_idx: None | int = None, dtype:np.dtype = np.float32)->np.ndarray:
+
+def onehot_encode(
+    a: np.ndarray, max_idx: None | int = None, dtype: np.dtype = np.float32
+) -> np.ndarray:
     max_idx = max_idx or a.max()
     ncols = max_idx + 1
     out = np.zeros((a.size, ncols), dtype=dtype)
     out[np.arange(a.size), a.ravel()] = 1
     out.shape = a.shape + (ncols,)
     return out
+
 
 def interweave(arr_1: np.ndarray, arr_2: np.ndarray) -> np.ndarray:
     """Combine two arrays by alternating along the first dimension
