@@ -1,17 +1,20 @@
 import torch as T
 import torch.nn as nn
 
-def get_timesteps(n_steps: int, t_min: float, p: float) -> T.Tensor:
-    """Generate variable timesteps working back from 1 to t_min
+def get_timesteps(t_max: float, t_min: float, n_steps: int, p: float) -> T.Tensor:
+    """Generate variable timesteps working back from t_max to t_min
 
     Args:
+        t_max: The maximum/starting time
+        t_min: The minimum/final time
         n_steps: The number of time steps
-        t_min: The minimum time
         p: The degree of curvature, p=1 equal step size, recommened 7 for diffusion
 
     """
-    idx = T.arange(0, n_steps).float()
-    times = (1 + idx / (n_steps - 1) * (t_min**(1/p) - 1))**p
+    idx = T.arange(n_steps, dtype=T.float32)
+    invp = 1 / p
+    tmax_invp = t_max**invp
+    times = (tmax_invp + idx / (n_steps - 1) * (t_min**invp - tmax_invp))**p
     return times
 
 def heun_sampler(
