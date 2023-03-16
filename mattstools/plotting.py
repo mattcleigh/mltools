@@ -221,6 +221,7 @@ def plot_multi_hists_2(
     hist_kwargs: Optional[list] = None,
     err_kwargs: Optional[list] = None,
     legend_kwargs: Optional[dict] = None,
+    extra_text: Optional[list] = None,
     incl_overflow: bool = True,
     incl_underflow: bool = True,
     do_ratio_to_first: bool = False,
@@ -252,6 +253,7 @@ def plot_multi_hists_2(
         do_legend: If the legend should be plotted
         hist_kwargs: Additional keyword arguments for the line for each histogram
         legend_kwargs: Extra keyword arguments to pass to the legend constructor
+        extra_text: Extra text to put on each axis (same length as columns)
         incl_overflow: Have the final bin include the overflow
         incl_underflow: Have the first bin include the underflow
         do_ratio_to_first: Include a ratio plot to the first histogram in the list
@@ -275,6 +277,8 @@ def plot_multi_hists_2(
         hist_kwargs = len(data_list) * [hist_kwargs]
     if not isinstance(err_kwargs, list):
         err_kwargs = len(data_list) * [err_kwargs]
+    if not isinstance(extra_text, list):
+        extra_text = len(col_labels) * [extra_text]
 
     # Cycle through the datalist and ensure that they are 2D, as each column is an axis
     for data_idx in range(len(data_list)):
@@ -460,6 +464,10 @@ def plot_multi_hists_2(
                 axes[1, ax_idx].set_ylabel(rat_label)
             else:
                 axes[1, ax_idx].set_ylabel(f"Ratio to {data_labels[0]}")
+
+        # Extra text
+        if extra_text[ax_idx] is not None:
+            axes[0, ax_idx].text(**extra_text[ax_idx])
 
         # Legend
         if do_legend:
