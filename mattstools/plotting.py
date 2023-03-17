@@ -1,5 +1,6 @@
 """A collection of plotting scripts for standard uses."""
 
+from copy import deepcopy
 from functools import partial
 from pathlib import Path
 from typing import Optional, Union
@@ -570,7 +571,7 @@ def plot_multi_hists_2(
 
             # Get the additional keyword arguments for the histograms and errors
             if hist_kwargs[data_idx] is not None and bool(hist_kwargs[data_idx]):
-                h_kwargs = hist_kwargs[data_idx]
+                h_kwargs = deepcopy(hist_kwargs[data_idx])
             else:
                 h_kwargs = {}
 
@@ -580,7 +581,7 @@ def plot_multi_hists_2(
             )
 
             if err_kwargs[data_idx] is not None and bool(err_kwargs[data_idx]):
-                e_kwargs = err_kwargs[data_idx]
+                e_kwargs = deepcopy(err_kwargs[data_idx])
             else:
                 e_kwargs = {"color": line._edgecolor, "alpha": 0.2, "fill": True}
 
@@ -596,6 +597,15 @@ def plot_multi_hists_2(
             # Add a ratio plot
             if do_ratio_to_first:
 
+                if hist_kwargs[data_idx] is not None and bool(hist_kwargs[data_idx]):
+                    ratio_kwargs = deepcopy(hist_kwargs[data_idx])
+                else:
+                    ratio_kwargs = {
+                        "color": line._edgecolor,
+                        "linestyle": line._linestyle,
+                    }
+                ratio_kwargs["fill"] = False  # Never fill a ratio plot
+
                 # Calculate the new ratio values with their errors
                 rat_hist = hist / denom_hist
                 rat_err = rat_hist * np.sqrt(
@@ -606,7 +616,7 @@ def plot_multi_hists_2(
                 axes[1, ax_idx].stairs(
                     rat_hist,
                     ax_bins,
-                    color=line._edgecolor,
+                    **ratio_kwargs,
                 )
 
                 # Use a standard shaded region for the errors
