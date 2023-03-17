@@ -1,5 +1,6 @@
 """Mix of utility functions specifically for pytorch."""
 import os
+from functools import partial
 from typing import Iterable, List, Optional, Tuple, Union
 
 import numpy as np
@@ -10,7 +11,6 @@ import torch.optim.lr_scheduler as schd
 from geomloss import SamplesLoss
 from torch.utils.data import Dataset, Subset, random_split
 
-from .lookahead import Lookahead
 from .loss import (
     ChampferLoss,
     EnergyMovers,
@@ -19,6 +19,7 @@ from .loss import (
     MyBCEWithLogit,
     VAELoss,
 )
+from .optimisers import Lookahead
 from .schedulers import CyclicWithWarmup, LinearWarmupRootDecay, WarmupToConstant
 
 # An onnx save argument which is for the pass with mask function (makes it slower)
@@ -175,8 +176,13 @@ def get_optim(optim_dict: dict, params: Iterable) -> optim.Optimizer:
     return opt
 
 
-def get_loss_fn(name: str, **kwargs) -> nn.Module:
+def get_loss_fn(name: Union[partial, str], **kwargs) -> nn.Module:
     """Return a pytorch loss function given a name."""
+
+    # Supports using partial methods instad of having to do support each string
+    if isinstance(name, partial):
+        return name()
+
     if name == "none":
         return None
 
