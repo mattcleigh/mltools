@@ -1,19 +1,22 @@
 """A collection of plotting scripts for standard uses."""
 
+from copy import deepcopy
 from functools import partial
 from pathlib import Path
-from typing import Optional, Union
+from typing import Callable, Optional, Union
 
 import matplotlib
+import matplotlib.axes._axes as axes
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import numpy as np
 import pandas as pd
 import PIL.Image
+import seaborn as sns
 from matplotlib.colors import LogNorm
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from scipy.interpolate import make_interp_spline
-from scipy.stats import pearsonr
+from scipy.stats import binned_statistic, pearsonr
 
 # from .numpy_utils import mid_points, undo_mid
 
@@ -35,6 +38,101 @@ def gaussian(x_data, mu=0, sig=1):
         / np.sqrt(2 * np.pi * sig**2)
         * np.exp(-((x_data - mu) ** 2) / (2 * sig**2))
     )
+
+
+def plot_profiles(
+    x_list: np.ndarray,
+    y_list: np.ndarray,
+    data_labels: list,
+    ylabel: str,
+    xlabel: str,
+    central_statistic: str | Callable = "mean",
+    up_statistic: str | Callable = "std",
+    down_statistic: str | Callable = "std",
+    bins: int | list | np.ndarray = 50,
+    figsize: tuple = (5, 4),
+    hist_kwargs: list | None = None,
+    err_kwargs: list | None = None,
+    legend_kwargs: dict | None = None,
+    path: Path | None = None,
+    return_fig: bool = False,
+    return_img: bool = False,
+) -> None:
+    """Plot and save a profile plot."""
+
+    assert len(x_list) == len(y_list)
+
+    # Initialise the figure
+    fig, ax = plt.subplots(1, 1, figsize=figsize)
+
+    for i, (x, y) in enumerate(zip(x_list, y_list)):
+
+        # Get the basic histogram to setup the counts and edges
+        hist, bin_edges = np.histogram(x, bins)
+
+        # Get the central values for the profiles
+        central = binned_statistic(x, y, central_statistic, bin_edges)
+        central_vals = central.statistic
+
+        # Get the up and down values for the statistic
+        up_vals = binned_statistic(x, y, up_statistic, bin_edges).statistic
+        if not (up_statistic == "std" and down_statistic == "std"):
+            down_vals = binned_statistic(x, y, down_statistic, bin_edges).statistic
+        else:
+            down_vals = up_vals
+
+        # Correct based on the uncertainty of the mean
+        if up_statistic == "std":
+            up_vals = central_vals + up_vals / np.sqrt(hist + 1e-8)
+        if down_statistic == "std":
+            down_vals = central_vals - down_vals / np.sqrt(hist + 1e-8)
+
+        # Get the additional keyword arguments for the histograms
+        if hist_kwargs[i] is not None and bool(hist_kwargs[i]):
+            h_kwargs = deepcopy(hist_kwargs[i])
+        else:
+            h_kwargs = {}
+
+        # Use the stairs function to plot the histograms
+        line = ax.stairs(central_vals, bin_edges, label=data_labels[i], **h_kwargs)
+
+        # Get the additional keyword arguments for the histograms
+        if err_kwargs[i] is not None and bool(err_kwargs[i]):
+            e_kwargs = deepcopy(err_kwargs[i])
+        else:
+            e_kwargs = {"color": line._edgecolor, "alpha": 0.2, "fill": True}
+
+        # Include the uncertainty in the plots as a shaded region
+        ax.stairs(up_vals, bin_edges, baseline=down_vals, **e_kwargs)
+
+    # Limits
+    ylim1, ylim2 = ax.get_ylim()
+    ax.set_ylim(top=ylim2 + 0.5 * (ylim2 - ylim1))
+    ax.set_xlim([bin_edges[0], bin_edges[-1]])
+
+    # Axis labels and legend
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.legend(**(legend_kwargs or {}))
+    ax.grid(visible=True)
+
+    # Final figure layout
+    fig.tight_layout()
+
+    # Save the file
+    if path is not None:
+        fig.savefig(path)
+
+    # Return a rendered image, or the matplotlib figure, or close
+    if return_img:
+        img = PIL.Image.frombytes(
+            "RGB", fig.canvas.get_width_height(), fig.canvas.tostring_rgb()
+        )
+        plt.close(fig)
+        return img
+    if return_fig:
+        return fig
+    plt.close(fig)
 
 
 def plot_corr_heatmaps(
@@ -146,59 +244,193 @@ def plot_corr_heatmaps(
     plt.close(fig)
 
 
-def plot_multi_loss(
-    path: Path,
-    loss_hist: dict,
-    xvals: list = None,
-    xlabel: str = "epoch",
-    logx: bool = False,
+def add_hist(
+    ax: axes.Axes,
+    data: np.ndarray,
+    bins: np.ndarray,
+    do_norm: bool = False,
+    label: str = "",
+    scale_factor: float = None,
+    hist_kwargs: dict = None,
+    err_kwargs: dict = None,
+    do_err: bool = True,
 ) -> None:
-    """Plot the contents of a loss history with epoch on the x-axis
-    args:
-        path: Where to save the output images
-        loss_hist: A dictionary containing lists of loss histories
-            dict[loss_name][dataset][epoch_number]
-    kwargs
-        xvals: A list of values for the x-axis, if None it uses arrange
-        xlabel: The label for the shared x-axis in the plots
-        logx: Using a log scale on the x-axis
+    """Plot a histogram on a given axes object.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The axes object to plot the histogram on.
+    data : numpy.ndarray
+        The data to plot as a histogram.
+    bins : int
+        The bin edges to use for the histogram
+    do_norm : bool, optional
+        Whether to normalize the histogram, by default False.
+    label : str, optional
+        The label to use for the histogram, by default "".
+    scale_factor : float, optional
+        A scaling factor to apply to the histogram, by default None.
+    hist_kwargs : dict, optional
+        Additional keyword arguments to pass to the histogram function, by default None.
+    err_kwargs : dict, optional
+        Additional keyword arguments to pass to the errorbar function, by default None.
+    do_err : bool, optional
+        Whether to include errorbars, by default True.
+
+    Returns
+    -------
+    None
+        The function only has side effects.
     """
 
-    # Get the x-axis values using the length of the total loss in the trainset
-    # This should always be present
-    if xvals is None:
-        xvals = np.arange(1, len(loss_hist["total"]["train"]) + 1)
+    # Compute the histogram
+    hist, _ = np.histogram(data, bins, density=do_norm)
+    hist_err = np.sqrt(hist)
 
-    # Create the main figure and subplots
+    # Apply the scale factors
+    if scale_factor is not None:
+        hist *= scale_factor
+        hist_err *= scale_factor
+
+    # Get the additional keyword arguments for the histograms
+    if hist_kwargs is not None and bool(hist_kwargs):
+        h_kwargs = hist_kwargs
+    else:
+        h_kwargs = {}
+
+    # Use the stairs function to plot the histograms
+    line = ax.stairs(hist, bins, label=label, **h_kwargs)
+
+    # Get the additional keyword arguments for the error bars
+    if err_kwargs is not None and bool(err_kwargs):
+        e_kwargs = err_kwargs
+    else:
+        e_kwargs = {"color": line._edgecolor, "alpha": 0.2, "fill": True}
+
+    # Include the uncertainty in the plots as a shaded region
+    if do_err:
+        ax.stairs(hist + hist_err, bins, baseline=hist - hist_err, **e_kwargs)
+
+
+def quantile_bins(data, bins=50, low=0.001, high=0.999, axis=None) -> np.ndarray:
+    return np.linspace(*np.quantile(data, [0.001, 0.999], axis=axis), bins)
+
+
+def plot_multi_correlations(
+    data_list: list | np.ndarray,
+    data_labels: list,
+    col_labels: list,
+    n_bins: int = 50,
+    n_kde_points: int = 50,
+    do_err: bool = True,
+    hist_kwargs: list | None = None,
+    err_kwargs: list | None = None,
+    legend_kwargs: dict | None = None,
+    path: Path | str = None,
+    return_img: bool = False,
+    return_fig: bool = False,
+) -> Union[plt.Figure, None]:
+
+    # Make sure the kwargs are lists too
+    if not isinstance(hist_kwargs, list):
+        hist_kwargs = len(data_list) * [hist_kwargs]
+    if not isinstance(err_kwargs, list):
+        err_kwargs = len(data_list) * [err_kwargs]
+
+    # Create the figure with the many sub axes
+    n_features = len(col_labels)
     fig, axes = plt.subplots(
-        len(loss_hist), 1, sharex=True, figsize=(4, 4 * len(loss_hist))
+        n_features,
+        n_features,
+        figsize=(2 * n_features + 3, 2 * n_features + 1),
+        gridspec_kw={"wspace": 0.04, "hspace": 0.04},
     )
 
-    # Account for the fact that there may be a single loss
-    if len(loss_hist) == 1:
-        axes = [axes]
+    # Cycle through the rows and columns and set the axis labels
+    for row in range(n_features):
+        axes[0, 0].set_ylabel("Normalised Entries", horizontalalignment="right", y=1.0)
+        if row != 0:
+            axes[row, 0].set_ylabel(col_labels[row])
+        for column in range(n_features):
+            axes[-1, column].set_xlabel(col_labels[column])
+            if column != 0:
+                axes[row, column].set_yticklabels([])
 
-    # Cycle though the different loss types, each on their own axis
-    for ax, lnm in zip(axes, loss_hist.keys()):
-        ax.set_ylabel(lnm)
-        ax.set_xlabel(xlabel)
+            # Remove all ticks
+            if row != n_features - 1:
+                axes[row, column].tick_params(
+                    axis="x", which="both", direction="in", labelbottom=False
+                )
+            if row == column == 0:
+                axes[row, column].tick_params(axis="y", colors="w")
+            elif column > 0:
+                axes[row, column].tick_params(
+                    axis="y", which="both", direction="in", labelbottom=False
+                )
 
-        if logx:
-            ax.set_xscale("log")
+            # For the diagonals they become histograms
+            # Bins are based on the first datapoint in the list
+            if row == column:
+                bins = quantile_bins(data_list[0][:, row], bins=n_bins)
+                for i, d in enumerate(data_list):
+                    add_hist(
+                        axes[row, column],
+                        d[:, row],
+                        bins=bins,
+                        hist_kwargs=hist_kwargs[i],
+                        err_kwargs=err_kwargs[i],
+                        do_err=do_err,
+                    )
+                    axes[row, column].set_xlim(bins[0], bins[-1])
 
-        # Plot each dataset's history ontop of each other
-        for dset, vals in loss_hist[lnm].items():
+            # If we are in the lower triange  fill using a contour plot
+            elif row > column:
+                x_bounds = np.quantile(data_list[0][:, column], [0.001, 0.999])
+                y_bounds = np.quantile(data_list[0][:, row], [0.001, 0.999])
+                for i, d in enumerate(data_list):
+                    color = None
+                    if "color" in hist_kwargs[i].keys():
+                        color = hist_kwargs[i]["color"]
+                    sns.kdeplot(
+                        x=d[:, column],
+                        y=d[:, row],
+                        ax=axes[row, column],
+                        alpha=0.4,
+                        levels=3,
+                        color=color,
+                        fill=True,
+                        clip=[x_bounds, y_bounds],
+                        gridsize=n_kde_points,
+                    )
+                    axes[row, column].set_xlim(x_bounds)
+                    axes[row, column].set_ylim(y_bounds)
 
-            # Skip empty loss dictionaries (sometimes we dont have valid loss)
-            if not vals:
-                continue
+            # If we are in the upper triangle we set visibility off
+            else:
+                axes[row, column].set_visible(False)
 
-            ax.plot(xvals, vals, label=dset)
+    # Create some invisible lines which will be part of the legend
+    for i, d in enumerate(data_list):
+        color = None
+        if "color" in hist_kwargs[i].keys():
+            color = hist_kwargs[i]["color"]
+        axes[row, column].plot([], [], label=data_labels[i], color=color)
+    fig.legend(**(legend_kwargs or {}))
 
-    # Put the legend only on the top plot and save
-    axes[0].legend()
-    fig.tight_layout()
-    fig.savefig(Path(path).with_suffix(".png"))
+    # Save the file
+    if path is not None:
+        fig.savefig(path)
+
+    # Return a rendered image, or the matplotlib figure, or close
+    if return_img:
+        img = PIL.Image.frombytes(
+            "RGB", fig.canvas.get_width_height(), fig.canvas.tostring_rgb()
+        )
+        plt.close(fig)
+        return img
+    if return_fig:
+        return fig
     plt.close(fig)
 
 
@@ -221,6 +453,7 @@ def plot_multi_hists_2(
     hist_kwargs: Optional[list] = None,
     err_kwargs: Optional[list] = None,
     legend_kwargs: Optional[dict] = None,
+    extra_text: Optional[list] = None,
     incl_overflow: bool = True,
     incl_underflow: bool = True,
     do_ratio_to_first: bool = False,
@@ -252,6 +485,7 @@ def plot_multi_hists_2(
         do_legend: If the legend should be plotted
         hist_kwargs: Additional keyword arguments for the line for each histogram
         legend_kwargs: Extra keyword arguments to pass to the legend constructor
+        extra_text: Extra text to put on each axis (same length as columns)
         incl_overflow: Have the final bin include the overflow
         incl_underflow: Have the first bin include the underflow
         do_ratio_to_first: Include a ratio plot to the first histogram in the list
@@ -275,6 +509,8 @@ def plot_multi_hists_2(
         hist_kwargs = len(data_list) * [hist_kwargs]
     if not isinstance(err_kwargs, list):
         err_kwargs = len(data_list) * [err_kwargs]
+    if not isinstance(extra_text, list):
+        extra_text = len(col_labels) * [extra_text]
 
     # Cycle through the datalist and ensure that they are 2D, as each column is an axis
     for data_idx in range(len(data_list)):
@@ -374,7 +610,7 @@ def plot_multi_hists_2(
 
             # Get the additional keyword arguments for the histograms and errors
             if hist_kwargs[data_idx] is not None and bool(hist_kwargs[data_idx]):
-                h_kwargs = hist_kwargs[data_idx]
+                h_kwargs = deepcopy(hist_kwargs[data_idx])
             else:
                 h_kwargs = {}
 
@@ -384,7 +620,7 @@ def plot_multi_hists_2(
             )
 
             if err_kwargs[data_idx] is not None and bool(err_kwargs[data_idx]):
-                e_kwargs = err_kwargs[data_idx]
+                e_kwargs = deepcopy(err_kwargs[data_idx])
             else:
                 e_kwargs = {"color": line._edgecolor, "alpha": 0.2, "fill": True}
 
@@ -400,6 +636,15 @@ def plot_multi_hists_2(
             # Add a ratio plot
             if do_ratio_to_first:
 
+                if hist_kwargs[data_idx] is not None and bool(hist_kwargs[data_idx]):
+                    ratio_kwargs = deepcopy(hist_kwargs[data_idx])
+                else:
+                    ratio_kwargs = {
+                        "color": line._edgecolor,
+                        "linestyle": line._linestyle,
+                    }
+                ratio_kwargs["fill"] = False  # Never fill a ratio plot
+
                 # Calculate the new ratio values with their errors
                 rat_hist = hist / denom_hist
                 rat_err = rat_hist * np.sqrt(
@@ -410,7 +655,7 @@ def plot_multi_hists_2(
                 axes[1, ax_idx].stairs(
                     rat_hist,
                     ax_bins,
-                    color=line._edgecolor,
+                    **ratio_kwargs,
                 )
 
                 # Use a standard shaded region for the errors
@@ -460,6 +705,10 @@ def plot_multi_hists_2(
                 axes[1, ax_idx].set_ylabel(rat_label)
             else:
                 axes[1, ax_idx].set_ylabel(f"Ratio to {data_labels[0]}")
+
+        # Extra text
+        if extra_text[ax_idx] is not None:
+            axes[0, ax_idx].text(**extra_text[ax_idx])
 
         # Legend
         if do_legend:
