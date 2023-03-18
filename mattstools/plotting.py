@@ -3,7 +3,7 @@
 from copy import deepcopy
 from functools import partial
 from pathlib import Path
-from typing import Optional, Union
+from typing import Callable, Optional, Union
 
 import matplotlib
 import matplotlib.axes._axes as axes
@@ -16,7 +16,7 @@ import seaborn as sns
 from matplotlib.colors import LogNorm
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from scipy.interpolate import make_interp_spline
-from scipy.stats import pearsonr
+from scipy.stats import binned_statistic, pearsonr
 
 # from .numpy_utils import mid_points, undo_mid
 
@@ -38,6 +38,101 @@ def gaussian(x_data, mu=0, sig=1):
         / np.sqrt(2 * np.pi * sig**2)
         * np.exp(-((x_data - mu) ** 2) / (2 * sig**2))
     )
+
+
+def plot_profiles(
+    x_list: np.ndarray,
+    y_list: np.ndarray,
+    data_labels: list,
+    ylabel: str,
+    xlabel: str,
+    central_statistic: str | Callable = "mean",
+    up_statistic: str | Callable = "std",
+    down_statistic: str | Callable = "std",
+    bins: int | list | np.ndarray = 50,
+    figsize: tuple = (5, 4),
+    hist_kwargs: list | None = None,
+    err_kwargs: list | None = None,
+    legend_kwargs: dict | None = None,
+    path: Path | None = None,
+    return_fig: bool = False,
+    return_img: bool = False,
+) -> None:
+    """Plot and save a profile plot."""
+
+    assert len(x_list) == len(y_list)
+
+    # Initialise the figure
+    fig, ax = plt.subplots(1, 1, figsize=figsize)
+
+    for i, (x, y) in enumerate(zip(x_list, y_list)):
+
+        # Get the basic histogram to setup the counts and edges
+        hist, bin_edges = np.histogram(x, bins)
+
+        # Get the central values for the profiles
+        central = binned_statistic(x, y, central_statistic, bin_edges)
+        central_vals = central.statistic
+
+        # Get the up and down values for the statistic
+        up_vals = binned_statistic(x, y, up_statistic, bin_edges).statistic
+        if not (up_statistic == "std" and down_statistic == "std"):
+            down_vals = binned_statistic(x, y, down_statistic, bin_edges).statistic
+        else:
+            down_vals = up_vals
+
+        # Correct based on the uncertainty of the mean
+        if up_statistic == "std":
+            up_vals = central_vals + up_vals / np.sqrt(hist + 1e-8)
+        if down_statistic == "std":
+            down_vals = central_vals - down_vals / np.sqrt(hist + 1e-8)
+
+        # Get the additional keyword arguments for the histograms
+        if hist_kwargs[i] is not None and bool(hist_kwargs[i]):
+            h_kwargs = deepcopy(hist_kwargs[i])
+        else:
+            h_kwargs = {}
+
+        # Use the stairs function to plot the histograms
+        line = ax.stairs(central_vals, bin_edges, label=data_labels[i], **h_kwargs)
+
+        # Get the additional keyword arguments for the histograms
+        if err_kwargs[i] is not None and bool(err_kwargs[i]):
+            e_kwargs = deepcopy(err_kwargs[i])
+        else:
+            e_kwargs = {"color": line._edgecolor, "alpha": 0.2, "fill": True}
+
+        # Include the uncertainty in the plots as a shaded region
+        ax.stairs(up_vals, bin_edges, baseline=down_vals, **e_kwargs)
+
+    # Limits
+    ylim1, ylim2 = ax.get_ylim()
+    ax.set_ylim(top=ylim2 + 0.5 * (ylim2 - ylim1))
+    ax.set_xlim([bin_edges[0], bin_edges[-1]])
+
+    # Axis labels and legend
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.legend(**(legend_kwargs or {}))
+    ax.grid(visible=True)
+
+    # Final figure layout
+    fig.tight_layout()
+
+    # Save the file
+    if path is not None:
+        fig.savefig(path)
+
+    # Return a rendered image, or the matplotlib figure, or close
+    if return_img:
+        img = PIL.Image.frombytes(
+            "RGB", fig.canvas.get_width_height(), fig.canvas.tostring_rgb()
+        )
+        plt.close(fig)
+        return img
+    if return_fig:
+        return fig
+    plt.close(fig)
 
 
 def plot_corr_heatmaps(
@@ -146,62 +241,6 @@ def plot_corr_heatmaps(
         )
         plt.close(fig)
         return img
-    plt.close(fig)
-
-
-def plot_multi_loss(
-    path: Path,
-    loss_hist: dict,
-    xvals: list = None,
-    xlabel: str = "epoch",
-    logx: bool = False,
-) -> None:
-    """Plot the contents of a loss history with epoch on the x-axis
-    args:
-        path: Where to save the output images
-        loss_hist: A dictionary containing lists of loss histories
-            dict[loss_name][dataset][epoch_number]
-    kwargs
-        xvals: A list of values for the x-axis, if None it uses arrange
-        xlabel: The label for the shared x-axis in the plots
-        logx: Using a log scale on the x-axis
-    """
-
-    # Get the x-axis values using the length of the total loss in the trainset
-    # This should always be present
-    if xvals is None:
-        xvals = np.arange(1, len(loss_hist["total"]["train"]) + 1)
-
-    # Create the main figure and subplots
-    fig, axes = plt.subplots(
-        len(loss_hist), 1, sharex=True, figsize=(4, 4 * len(loss_hist))
-    )
-
-    # Account for the fact that there may be a single loss
-    if len(loss_hist) == 1:
-        axes = [axes]
-
-    # Cycle though the different loss types, each on their own axis
-    for ax, lnm in zip(axes, loss_hist.keys()):
-        ax.set_ylabel(lnm)
-        ax.set_xlabel(xlabel)
-
-        if logx:
-            ax.set_xscale("log")
-
-        # Plot each dataset's history ontop of each other
-        for dset, vals in loss_hist[lnm].items():
-
-            # Skip empty loss dictionaries (sometimes we dont have valid loss)
-            if not vals:
-                continue
-
-            ax.plot(xvals, vals, label=dset)
-
-    # Put the legend only on the top plot and save
-    axes[0].legend()
-    fig.tight_layout()
-    fig.savefig(Path(path).with_suffix(".png"))
     plt.close(fig)
 
 
