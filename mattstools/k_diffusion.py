@@ -24,9 +24,7 @@ def heun_sampler(
     keep_all: bool = False,
     mask: T.Tensor | None = None,
     ctxt: T.BoolTensor | None = None,
-    clip_predictions: tuple | None = None,
 ) -> None:
-
     # Get the initial noise for generation and the number of sammples
     batch_size = initial_noise.shape[0]
     expanded_shape = [-1] + [1] * (initial_noise.dim() - 1)
@@ -38,7 +36,6 @@ def heun_sampler(
 
     # Start iterating through each timestep
     for i in range(num_steps - 1):
-
         # Expancd the diffusion times for the number of samples in the batch
         diff_times = T.full((batch_size, 1), time_steps[i], device=model.device)
         diff_times_next = T.full(
@@ -47,63 +44,13 @@ def heun_sampler(
 
         # Calculate the derivative and apply the euler step
         # Note that this is the same as a single DDIM step! Triple checked!
-        d = (x - model.denoise(x, diff_times, mask, ctxt)) / time_steps[i]
+        d = (x - model.denoise(x, diff_times, ctxt=ctxt, mask=mask)) / time_steps[i]
         x_next = x + (diff_times_next - diff_times).view(expanded_shape) * d
 
         # Apply the second order correction as long at the time doesnt go to zero
         if time_steps[i + 1] > 0:
             d_next = (
-                x_next - model.denoise(x_next, diff_times_next, mask, ctxt)
-            ) / time_steps[i + 1]
-            x_next = (
-                x
-                + (diff_times_next - diff_times).view(expanded_shape) * (d + d_next) / 2
-            )
-
-        # Update the track
-        x = x_next
-        if keep_all:
-            all_stages.append(x)
-
-    return x, all_stages
-
-
-def stochastic_sampler(
-    model,
-    initial_noise: T.Tensor,
-    time_steps: T.Tensor,
-    keep_all: bool = False,
-    mask: T.Tensor | None = None,
-    ctxt: T.BoolTensor | None = None,
-    clip_predictions: tuple | None = None,
-) -> None:
-
-    # Get the initial noise for generation and the number of sammples
-    batch_size = initial_noise.shape[0]
-    expanded_shape = [-1] + [1] * (initial_noise.dim() - 1)
-    all_stages = [initial_noise]
-    num_steps = len(time_steps)
-
-    # Start with the initial noise
-    x = initial_noise
-
-    # Start iterating through each timestep
-    for i in range(num_steps - 1):
-
-        # Expancd the diffusion times for the number of samples in the batch
-        diff_times = T.full((batch_size, 1), time_steps[i], device=model.device)
-        diff_times_next = T.full(
-            (batch_size, 1), time_steps[i + 1], device=model.device
-        )
-
-        # Calculate the derivative and apply the euler step
-        d = (x - model.denoise(x, diff_times, mask, ctxt)) / time_steps[i]
-        x_next = x + (diff_times_next - diff_times).view(expanded_shape) * d
-
-        # Apply the second order correction as long at the time doesnt go to zero
-        if time_steps[i + 1] > 0:
-            d_next = (
-                x_next - model.denoise(x_next, diff_times_next, mask, ctxt)
+                x_next - model.denoise(x_next, diff_times_next, ctxt=ctxt, mask=mask)
             ) / time_steps[i + 1]
             x_next = (
                 x

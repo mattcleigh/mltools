@@ -154,7 +154,6 @@ class NewHeadedAttentionBlock(nn.Module):
 
         # Apply the same reshaping to the attention mask
         if attn_mask is not None:
-
             # Give the attention mask a head dimension if it currently does not have one
             if attn_mask.dim() < 4:
                 attn_mask = attn_mask.unsqueeze(-3).expand(-1, self.num_heads, -1, -1)

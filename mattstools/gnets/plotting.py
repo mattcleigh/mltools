@@ -45,7 +45,6 @@ def plot_scatter(
 
     # Loop through all of the subplots axes
     for i in range(n_cols):
-
         # Plot the real nodes in grey and the generated in red
         axes[i].plot(*real_nodes[i][(real_mask[i])].T, "o", color="grey")
         axes[i].plot(*gen_nodes[i][(gen_mask[i])].T, "o", color="red")

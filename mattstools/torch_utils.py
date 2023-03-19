@@ -1,7 +1,7 @@
 """Mix of utility functions specifically for pytorch."""
 import os
 from functools import partial
-from typing import Iterable, List, Optional, Tuple, Union
+from typing import Any, Iterable, List, Optional, Tuple, Union
 
 import numpy as np
 import torch as T
@@ -25,6 +25,16 @@ from .schedulers import CyclicWithWarmup, LinearWarmupRootDecay, WarmupToConstan
 # An onnx save argument which is for the pass with mask function (makes it slower)
 ONNX_SAFE = False
 
+
+def dtype_lookup(dtype: Any)->T.dtype:
+    """Function to return a torch dtype when strings dont work"""
+    return {
+        "double": T.float64,
+        "float": T.float32,
+        "half": T.float16,
+        "int": T.int32,
+        "long": T.int64,
+    }[dtype]
 
 class GradsOff:
     """Context manager for passing through a model without it tracking
@@ -481,7 +491,6 @@ def pass_with_mask(
 
     # For generalisability, if the mask is none then we just return the normal pass
     if mask is None:
-
         # Without context this is a simple pass
         if high_level is None:
             return module(inputs)
