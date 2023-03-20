@@ -90,8 +90,12 @@ def rmse(tens_a: T.Tensor, tens_b: T.Tensor, dim: int = 0) -> T.Tensor:
 
 def get_act(name: str) -> nn.Module:
     """Return a pytorch activation function given a name."""
+    if isinstance(name, partial):
+        return name()
     if name == "relu":
         return nn.ReLU()
+    if name == "elu":
+        return nn.ELU()
     if name == "lrlu":
         return nn.LeakyReLU(0.1)
     if name == "silu" or name == "swish":

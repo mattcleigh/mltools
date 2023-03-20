@@ -1,3 +1,4 @@
+from pyparsing import Mapping
 import torch as T
 
 
@@ -22,14 +23,14 @@ def heun_sampler(
     initial_noise: T.Tensor,
     time_steps: T.Tensor,
     keep_all: bool = False,
-    mask: T.Tensor | None = None,
-    ctxt: T.BoolTensor | None = None,
+    extra_args: Mapping | None = None,
 ) -> None:
     # Get the initial noise for generation and the number of sammples
     batch_size = initial_noise.shape[0]
     expanded_shape = [-1] + [1] * (initial_noise.dim() - 1)
     all_stages = [initial_noise]
     num_steps = len(time_steps)
+    extra_args = extra_args or {}
 
     # Start with the initial noise
     x = initial_noise
@@ -44,13 +45,13 @@ def heun_sampler(
 
         # Calculate the derivative and apply the euler step
         # Note that this is the same as a single DDIM step! Triple checked!
-        d = (x - model.denoise(x, diff_times, ctxt=ctxt, mask=mask)) / time_steps[i]
+        d = (x - model(x, diff_times, **extra_args)) / time_steps[i]
         x_next = x + (diff_times_next - diff_times).view(expanded_shape) * d
 
         # Apply the second order correction as long at the time doesnt go to zero
         if time_steps[i + 1] > 0:
             d_next = (
-                x_next - model.denoise(x_next, diff_times_next, ctxt=ctxt, mask=mask)
+                x_next - model(x_next, diff_times_next, **extra_args)
             ) / time_steps[i + 1]
             x_next = (
                 x
