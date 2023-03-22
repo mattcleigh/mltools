@@ -1,5 +1,4 @@
 import logging
-import math
 from copy import deepcopy
 from typing import Mapping, Optional
 
@@ -149,7 +148,7 @@ class ResNetBlock(nn.Module):
         output = self.second_layers(output)
 
         # Return with the skip connection
-        return output + self.skip_connection(input) / math.sqrt(2)
+        return output + self.skip_connection(input)
 
 
 class MultiHeadedAttentionBlock(nn.Module):
