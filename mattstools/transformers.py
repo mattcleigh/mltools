@@ -236,7 +236,7 @@ class MultiHeadedAttentionBlock(nn.Module):
             k_out = self.k_linear(k)
             v_out = self.v_linear(v)
 
-        # Break final dim, transpopse to get dimensions: B,H,Seq,Hdim
+        # Break final dim, transpose to get dimensions: B,H,Seq,Hdim
         shape = (b_size, -1, self.num_heads, self.head_dim)
         q_out = q_out.view(shape).transpose(1, 2)
         k_out = k_out.view(shape).transpose(1, 2)
