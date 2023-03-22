@@ -11,33 +11,40 @@ from .modules import DenseNetwork
 
 
 def merge_masks(
-    q_mask: Union[T.BoolTensor, None],
     kv_mask: Union[T.BoolTensor, None],
     attn_mask: Union[T.BoolTensor, None],
-    q_shape: T.Size,
-    k_shape: T.Size,
-    device: T.device,
+    attn_bias: Union[T.Tensor, None],
+    query: T.Size,
 ) -> Union[None, T.BoolTensor]:
-    """Create a full attention mask which incoporates the padding
-    information."""
+    """Create a full attention mask which incoporates the padding information
+    and the bias terms.
+
+    New philosophy is just to define a kv_mask, and let the q_mask be
+    ones. Let the padded nodes receive what they want! Their outputs
+    dont matter and they don't add to computation anyway!!!
+    """
 
     # Create the full mask which combines the attention and padding masks
     merged_mask = None
 
     # If either pad mask exists, create
-    if q_mask is not None or kv_mask is not None:
-        if q_mask is None:
-            q_mask = T.full(q_shape[:-1], True, device=device)
-        if kv_mask is None:
-            kv_mask = T.full(k_shape[:-1], True, device=device)
+    if kv_mask is not None:
+        q_mask = T.full(query.shape[:-1], True, device=query.device)  # Always full
         merged_mask = q_mask.unsqueeze(-1) & kv_mask.unsqueeze(-2)
 
     # If attention mask exists, create
     if attn_mask is not None:
         merged_mask = attn_mask if merged_mask is None else attn_mask & merged_mask
 
-    # Unsqueeze the mask to give it a single dimension for num_heads
-    return merged_mask.unsqueeze(1)
+    # Unsqueeze the mask to give it a dimension for num_head broadcasting
+    merged_mask = merged_mask.unsqueeze(1)
+
+    # If the attention bias exists, convert to a float and add
+    if attn_bias is not None:
+        merged_mask = (~merged_mask).type(query.dtype) * -1e9
+        merged_mask = merged_mask + attn_bias.permute(0, 3, 1, 2)
+
+    return merged_mask
 
 
 def my_scaled_dot_product_attention(
@@ -72,11 +79,11 @@ def my_scaled_dot_product_attention(
     """
 
     # Perform the matrix multiplication
-    scores = T.matmul(query, key.transpose(-2, -1)) / math.sqrt(key.shape[-1])
+    scores = query @ key.transpose(-2, -1) / math.sqrt(key.shape[-1])
 
     # Add the bias terms if present
     if attn_bias is not None:  # Move the head dimension to the first
-        scores = scores + attn_bias.permute(0, 3, 1, 2)
+        scores = scores + attn_bias
 
     # Mask away the scores between invalid elements in sequence
     if attn_mask is not None:
@@ -85,11 +92,15 @@ def my_scaled_dot_product_attention(
     # Apply the softmax function per head feature
     scores = softmax(scores, dim=-1)
 
+    # Kill the nans introduced by the padded query elements
+    if attn_mask is not None:
+        scores = T.nan_to_num(scores)
+
     # Apply dropout to the attention scores
     scores = dropout(scores, p=dropout_p)
 
     # Finally multiply these scores by the output
-    scores = T.matmul(scores, value)
+    scores = scores @ value
 
     return scores
 
@@ -215,23 +226,22 @@ class MultiHeadedAttentionBlock(nn.Module):
         v = v if v is not None else k
 
         # Work out the masking situation, with padding, no peaking etc
-        attn_mask = merge_masks(q_mask, kv_mask, attn_mask, q.shape, k.shape, q.device)
+        attn_mask = merge_masks(kv_mask, attn_mask, attn_bias, q)
 
         # Generate the q, k, v projections, break final head dimension in 2
         # Then reshape and transpose to get: B,H,Seq,HD (required for matmul)
-        shape = (b_size, -1, self.num_heads, self.head_dim)
         if self.do_casual:
-            q_out, k_out, v_out = T.chunk(
-                self.all_linear(q).view(shape).transpose(1, 2), 3, dim=-2
-            )
+            q_out, k_out, v_out = self.all_linear(q).chunk(3, -1)
         else:
-            q_out = self.q_linear(q).view(shape).transpose(1, 2)
-            k_out = self.k_linear(k).view(shape).transpose(1, 2)
-            v_out = self.v_linear(v).view(shape).transpose(1, 2)
+            q_out = self.q_linear(q)
+            k_out = self.k_linear(k)
+            v_out = self.v_linear(v)
 
-        # Combine the attn_bias into the mask for the pytorch attn operation
-        if attn_bias is not None:
-            attn_mask = attn_bias + T.where(attn_mask, 0, -T.inf).type(attn_bias.dtype)
+        # Break final dim, transpopse to get dimensions: B,H,Seq,Hdim
+        shape = (b_size, -1, self.num_heads, self.head_dim)
+        q_out = q_out.view(shape).transpose(1, 2)
+        k_out = k_out.view(shape).transpose(1, 2)
+        v_out = v_out.view(shape).transpose(1, 2)
 
         # Calculate the new sequence values
         a_out = scaled_dot_product_attention(
@@ -241,10 +251,6 @@ class MultiHeadedAttentionBlock(nn.Module):
             attn_mask=attn_mask,
             dropout_p=self.drp if self.training else 0,
         )
-
-        # Kill the nans introduced by the padded query elements
-        if q_mask is not None:
-            a_out = T.nan_to_num(a_out, 0)
 
         # Concatenate the all of the heads together to get shape: B,Seq,F
         a_out = a_out.transpose(1, 2).contiguous().view(b_size, -1, self.model_dim)
@@ -294,9 +300,7 @@ class TransformerEncoderLayer(nn.Module):
         self.ctxt_dim = ctxt_dim
 
         # The basic blocks
-        self.self_attn = MultiHeadedAttentionBlock(
-            model_dim, do_casual=True, **mha_config
-        )
+        self.self_attn = MultiHeadedAttentionBlock(model_dim, **mha_config)
         self.dense = DenseNetwork(
             model_dim, outp_dim=model_dim, ctxt_dim=ctxt_dim, **dense_config
         )
