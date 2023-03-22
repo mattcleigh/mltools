@@ -199,7 +199,6 @@ class MultiHeadedAttentionBlock(nn.Module):
         q: T.Tensor,
         k: Optional[T.Tensor] = None,
         v: Optional[T.Tensor] = None,
-        q_mask: Optional[T.BoolTensor] = None,
         kv_mask: Optional[T.BoolTensor] = None,
         attn_mask: Optional[T.BoolTensor] = None,
         attn_bias: Optional[T.Tensor] = None,
@@ -221,9 +220,8 @@ class MultiHeadedAttentionBlock(nn.Module):
         # If only q and q_mask are provided then we automatically apply self attention
         if k is None:
             k = q
-            if kv_mask is None:
-                kv_mask = q_mask
-        v = v if v is not None else k
+        if v is None:
+            v = k
 
         # Work out the masking situation, with padding, no peaking etc
         attn_mask = merge_masks(kv_mask, attn_mask, attn_bias, q)
@@ -318,7 +316,7 @@ class TransformerEncoderLayer(nn.Module):
     ) -> T.Tensor:
         "Pass through the layer using residual connections and layer normalisation"
         x = x + self.self_attn(
-            self.norm1(x), q_mask=mask, attn_mask=attn_mask, attn_bias=attn_bias
+            self.norm1(x), kv_mask=mask, attn_mask=attn_mask, attn_bias=attn_bias
         )
         x = x + self.dense(self.norm2(x), ctxt)
         return x
@@ -385,7 +383,7 @@ class TransformerDecoderLayer(nn.Module):
         # Apply the self attention residual update
         q_seq = q_seq + self.self_attn(
             self.norm_preSA(q_seq),
-            q_mask=q_mask,
+            kv_mask=q_mask,
             attn_mask=attn_mask,
             attn_bias=attn_bias,
         )
@@ -394,7 +392,6 @@ class TransformerDecoderLayer(nn.Module):
         q_seq = q_seq + self.cross_attn(
             q=self.norm_preC1(q_seq),
             k=self.norm_preC2(kv_seq),
-            q_mask=q_mask,
             kv_mask=kv_mask,
         )
 
@@ -449,13 +446,12 @@ class TransformerCrossAttentionLayer(nn.Module):
         self,
         q_seq: T.Tensor,
         kv_seq: T.Tensor,
-        q_mask: Optional[T.BoolTensor] = None,
         kv_mask: Optional[T.BoolTensor] = None,
         ctxt: Optional[T.Tensor] = None,
     ) -> T.Tensor:
         "Pass through the layer using residual connections and layer normalisation"
         q_seq = q_seq + self.self_attn(
-            self.norm1(q_seq), self.norm0(kv_seq), q_mask=q_mask, kv_mask=kv_mask
+            self.norm1(q_seq), self.norm0(kv_seq), kv_mask=kv_mask
         )
         q_seq = q_seq + self.dense(self.norm2(q_seq), ctxt)
 
@@ -688,7 +684,7 @@ class TransformerVectorDecoder(nn.Module):
 
         # Pass through the decoder
         for layer in self.layers:
-            q_seq = layer(q_seq, vec, q_mask=mask, ctxt=ctxt)
+            q_seq = layer(q_seq, vec, kv_mask=mask, ctxt=ctxt)
         return self.final_norm(q_seq)
 
 
