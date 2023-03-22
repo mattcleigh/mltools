@@ -37,7 +37,8 @@ def merge_masks(
         merged_mask = attn_mask if merged_mask is None else attn_mask & merged_mask
 
     # Unsqueeze the mask to give it a dimension for num_head broadcasting
-    merged_mask = merged_mask.unsqueeze(1)
+    if merged_mask is not None:
+        merged_mask = merged_mask.unsqueeze(1)
 
     # If the attention bias exists, convert to a float and add
     if attn_bias is not None:
@@ -77,6 +78,7 @@ def my_scaled_dot_product_attention(
         attn_bias: Extra weights to combine with attention weights
         drp: Dropout probability
     """
+    DeprecationWarning("Dont use this! Switch to pytorch 2.0 built in version!")
 
     # Perform the matrix multiplication
     scores = query @ key.transpose(-2, -1) / math.sqrt(key.shape[-1])
@@ -297,7 +299,9 @@ class TransformerEncoderLayer(nn.Module):
         self.ctxt_dim = ctxt_dim
 
         # The basic blocks
-        self.self_attn = MultiHeadedAttentionBlock(model_dim, **mha_config)
+        self.self_attn = MultiHeadedAttentionBlock(
+            model_dim, do_casual=True, **mha_config
+        )
         self.dense = DenseNetwork(
             model_dim, outp_dim=model_dim, ctxt_dim=ctxt_dim, **dense_config
         )
@@ -356,8 +360,12 @@ class TransformerDecoderLayer(nn.Module):
         self.ctxt_dim = ctxt_dim
 
         # The basic blocks
-        self.self_attn = MultiHeadedAttentionBlock(model_dim, **mha_config)
-        self.cross_attn = MultiHeadedAttentionBlock(model_dim, **mha_config)
+        self.self_attn = MultiHeadedAttentionBlock(
+            model_dim, do_casual=True, **mha_config
+        )
+        self.cross_attn = MultiHeadedAttentionBlock(
+            model_dim, do_casual=False, **mha_config
+        )
         self.dense = DenseNetwork(
             model_dim, outp_dim=model_dim, ctxt_dim=ctxt_dim, **dense_config
         )
@@ -390,9 +398,7 @@ class TransformerDecoderLayer(nn.Module):
 
         # Apply the cross attention residual update
         q_seq = q_seq + self.cross_attn(
-            q=self.norm_preC1(q_seq),
-            k=self.norm_preC2(kv_seq),
-            kv_mask=kv_mask,
+            q=self.norm_preC1(q_seq), k=self.norm_preC2(kv_seq)
         )
 
         # Apply the dense residual update
@@ -432,7 +438,9 @@ class TransformerCrossAttentionLayer(nn.Module):
         self.ctxt_dim = ctxt_dim
 
         # The basic blocks
-        self.self_attn = MultiHeadedAttentionBlock(model_dim, **mha_config)
+        self.cross_attn = MultiHeadedAttentionBlock(
+            model_dim, do_casual=False, **mha_config
+        )
         self.dense = DenseNetwork(
             model_dim, outp_dim=model_dim, ctxt_dim=ctxt_dim, **dense_config
         )
@@ -450,7 +458,7 @@ class TransformerCrossAttentionLayer(nn.Module):
         ctxt: Optional[T.Tensor] = None,
     ) -> T.Tensor:
         "Pass through the layer using residual connections and layer normalisation"
-        q_seq = q_seq + self.self_attn(
+        q_seq = q_seq + self.cross_attn(
             self.norm1(q_seq), self.norm0(kv_seq), kv_mask=kv_mask
         )
         q_seq = q_seq + self.dense(self.norm2(q_seq), ctxt)
