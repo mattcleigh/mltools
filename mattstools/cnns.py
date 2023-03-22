@@ -1,15 +1,14 @@
 import logging
-import math
 from copy import deepcopy
 from typing import Mapping, Optional
 
 import numpy as np
 import torch as T
 import torch.nn as nn
+from torch.nn.functional import scaled_dot_product_attention
 
 from .modules import DenseNetwork
 from .torch_utils import get_act
-from .transformers import attention
 
 log = logging.getLogger(__name__)
 
@@ -149,7 +148,7 @@ class ResNetBlock(nn.Module):
         output = self.second_layers(output)
 
         # Return with the skip connection
-        return output + self.skip_connection(input) / math.sqrt(2)
+        return output + self.skip_connection(input)
 
 
 class MultiHeadedAttentionBlock(nn.Module):
@@ -210,19 +209,16 @@ class MultiHeadedAttentionBlock(nn.Module):
         v = v.view(shape).transpose(-1, -2)
 
         # Now we can use the attention operation from the transformers package
-        # Overwrite q to save memory
-        q = attention(
-            q, k, v, dim_key=1 / math.sqrt(self.inpt_channels)
-        )  # Returned shape is b,h,s,f
+        a_out = scaled_dot_product_attention(q, k, v)
 
         # Concatenate the all of the heads together to get shape: b,f,seq
-        q = q.transpose(-1, -2).contiguous().view(b, self.inpt_channels, -1)
+        a_out = a_out.transpose(-1, -2).contiguous().view(b, self.inpt_channels, -1)
 
         # Pass through the final 1x1 convolution layer and
-        q = self.out_conv(q)
+        a_out = self.out_conv(a_out)
 
         # Apply redidual update and bring back spacial dimensions
-        return (q + inpt).view(b, -1, *spatial)
+        return (a_out + inpt).view(b, -1, *spatial)
 
 
 class DoublingConvNet(nn.Module):

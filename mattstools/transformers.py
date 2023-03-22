@@ -5,51 +5,61 @@ from typing import Mapping, Optional, Union
 
 import torch as T
 import torch.nn as nn
-from torch.nn.functional import dropout, softmax
+from torch.nn.functional import dropout, scaled_dot_product_attention, softmax
 
 from .modules import DenseNetwork
 
 
 def merge_masks(
-    q_mask: Union[T.BoolTensor, None],
     kv_mask: Union[T.BoolTensor, None],
     attn_mask: Union[T.BoolTensor, None],
-    q_shape: T.Size,
-    k_shape: T.Size,
-    device: T.device,
+    attn_bias: Union[T.Tensor, None],
+    query: T.Size,
 ) -> Union[None, T.BoolTensor]:
-    """Create a full attention mask which incoporates the padding
-    information."""
+    """Create a full attention mask which incoporates the padding information
+    and the bias terms.
+
+    New philosophy is just to define a kv_mask, and let the q_mask be
+    ones. Let the padded nodes receive what they want! Their outputs
+    dont matter and they don't add to computation anyway!!!
+    """
 
     # Create the full mask which combines the attention and padding masks
     merged_mask = None
 
     # If either pad mask exists, create
-    if q_mask is not None or kv_mask is not None:
-        if q_mask is None:
-            q_mask = T.full(q_shape[:-1], True, device=device)
-        if kv_mask is None:
-            kv_mask = T.full(k_shape[:-1], True, device=device)
+    if kv_mask is not None:
+        q_mask = T.full(query.shape[:-1], True, device=query.device)  # Always full
         merged_mask = q_mask.unsqueeze(-1) & kv_mask.unsqueeze(-2)
 
     # If attention mask exists, create
     if attn_mask is not None:
         merged_mask = attn_mask if merged_mask is None else attn_mask & merged_mask
 
+    # Unsqueeze the mask to give it a dimension for num_head broadcasting
+    merged_mask = merged_mask.unsqueeze(1)
+
+    # If the attention bias exists, convert to a float and add
+    if attn_bias is not None:
+        merged_mask = (~merged_mask).type(query.dtype) * -1e9
+        merged_mask = merged_mask + attn_bias.permute(0, 3, 1, 2)
+
     return merged_mask
 
 
-def attention(
+def my_scaled_dot_product_attention(
     query: T.Tensor,
     key: T.Tensor,
     value: T.Tensor,
-    dim_key: int,
     attn_mask: Optional[T.BoolTensor] = None,
     attn_bias: Optional[T.Tensor] = None,
-    drp: float = 0.0,
-    training: bool = True,
+    dropout_p: float = 0.0,
 ) -> T.Tensor:
-    """Apply the attention using the scaled dot product between the key query
+    """DEPRECATED! THE PYTORCH-2.0 IMPLEMENATION IS 25% FASTER AND HAS A
+    REDUCED MEMORY OVERHEAD SO MY ATTENTION LAYERS HAVE SWITCHED OVER TO
+    THAT!!!
+
+    Apply the attention using the scaled dot product between the key query
     and key tensors, then matrix multiplied by the value.
 
     Note that the attention scores are ordered in recv x send, which is the opposite
@@ -63,35 +73,34 @@ def attention(
         query: Batched query sequence of tensors (b, h, s, f)
         key: Batched key sequence of tensors (b, h, s, f)
         value: Batched value sequence of tensors (b, h, s, f)
-        dim_key: The dimension of the key features, used to scale the dot product
         attn_mask: The attention mask, used to blind certain combinations of k,q pairs
         attn_bias: Extra weights to combine with attention weights
         drp: Dropout probability
-        training: If the model is in training mode, effects the dropout applied
     """
 
     # Perform the matrix multiplication
-    scores = T.matmul(query, key.transpose(-2, -1)) / math.sqrt(dim_key)
+    scores = query @ key.transpose(-2, -1) / math.sqrt(key.shape[-1])
 
     # Add the bias terms if present
     if attn_bias is not None:  # Move the head dimension to the first
-        scores = scores + attn_bias.permute(0, 3, 1, 2)
+        scores = scores + attn_bias
 
     # Mask away the scores between invalid elements in sequence
     if attn_mask is not None:
-        scores = scores.masked_fill(~attn_mask.unsqueeze(-3), -T.inf)
+        scores = scores.masked_fill(~attn_mask, -T.inf)
 
     # Apply the softmax function per head feature
     scores = softmax(scores, dim=-1)
 
     # Kill the nans introduced by the padded query elements
-    scores = T.nan_to_num(scores, 0)
+    if attn_mask is not None:
+        scores = T.nan_to_num(scores)
 
     # Apply dropout to the attention scores
-    scores = dropout(scores, p=drp, training=training)
+    scores = dropout(scores, p=dropout_p)
 
     # Finally multiply these scores by the output
-    scores = T.matmul(scores, value)
+    scores = scores @ value
 
     return scores
 
@@ -138,6 +147,8 @@ class MultiHeadedAttentionBlock(nn.Module):
         num_heads: int = 1,
         drp: float = 0,
         init_zeros: bool = False,
+        do_casual: bool = False,
+        do_layer_norm: bool = True,
     ) -> None:
         """
         Args:
@@ -146,6 +157,10 @@ class MultiHeadedAttentionBlock(nn.Module):
                 - Must allow interger division into model_dim
             drp: The dropout probability used in the MHA operation
             init_zeros: If the final linear layer is initialised with zero weights
+            do_casual: Casual attention should only be used if the q, k, v are the same
+                Slightly faster matrix multiplication at the beginning
+            do_layer_norm: If a layernorm is applied before the output final linear
+                projection
         """
         super().__init__()
 
@@ -153,19 +168,28 @@ class MultiHeadedAttentionBlock(nn.Module):
         self.model_dim = model_dim
         self.num_heads = num_heads
         self.head_dim = model_dim // num_heads
+        self.do_casual = do_casual
+        self.drp = drp
+        self.do_layer_norm = do_layer_norm
 
         # Check that the dimension of each head makes internal sense
         if self.head_dim * num_heads != model_dim:
             raise ValueError("Model dimension must be divisible by number of heads!")
 
-        # Initialise the weight matrices
-        self.q_linear = nn.Linear(model_dim, model_dim)
-        self.k_linear = nn.Linear(model_dim, model_dim)
-        self.v_linear = nn.Linear(model_dim, model_dim)
-        self.out_linear = nn.Linear(model_dim, model_dim)
-        self.drp = drp
+        # Initialise the weight matrices (only 1 for do casual)
+        if do_casual:
+            self.all_linear = nn.Linear(model_dim, 3 * model_dim)
+        else:
+            self.q_linear = nn.Linear(model_dim, model_dim)
+            self.k_linear = nn.Linear(model_dim, model_dim)
+            self.v_linear = nn.Linear(model_dim, model_dim)
+
+        # The optional (but advised) layer normalisation
+        if do_layer_norm:
+            self.layer_norm = nn.LayerNorm(model_dim)
 
         # Set the output linear layer weights and bias terms to zero
+        self.out_linear = nn.Linear(model_dim, model_dim)
         if init_zeros:
             self.out_linear.weight.data.fill_(0)
             self.out_linear.bias.data.fill_(0)
@@ -175,7 +199,6 @@ class MultiHeadedAttentionBlock(nn.Module):
         q: T.Tensor,
         k: Optional[T.Tensor] = None,
         v: Optional[T.Tensor] = None,
-        q_mask: Optional[T.BoolTensor] = None,
         kv_mask: Optional[T.BoolTensor] = None,
         attn_mask: Optional[T.BoolTensor] = None,
         attn_bias: Optional[T.Tensor] = None,
@@ -191,49 +214,50 @@ class MultiHeadedAttentionBlock(nn.Module):
             attn_bias: Extra bias term for the attention matrix (eg: edge features)
         """
 
-        # If only q and q_mask are provided then we automatically apply self attention
-        if k is None:
-            k = q
-            if kv_mask is None:
-                kv_mask = q_mask
-        v = v if v is not None else k
-
         # Store the batch size, useful for reshaping
         b_size, seq, feat = q.shape
 
+        # If only q and q_mask are provided then we automatically apply self attention
+        if k is None:
+            k = q
+        if v is None:
+            v = k
+
         # Work out the masking situation, with padding, no peaking etc
-        attn_mask = merge_masks(q_mask, kv_mask, attn_mask, q.shape, k.shape, q.device)
+        attn_mask = merge_masks(kv_mask, attn_mask, attn_bias, q)
 
-        # Generate the q, k, v projections, break final head dimension in 2
+        # Generate the q, k, v projections
+        if self.do_casual:
+            q_out, k_out, v_out = self.all_linear(q).chunk(3, -1)
+        else:
+            q_out = self.q_linear(q)
+            k_out = self.k_linear(k)
+            v_out = self.v_linear(v)
+
+        # Break final dim, transpose to get dimensions: B,H,Seq,Hdim
         shape = (b_size, -1, self.num_heads, self.head_dim)
-        q = self.q_linear(q).view(shape)
-        k = self.k_linear(k).view(shape)
-        v = self.v_linear(v).view(shape)
+        q_out = q_out.view(shape).transpose(1, 2)
+        k_out = k_out.view(shape).transpose(1, 2)
+        v_out = v_out.view(shape).transpose(1, 2)
 
-        # Transpose to get dimensions: B,H,Seq,HD (required for matmul)
-        q = q.transpose(1, 2)
-        k = k.transpose(1, 2)
-        v = v.transpose(1, 2)
-
-        # Calculate the new sequence values, for memory reasons overwrite q
-        q = attention(
-            q,
-            k,
-            v,
-            self.head_dim,
+        # Calculate the new sequence values
+        a_out = scaled_dot_product_attention(
+            q_out,
+            k_out,
+            v_out,
             attn_mask=attn_mask,
-            attn_bias=attn_bias,
-            drp=self.drp,
-            training=self.training,
-        )  # Returned shape is B,H,Q_seq,HD
+            dropout_p=self.drp if self.training else 0,
+        )
 
         # Concatenate the all of the heads together to get shape: B,Seq,F
-        q = q.transpose(1, 2).contiguous().view(b_size, -1, self.model_dim)
+        a_out = a_out.transpose(1, 2).contiguous().view(b_size, -1, self.model_dim)
+
+        # Pass through the optional normalisation layer
+        if self.do_layer_norm:
+            a_out = self.layer_norm(a_out)
 
         # Pass through final linear layer
-        q = self.out_linear(q)
-
-        return q
+        return self.out_linear(a_out)
 
 
 class TransformerEncoderLayer(nn.Module):
@@ -261,7 +285,7 @@ class TransformerEncoderLayer(nn.Module):
     ) -> None:
         """
         Args:
-            model_dim: The embedding dimensio of the transformer block
+            model_dim: The embedding dimension of the transformer block
             mha_config: Keyword arguments for multiheaded-attention block
             dense_config: Keyword arguments for feed forward network
             ctxt_dim: Context dimension,
@@ -278,10 +302,9 @@ class TransformerEncoderLayer(nn.Module):
             model_dim, outp_dim=model_dim, ctxt_dim=ctxt_dim, **dense_config
         )
 
-        # The normalisation layers (lots from NormFormer)
+        # The pre MHA and pre FFN layer normalisations
         self.norm1 = nn.LayerNorm(model_dim)
         self.norm2 = nn.LayerNorm(model_dim)
-        self.norm3 = nn.LayerNorm(model_dim)
 
     def forward(
         self,
@@ -292,12 +315,10 @@ class TransformerEncoderLayer(nn.Module):
         attn_mask: Optional[T.BoolTensor] = None,
     ) -> T.Tensor:
         "Pass through the layer using residual connections and layer normalisation"
-        x = x + self.norm2(
-            self.self_attn(
-                self.norm1(x), q_mask=mask, attn_mask=attn_mask, attn_bias=attn_bias
-            )
+        x = x + self.self_attn(
+            self.norm1(x), kv_mask=mask, attn_mask=attn_mask, attn_bias=attn_bias
         )
-        x = x + self.dense(self.norm3(x), ctxt)
+        x = x + self.dense(self.norm2(x), ctxt)
         return x
 
 
@@ -341,12 +362,10 @@ class TransformerDecoderLayer(nn.Module):
             model_dim, outp_dim=model_dim, ctxt_dim=ctxt_dim, **dense_config
         )
 
-        # The normalisation layers (lots from NormFormer)
+        # The pre_operation normalisation layers (lots from Foundation Transformers)
         self.norm_preSA = nn.LayerNorm(model_dim)
-        self.norm_pstSA = nn.LayerNorm(model_dim)
         self.norm_preC1 = nn.LayerNorm(model_dim)
         self.norm_preC2 = nn.LayerNorm(model_dim)
-        self.norm_pstCA = nn.LayerNorm(model_dim)
         self.norm_preNN = nn.LayerNorm(model_dim)
 
     def forward(
@@ -362,23 +381,18 @@ class TransformerDecoderLayer(nn.Module):
         "Pass through the layer using residual connections and layer normalisation"
 
         # Apply the self attention residual update
-        q_seq = q_seq + self.norm_pstSA(
-            self.self_attn(
-                self.norm_preSA(q_seq),
-                q_mask=q_mask,
-                attn_mask=attn_mask,
-                attn_bias=attn_bias,
-            )
+        q_seq = q_seq + self.self_attn(
+            self.norm_preSA(q_seq),
+            kv_mask=q_mask,
+            attn_mask=attn_mask,
+            attn_bias=attn_bias,
         )
 
         # Apply the cross attention residual update
-        q_seq = q_seq + self.norm_pstCA(
-            self.cross_attn(
-                q=self.norm_preC1(q_seq),
-                k=self.norm_preC2(kv_seq),
-                q_mask=q_mask,
-                kv_mask=kv_mask,
-            )
+        q_seq = q_seq + self.cross_attn(
+            q=self.norm_preC1(q_seq),
+            k=self.norm_preC2(kv_seq),
+            kv_mask=kv_mask,
         )
 
         # Apply the dense residual update
@@ -387,15 +401,12 @@ class TransformerDecoderLayer(nn.Module):
         return q_seq
 
 
-class TransformerCrossAttentionLayer(TransformerEncoderLayer):
+class TransformerCrossAttentionLayer(nn.Module):
     """A transformer cross attention layer.
 
     It contains:
     - cross-attention-block
     - A feed forward network
-
-    Can be seen as a type of encoder layer with an overloaded forward method to
-    facilitate cross attention and cross attention normalisation
 
     Does not allow for attn masks/biases
     """
@@ -407,25 +418,42 @@ class TransformerCrossAttentionLayer(TransformerEncoderLayer):
         dense_config: Optional[Mapping] = None,
         ctxt_dim: int = 0,
     ) -> None:
-        super().__init__(model_dim, mha_config, dense_config, ctxt_dim)
-        self.norm0 = nn.LayerNorm(model_dim)
+        """
+        Args:
+            model_dim: The embedding dimension of the transformer block
+            mha_config: Keyword arguments for multiheaded-attention block
+            dense_config: Keyword arguments for feed forward network
+            ctxt_dim: Context dimension,
+        """
+        super().__init__()
+        mha_config = mha_config or {}
+        dense_config = dense_config or {}
+        self.model_dim = model_dim
+        self.ctxt_dim = ctxt_dim
 
-    # pylint: disable=arguments-differ,arguments-renamed
+        # The basic blocks
+        self.self_attn = MultiHeadedAttentionBlock(model_dim, **mha_config)
+        self.dense = DenseNetwork(
+            model_dim, outp_dim=model_dim, ctxt_dim=ctxt_dim, **dense_config
+        )
+
+        # The two pre MHA and pre FFN layer normalisations
+        self.norm0 = nn.LayerNorm(model_dim)
+        self.norm1 = nn.LayerNorm(model_dim)
+        self.norm2 = nn.LayerNorm(model_dim)
+
     def forward(
         self,
         q_seq: T.Tensor,
         kv_seq: T.Tensor,
-        q_mask: Optional[T.BoolTensor] = None,
         kv_mask: Optional[T.BoolTensor] = None,
         ctxt: Optional[T.Tensor] = None,
     ) -> T.Tensor:
-        "Pass through the layers of cross attention"
-        q_seq = q_seq + self.norm2(
-            self.self_attn(
-                self.norm1(q_seq), self.norm0(kv_seq), q_mask=q_mask, kv_mask=kv_mask
-            )
+        "Pass through the layer using residual connections and layer normalisation"
+        q_seq = q_seq + self.self_attn(
+            self.norm1(q_seq), self.norm0(kv_seq), kv_mask=kv_mask
         )
-        q_seq = q_seq + self.dense(self.norm3(q_seq), ctxt)
+        q_seq = q_seq + self.dense(self.norm2(q_seq), ctxt)
 
         return q_seq
 
@@ -656,7 +684,7 @@ class TransformerVectorDecoder(nn.Module):
 
         # Pass through the decoder
         for layer in self.layers:
-            q_seq = layer(q_seq, vec, q_mask=mask, ctxt=ctxt)
+            q_seq = layer(q_seq, vec, kv_mask=mask, ctxt=ctxt)
         return self.final_norm(q_seq)
 
 
