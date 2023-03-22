@@ -228,8 +228,7 @@ class MultiHeadedAttentionBlock(nn.Module):
         # Work out the masking situation, with padding, no peaking etc
         attn_mask = merge_masks(kv_mask, attn_mask, attn_bias, q)
 
-        # Generate the q, k, v projections, break final head dimension in 2
-        # Then reshape and transpose to get: B,H,Seq,HD (required for matmul)
+        # Generate the q, k, v projections
         if self.do_casual:
             q_out, k_out, v_out = self.all_linear(q).chunk(3, -1)
         else:
