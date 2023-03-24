@@ -88,7 +88,7 @@ class ResNetBlock(nn.Module):
         self.inpt_channels = inpt_channels
         self.ctxt_dim = ctxt_dim
         self.outp_channels = outp_channels or inpt_channels
-        self.kernel_size=kernel_size
+        self.kernel_size = kernel_size
         self.dims = dims
         self.act = act
         self.drp = drp

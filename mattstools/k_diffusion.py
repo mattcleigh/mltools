@@ -1,5 +1,5 @@
-from pyparsing import Mapping
 import torch as T
+from pyparsing import Mapping
 
 
 def get_timesteps(t_max: float, t_min: float, n_steps: int, p: float) -> T.Tensor:

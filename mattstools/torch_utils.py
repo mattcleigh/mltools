@@ -26,8 +26,8 @@ from .schedulers import CyclicWithWarmup, LinearWarmupRootDecay, WarmupToConstan
 ONNX_SAFE = False
 
 
-def dtype_lookup(dtype: Any)->T.dtype:
-    """Function to return a torch dtype when strings dont work"""
+def dtype_lookup(dtype: Any) -> T.dtype:
+    """Function to return a torch dtype when strings dont work."""
     return {
         "double": T.float64,
         "float": T.float32,
@@ -35,6 +35,7 @@ def dtype_lookup(dtype: Any)->T.dtype:
         "int": T.int32,
         "long": T.int64,
     }[dtype]
+
 
 class GradsOff:
     """Context manager for passing through a model without it tracking
