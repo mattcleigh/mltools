@@ -206,9 +206,9 @@ class MultiHeadedAttentionBlock(nn.Module):
         # Intermediate shape will be [b, head, feat, seq]
         # For the attention operation we need them to be in [b, heads, seq, feat]
         shape = (b, self.num_heads, self.channels_per_head, -1)
-        q = q.view(shape).transpose(-1, -2)
-        k = k.view(shape).transpose(-1, -2)
-        v = v.view(shape).transpose(-1, -2)
+        q = q.view(shape).transpose(-1, -2).contiguous()
+        k = k.view(shape).transpose(-1, -2).contiguous()
+        v = v.view(shape).transpose(-1, -2).contiguous()
 
         # Now we can use the attention operation from the transformers package
         a_out = scaled_dot_product_attention(q, k, v)
@@ -216,7 +216,7 @@ class MultiHeadedAttentionBlock(nn.Module):
         # Concatenate the all of the heads together to get shape: b,f,seq
         a_out = a_out.transpose(-1, -2).contiguous().view(b, self.inpt_channels, -1)
 
-        # Pass through the final 1x1 convolution layer and
+        # Pass through the final 1x1 convolution layer
         a_out = self.out_conv(a_out)
 
         # Apply redidual update and bring back spacial dimensions
@@ -380,21 +380,43 @@ class UNet(nn.Module):
         attn_below: int = 8,
         start_channels: int = 32,
         max_channels: int = 128,
+        zero_out: bool = False,
         resnet_config: Optional[Mapping] = None,
         attn_config: Optional[Mapping] = None,
         ctxt_embed_config: Optional[Mapping] = None,
     ) -> None:
         """
-        Args:
-            inpt_size: Spacial dimensions of the inputs
-            inpt_channels: Number of channels in the inputs
-            outp_channels: Number of channels in the output image
-            ctxt_dim: Size of the contextual tensor
-            min_size: The smallest spacial dimensions to reach before flattening
-            attn_below: Include attention below this resolution (inclusize)
-            resnet_config: Kwargs for the ResNetBlocks
-            attn_config: Kwargs for the MultiHeadedAttention block
-            ctxt_embed_config: Kwargs for the Dense context embedder
+        Parameters
+        ----------
+        inpt_size : list
+            The spacial dimensions of the input image (height, width).
+        inpt_channels : int
+            The number of channels in the input image.
+        outp_channels : int
+            The number of desired output channels.
+        ctxt_dim : int, optional
+            The dimensionality of the contextual input, by default 0.
+        min_size : int, optional
+            The minimum spacial dimension allowed, by default 8.
+        attn_below : int, optional
+            The spacial dimension below (incl) which attention is applied, by default 8.
+        start_channels : int, optional
+            The number of channels in the first convolutional block, by default 32.
+        max_channels : int, optional
+            The maximum number of channels in any convolutional block,
+            by default 128.
+        zero_out : bool, optional
+            Whether to use a final zero init conv layer after the last resnet block,
+            by default False.
+        resnet_config : Optional[Mapping], optional
+            A dictionary of configurations to pass to the ResNet blocks,
+            by default None.
+        attn_config : Optional[Mapping], optional
+            A dictionary of configurations to pass to the attention blocks,
+            by default None.
+        ctxt_embed_config : Optional[Mapping], optional
+            A dictionary of configurations to pass to the context embedding network,
+            by default None.
         """
         super().__init__()
 
@@ -414,6 +436,7 @@ class UNet(nn.Module):
         self.max_channels = max_channels
         self.dims = len(inpt_size)
         self.has_ctxt = ctxt_dim > 0
+        self.zero_out = zero_out
 
         # Add the dimensions to the resnet_config
         resnet_config.dims = self.dims
@@ -540,6 +563,11 @@ class UNet(nn.Module):
             **last_config,
         )
 
+        if self.zero_out:
+            self.zero_block = zero_module(
+                conv_nd(2, outp_channels, outp_channels, 3, padding=1)
+            )
+
     def forward(self, inpt: T.Tensor, ctxt: T.Tensor = None):
         """Forward pass of the network."""
 
@@ -578,5 +606,9 @@ class UNet(nn.Module):
 
         # Pass through the final layer
         inpt = self.last_block(inpt, ctxt)
+
+        # Pass through the final output layer to ensure zero outs
+        if self.zero_out:
+            inpt = self.zero_block(inpt)
 
         return inpt
