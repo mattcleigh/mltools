@@ -13,11 +13,6 @@ def append_dims(x: T.Tensor, target_dims: int) -> T.Tensor:
     return x[(...,) + (None,) * dim_diff]  # x.view(*x.shape, *dim_diff * (1,))
 
 
-def get_derivative(x: T.Tensor, denoised: T.Tensor, sigma: float) -> T.Tensor:
-    """Convers a denoiser output to a Karras ODE derivative."""
-    return (x - denoised) / sigma
-
-
 def get_sigmas_karras(
     t_max: float, t_min: float, n_steps: int = 100, rho: float = 7
 ) -> T.Tensor:
