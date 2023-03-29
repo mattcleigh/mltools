@@ -1,6 +1,7 @@
 """Some classes to describe transformer architectures."""
 
 import math
+from copy import deepcopy
 from typing import Mapping, Optional, Union
 
 import torch as T
@@ -910,9 +911,21 @@ class FullTransformerEncoder(nn.Module):
         self.ctxt_dim = ctxt_dim
         self.edge_dim = edge_dim
         te_config = te_config or {}
-        node_embd_config = node_embd_config or {}
-        outp_embd_config = outp_embd_config or {}
-        edge_embd_config = edge_embd_config or {}
+        node_embd_config = deepcopy(node_embd_config) or {}
+        outp_embd_config = deepcopy(outp_embd_config) or {}
+        edge_embd_config = deepcopy(edge_embd_config) or {}
+
+        # By default we would like the dense networks in this model to double the width
+        if "model_dim" in te_config.keys():
+            model_dim = te_config["model_dim"]
+            if "hddn_dim" not in node_embd_config.keys():
+                node_embd_config["hddn_dim"] = 2 * model_dim
+            if "hddn_dim" not in ctxt_embd_config.keys():
+                ctxt_embd_config["hddn_dim"] = 2 * model_dim
+            if "hddn_dim" not in outp_embd_config.keys():
+                outp_embd_config["hddn_dim"] = 2 * model_dim
+            if "hddn_dim" not in te_config["dense_config"].keys():
+                te_config["dense_config"]["hddn_dim"] = 2 * model_dim
 
         # Initialise the context embedding network (optional)
         if self.ctxt_dim:

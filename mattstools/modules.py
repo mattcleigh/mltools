@@ -78,7 +78,6 @@ class MLPBlock(nn.Module):
         # Initialise the block layers as a module list
         self.block = nn.ModuleList()
         for n in range(n_layers):
-
             # Increase the input dimension of the first layer to include context
             lyr_in = inpt_dim + ctxt_dim if n == 0 else outp_dim
 
@@ -377,7 +376,6 @@ class DeepSet(nn.Module):
 
         # For an attention deepset
         if self.pool_type == "attn":
-
             # Create the attention network
             self.attn_net = DenseNetwork(
                 self.inpt_dim, ctxt_dim=self.ctxt_dim, **attn_net_kwargs
@@ -569,7 +567,7 @@ class IterativeNormLayer(nn.Module):
         self.frozen = means is not None
 
     def __str__(self) -> str:
-        return f"IterativeNormLayer(means={self.means}, vars={self.vars})"
+        return f"IterativeNormLayer(means={self.means.squeeze()}, vars={self.vars.squeeze()})"
 
     def _mask(self, inpt: T.Tensor, mask: Optional[T.BoolTensor] = None) -> T.Tensor:
         if mask is None:
