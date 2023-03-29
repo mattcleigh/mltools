@@ -43,7 +43,7 @@ def merge_masks(
 
     # If the attention bias exists, convert to a float and add
     if attn_bias is not None:
-        merged_mask = (~merged_mask).type(query.dtype) * -1e9
+        merged_mask = T.where(merged_mask, 0, -T.inf).type(query.dtype)
         merged_mask = merged_mask + attn_bias.permute(0, 3, 1, 2)
 
     return merged_mask
@@ -227,7 +227,7 @@ class MultiHeadedAttentionBlock(nn.Module):
             v = k
 
         # Work out the masking situation, with padding, no peaking etc
-        attn_mask = merge_masks(kv_mask, attn_mask, attn_bias, q)
+        merged_mask = merge_masks(kv_mask, attn_mask, attn_bias, q)
 
         # Generate the q, k, v projections
         if self.do_casual:
@@ -248,7 +248,7 @@ class MultiHeadedAttentionBlock(nn.Module):
             q_out,
             k_out,
             v_out,
-            attn_mask=attn_mask,
+            attn_mask=merged_mask,
             dropout_p=self.drp if self.training else 0,
         )
 
@@ -399,7 +399,9 @@ class TransformerDecoderLayer(nn.Module):
 
         # Apply the cross attention residual update
         q_seq = q_seq + self.cross_attn(
-            q=self.norm_preC1(q_seq), k=self.norm_preC2(kv_seq)
+            q=self.norm_preC1(q_seq),
+            k=self.norm_preC2(kv_seq),
+            kv_mask=kv_mask,
         )
 
         # Apply the dense residual update
@@ -693,7 +695,7 @@ class TransformerVectorDecoder(nn.Module):
 
         # Pass through the decoder
         for layer in self.layers:
-            q_seq = layer(q_seq, vec, kv_mask=mask, ctxt=ctxt)
+            q_seq = layer(q_seq, vec, q_mask=mask, ctxt=ctxt)
         return self.final_norm(q_seq)
 
 
@@ -785,7 +787,7 @@ class FullTransformerVectorEncoder(nn.Module):
         seq = self.node_embd(seq, ctxt)
 
         # Embed the attention bias (edges, optional)
-        if attn_bias is not None:
+        if self.edge_dim:
             attn_bias = self.edge_embd(attn_bias, ctxt)
 
         # Pass throught the tve
@@ -910,7 +912,7 @@ class FullTransformerEncoder(nn.Module):
         self.outp_dim = outp_dim
         self.ctxt_dim = ctxt_dim
         self.edge_dim = edge_dim
-        te_config = te_config or {}
+        te_config = deepcopy(te_config) or {}
         node_embd_config = deepcopy(node_embd_config) or {}
         outp_embd_config = deepcopy(outp_embd_config) or {}
         edge_embd_config = deepcopy(edge_embd_config) or {}
