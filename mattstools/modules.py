@@ -608,7 +608,7 @@ class IterativeNormLayer(nn.Module):
             # Undo the masking
             if mask is not None:
                 inpt = inpt.clone()  # prevents inplace operation, bad for autograd
-                inpt[mask] = normed_inpt
+                inpt[mask] = normed_inpt.type(inpt.dtype)
                 return inpt
 
             return normed_inpt
@@ -621,7 +621,7 @@ class IterativeNormLayer(nn.Module):
         # Undo the masking
         if mask is not None:
             inpt = inpt.clone()  # prevents inplace operation, bad for autograd
-            inpt[mask] = unnormed_inpt
+            inpt[mask] = unnormed_inpt.type(inpt.dtype)
             return inpt
 
         return unnormed_inpt
