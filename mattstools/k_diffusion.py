@@ -92,7 +92,7 @@ def sample_heun(
             # Heun's 2nd order method
             x_2 = x + d * dt
             denoised_2 = model(x_2, sigmas[i + 1] * sigma_shape, **extra_args)
-            d_2 = x_2 - denoised_2 / sigmas[i + 1]
+            d_2 = (x_2 - denoised_2) / sigmas[i + 1]
             d_prime = (d + d_2) / 2
             x = x + d_prime * dt
 
