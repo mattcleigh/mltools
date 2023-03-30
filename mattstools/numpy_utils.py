@@ -7,7 +7,7 @@ def onehot_encode(
     a: np.ndarray,
     max_idx: None | int = None,
     dtype: np.dtype = np.float32,
-    count_unique: bool = True,
+    count_unique: bool = False,
 ) -> np.ndarray:
     if count_unique:
         unique, inverse = np.unique(a, return_inverse=True)
