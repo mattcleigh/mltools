@@ -398,7 +398,9 @@ class TransformerDecoderLayer(nn.Module):
 
         # Apply the cross attention residual update
         q_seq = q_seq + self.cross_attn(
-            q=self.norm_preC1(q_seq), k=self.norm_preC2(kv_seq)
+            q=self.norm_preC1(q_seq),
+            k=self.norm_preC2(kv_seq),
+            kv_mask=kv_mask,
         )
 
         # Apply the dense residual update
