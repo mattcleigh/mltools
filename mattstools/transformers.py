@@ -410,6 +410,43 @@ class TransformerDecoderLayer(nn.Module):
         return q_seq
 
 
+class ReverseTransformerDecoderLayer(TransformerDecoderLayer):
+    """The same as a transformer decoder but the cross attention step happens
+    first."""
+
+    def forward(
+        self,
+        q_seq: T.Tensor,
+        kv_seq: T.Tensor,
+        q_mask: Optional[T.BoolTensor] = None,
+        kv_mask: Optional[T.BoolTensor] = None,
+        ctxt: Optional[T.Tensor] = None,
+        attn_bias: Optional[T.Tensor] = None,
+        attn_mask: Optional[T.BoolTensor] = None,
+    ) -> T.Tensor:
+        "Pass through the layer cross attention update before the self attention"
+
+        # Apply the cross attention residual update
+        q_seq = q_seq + self.cross_attn(
+            q=self.norm_preC1(q_seq),
+            k=self.norm_preC2(kv_seq),
+            kv_mask=kv_mask,
+        )
+
+        # Apply the self attention residual update
+        q_seq = q_seq + self.self_attn(
+            self.norm_preSA(q_seq),
+            kv_mask=q_mask,
+            attn_mask=attn_mask,
+            attn_bias=attn_bias,
+        )
+
+        # Apply the dense residual update
+        q_seq = q_seq + self.dense(self.norm_preNN(q_seq), ctxt)
+
+        return q_seq
+
+
 class TransformerCrossAttentionLayer(nn.Module):
     """A transformer cross attention layer.
 
@@ -1164,5 +1201,168 @@ class FullPerceiverEncoder(nn.Module):
             ctxt = self.ctxt_emdb(ctxt)
         x = self.node_embd(x, ctxt)
         x = self.pe.forward(x, mask=mask, ctxt=ctxt)
+        x = self.outp_embd(x, ctxt)
+        return x
+
+
+class CrossAttentionEncoder(nn.Module):
+    """A type of encoder which includes uses cross attention to move to and
+    from the original sequence. Self attention is used in the learned sequence
+    steps.
+
+    Sequence -> Squence
+
+    It is non resizing, so model_dim must be used for inputs and outputs
+    """
+
+    def __init__(
+        self,
+        model_dim: int = 64,
+        num_layers: int = 5,
+        mha_config: Optional[Mapping] = None,
+        dense_config: Optional[Mapping] = None,
+        ctxt_dim: int = 0,
+    ) -> None:
+        """
+        Args:
+            model_dim: Feature size for input, output, and all intermediate sequences
+            num_layers: Number of there and back cross attention layers
+            mha_config: Keyword arguments for all multiheaded attention layers
+            dense_config: Keyword arguments for the dense network in each layer
+            ctxt_dim: Dimension of the context inputs
+        """
+        super().__init__()
+        self.model_dim = model_dim
+        self.num_layers = num_layers
+
+        # Initialise the learnable perceiver tokens as random values
+        self.class_token = nn.Parameter(T.randn((1, 1, model_dim)))
+
+        # The cross attention layers going from our original sequence
+        self.from_layers = nn.ModuleList(
+            [
+                TransformerCrossAttentionLayer(
+                    model_dim, mha_config, dense_config, ctxt_dim
+                )
+                for _ in range(num_layers)
+            ]
+        )
+
+        # The cross attention layers going to our original sequence
+        self.to_layers = nn.ModuleList(
+            [
+                TransformerCrossAttentionLayer(
+                    model_dim, mha_config, dense_config, ctxt_dim
+                )
+                for _ in range(num_layers)
+            ]
+        )
+
+    def forward(
+        self,
+        seq: T.Tensor,
+        mask: Optional[T.BoolTensor] = None,
+        ctxt: Optional[T.Tensor] = None,
+    ) -> Union[T.Tensor, tuple]:
+        """Pass the input through all layers sequentially."""
+
+        # Make sure the class token is expanded to batch size
+        # Use shape not len as it is ONNX safe!
+        class_token = self.class_token.expand(seq.shape[0], 1, self.model_dim)
+
+        # Pass through the layers of there and back cross attention
+        for from_layer, to_layer in zip(self.from_layers, self.to_layers):
+            class_token = from_layer(class_token, seq, mask, ctxt)
+            seq = to_layer(seq, class_token, None, ctxt)
+
+        return seq
+
+
+class FullCrossAttentionEncoder(nn.Module):
+    """A cross attention encoder with added input and output embedding
+    networks.
+
+    Sequence -> Sequence
+    """
+
+    def __init__(
+        self,
+        inpt_dim: int,
+        outp_dim: int,
+        ctxt_dim: int = 0,
+        cae_config: Optional[Mapping] = None,
+        node_embd_config: Optional[Mapping] = None,
+        outp_embd_config: Optional[Mapping] = None,
+        ctxt_embd_config: Optional[Mapping] = None,
+    ) -> None:
+        """
+        Args:
+            inpt_dim: Dim. of each element of the sequence
+            outp_dim: Dim. of each element of output sequence
+            ctxt_dim: Dim. of the context vector to pass to the embedding nets
+            cae_config: Keyword arguments to pass to the CrossAttentionEncoder
+            node_embd_config: Keyword arguments for node dense embedder
+            outp_embd_config: Keyword arguments for output dense embedder
+            ctxt_embd_config: Keyword arguments for context dense embedder
+        """
+        super().__init__()
+        self.inpt_dim = inpt_dim
+        self.outp_dim = outp_dim
+        self.ctxt_dim = ctxt_dim
+        cae_config = deepcopy(cae_config) or {}
+        node_embd_config = deepcopy(node_embd_config) or {}
+        outp_embd_config = deepcopy(outp_embd_config) or {}
+
+        # By default we would like the dense networks in this model to double the width
+        if "model_dim" in cae_config.keys():
+            model_dim = cae_config["model_dim"]
+            if "hddn_dim" not in node_embd_config.keys():
+                node_embd_config["hddn_dim"] = 2 * model_dim
+            if "hddn_dim" not in ctxt_embd_config.keys():
+                ctxt_embd_config["hddn_dim"] = 2 * model_dim
+            if "hddn_dim" not in outp_embd_config.keys():
+                outp_embd_config["hddn_dim"] = 2 * model_dim
+            if "hddn_dim" not in cae_config["dense_config"].keys():
+                cae_config["dense_config"]["hddn_dim"] = 2 * model_dim
+
+        # Initialise the context embedding network (optional)
+        if self.ctxt_dim:
+            self.ctxt_emdb = DenseNetwork(
+                inpt_dim=self.ctxt_dim,
+                **ctxt_embd_config,
+            )
+            self.ctxt_out = self.ctxt_emdb.outp_dim
+        else:
+            self.ctxt_out = 0
+
+        # Initialise the TVE, the main part of this network
+        self.cae = CrossAttentionEncoder(**cae_config, ctxt_dim=self.ctxt_out)
+        self.model_dim = self.cae.model_dim
+
+        # Initialise all embedding networks
+        self.node_embd = DenseNetwork(
+            inpt_dim=self.inpt_dim,
+            outp_dim=self.model_dim,
+            ctxt_dim=self.ctxt_out,
+            **node_embd_config,
+        )
+        self.outp_embd = DenseNetwork(
+            inpt_dim=self.model_dim,
+            outp_dim=self.outp_dim,
+            ctxt_dim=self.ctxt_out,
+            **outp_embd_config,
+        )
+
+    def forward(
+        self,
+        x: T.Tensor,
+        mask: Optional[T.BoolTensor] = None,
+        ctxt: Optional[T.Tensor] = None,
+    ) -> T.Tensor:
+        """Pass the input through all layers sequentially."""
+        if self.ctxt_dim:
+            ctxt = self.ctxt_emdb(ctxt)
+        x = self.node_embd(x, ctxt)
+        x = self.cae(x, mask=mask, ctxt=ctxt)
         x = self.outp_embd(x, ctxt)
         return x
