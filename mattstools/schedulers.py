@@ -16,7 +16,6 @@ class LinearWarmupRootDecay(_LRScheduler):
         verbose: bool = False,
         use_max_lr: bool = False,
     ) -> None:
-
         # For calculating the learning rate profile
         self.dim_model = dim_model
         self.warmup_steps = warmup_steps

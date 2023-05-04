@@ -1,6 +1,7 @@
 """Collection of pytorch modules that make up the common networks used in my
 projects."""
 
+import math
 from typing import Optional, Union
 
 import torch as T
@@ -36,6 +37,7 @@ class MLPBlock(nn.Module):
         drp: float = 0,
         do_res: bool = False,
         do_bayesian: bool = False,
+        init_zeros: bool = False,
     ) -> None:
         """Init method for MLPBlock.
 
@@ -59,6 +61,9 @@ class MLPBlock(nn.Module):
             The number of transform layers in this block, by default False
         do_bayesian : bool, optional
             If to fill the block with bayesian linear layers, by default False
+        init_zeros : bool, optional,
+            If the final layer weights and bias values are set to zero
+            Does not apply to bayesian layers
         """
         super().__init__()
 
@@ -73,7 +78,6 @@ class MLPBlock(nn.Module):
         # Initialise the block layers as a module list
         self.block = nn.ModuleList()
         for n in range(n_layers):
-
             # Increase the input dimension of the first layer to include context
             lyr_in = inpt_dim + ctxt_dim if n == 0 else outp_dim
 
@@ -83,6 +87,12 @@ class MLPBlock(nn.Module):
                 if do_bayesian
                 else nn.Linear(lyr_in, outp_dim)
             )
+
+            # Initialise the final layer with zeros
+            if init_zeros and n == n_layers - 1 and not do_bayesian:
+                self.block[-1].weight.data.fill_(0)
+                self.block[-1].bias.data.fill_(0)
+
             if act != "none":
                 self.block.append(get_act(act))
             if nrm != "none":
@@ -149,6 +159,7 @@ class DenseNetwork(nn.Module):
         ctxt_in_inpt: bool = True,
         ctxt_in_hddn: bool = False,
         do_bayesian: bool = False,
+        output_init_zeros: bool = False,
     ) -> None:
         """Initialise the DenseNetwork.
 
@@ -189,6 +200,8 @@ class DenseNetwork(nn.Module):
             Include the ctxt tensor in the hidden blocks, by default False
         do_bayesian : bool, optional
             Create the network with bayesian linear layers, by default False
+        output_init_zeros : bool, optional
+            Initialise the output layer weights as zeros
 
         Raises
         ------
@@ -254,6 +267,7 @@ class DenseNetwork(nn.Module):
                 outp_dim=self.outp_dim,
                 act=act_o,
                 do_bayesian=do_bayesian,
+                init_zeros=output_init_zeros,
             )
 
     def forward(self, inputs: T.Tensor, ctxt: Optional[T.Tensor] = None) -> T.Tensor:
@@ -362,7 +376,6 @@ class DeepSet(nn.Module):
 
         # For an attention deepset
         if self.pool_type == "attn":
-
             # Create the attention network
             self.attn_net = DenseNetwork(
                 self.inpt_dim, ctxt_dim=self.ctxt_dim, **attn_net_kwargs
@@ -540,21 +553,25 @@ class IterativeNormLayer(nn.Module):
             if d in self.extra_dims:
                 self.stat_dim[d] = 1
 
-        # Buffers arenneeded for saving/loading the layer
+        # Buffers are needed for saving/loading the layer
         self.register_buffer(
-            "means", T.zeros(self.stat_dim) if means is None else means
+            "means", T.zeros(self.stat_dim, dtype=T.float32) if means is None else means
         )
-        self.register_buffer("vars", T.ones(self.stat_dim) if vars is None else vars)
+        self.register_buffer(
+            "vars", T.ones(self.stat_dim, dtype=T.float32) if vars is None else vars
+        )
         self.register_buffer("n", n)
 
         # For the welford algorithm it is useful to have another variable m2
-        self.register_buffer("m2", T.ones(self.stat_dim) if vars is None else vars)
+        self.register_buffer(
+            "m2", T.ones(self.stat_dim, dtype=T.float32) if vars is None else vars
+        )
 
         # If the means are set here then the model is "frozen" and not updated
         self.frozen = means is not None
 
     def __str__(self) -> str:
-        return f"IterativeNormLayer(means={self.means}, vars={self.vars})"
+        return f"IterativeNormLayer(means={self.means.squeeze()}, vars={self.vars.squeeze()})"
 
     def _mask(self, inpt: T.Tensor, mask: Optional[T.BoolTensor] = None) -> T.Tensor:
         if mask is None:
@@ -593,7 +610,7 @@ class IterativeNormLayer(nn.Module):
             # Undo the masking
             if mask is not None:
                 inpt = inpt.clone()  # prevents inplace operation, bad for autograd
-                inpt[mask] = normed_inpt
+                inpt[mask] = normed_inpt.type(inpt.dtype)
                 return inpt
 
             return normed_inpt
@@ -606,7 +623,7 @@ class IterativeNormLayer(nn.Module):
         # Undo the masking
         if mask is not None:
             inpt = inpt.clone()  # prevents inplace operation, bad for autograd
-            inpt[mask] = unnormed_inpt
+            inpt[mask] = unnormed_inpt.type(inpt.dtype)
             return inpt
 
         return unnormed_inpt
@@ -635,3 +652,73 @@ class IterativeNormLayer(nn.Module):
 
         # Freeze the model if we exceed the requested stats
         self.frozen = self.n >= self.max_n
+
+
+class CosineEncoding:
+    def __init__(
+        self,
+        outp_dim: int = 32,
+        min_value: float = 0.0,
+        max_value: float = 1.0,
+        frequency_scaling: str = "exponential",
+    ) -> None:
+        self.outp_dim = outp_dim
+        self.min_value = min_value
+        self.max_value = max_value
+        self.frequency_scaling = frequency_scaling
+
+    def __call__(self, inpt: T.Tensor) -> T.Tensor:
+        return cosine_encoding(
+            inpt, self.outp_dim, self.min_value, self.max_value, self.frequency_scaling
+        )
+
+
+def cosine_encoding(
+    x: T.Tensor,
+    outp_dim: int = 32,
+    min_value: float = 0.0,
+    max_value: float = 1.0,
+    frequency_scaling: str = "exponential",
+) -> T.Tensor:
+    """Computes a positional cosine encodings with an increasing series of
+    frequencies.
+
+    The frequencies either increase linearly or exponentially (default).
+    The latter is good for when max_value is large and extremely high sensitivity to the
+    input is required.
+    If inputs greater than the max value are provided, the outputs become degenerate.
+    If inputs smaller than the min value are provided, the inputs the the cosine will
+    be both positive and negative, which may lead degenerate outputs.
+
+    Always make sure that the min and max bounds are not exceeded!
+
+    Args:
+        x: The input, the final dimension is encoded. If 1D then it will be unqueezed
+        out_dim: The dimension of the output encoding
+        min_value: Added to x (and max) as cosine embedding works with positive inputs
+        max_value: The maximum expected value, sets the scale of the lowest frequency
+        frequency_scaling: Either 'linear' or 'exponential'
+
+    Returns:
+        The cosine embeddings of the input using (out_dim) many frequencies
+    """
+
+    # Unsqueeze if final dimension is flat
+    if x.shape[-1] != 1 or x.dim() == 1:
+        x = x.unsqueeze(-1)
+
+    # Check the the bounds are obeyed
+    if T.any(x > max_value):
+        print("Warning! Passing values to cosine_encoding encoding that exceed max!")
+    if T.any(x < min_value):
+        print("Warning! Passing values to cosine_encoding encoding below min!")
+
+    # Calculate the various frequencies
+    if frequency_scaling == "exponential":
+        freqs = T.arange(outp_dim, device=x.device).exp()
+    elif frequency_scaling == "linear":
+        freqs = T.arange(1, outp_dim + 1, device=x.device)
+    else:
+        raise RuntimeError(f"Unrecognised frequency scaling: {frequency_scaling}")
+
+    return T.cos((x + min_value) * freqs * math.pi / (max_value + min_value))

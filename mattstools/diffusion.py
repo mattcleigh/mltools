@@ -16,6 +16,7 @@ class DiffusionSchedule(ABC):
         pass
 
     def get_betas(self, time: T.Tensor) -> T.Tensor:
+        """Return the drift coefficient for the reverse SDE."""
         pass
 
 
@@ -40,76 +41,6 @@ class KarrasDiffusionSchedule(DiffusionSchedule):
 
     def get_betas(self, time: T.Tensor) -> T.Tensor:
         return T.zeros_like(time)
-
-
-class CosineEncoding:
-    def __init__(
-        self,
-        outp_dim: int = 32,
-        min_value: float = 0.0,
-        max_value: float = 1.0,
-        frequency_scaling: str = "exponential",
-    ) -> None:
-        self.outp_dim = outp_dim
-        self.min_value = min_value
-        self.max_value = max_value
-        self.frequency_scaling = frequency_scaling
-
-    def __call__(self, inpt: T.Tensor) -> T.Tensor:
-        return cosine_encoding(
-            inpt, self.outp_dim, self.min_value, self.max_value, self.frequency_scaling
-        )
-
-
-def cosine_encoding(
-    x: T.Tensor,
-    outp_dim: int = 32,
-    min_value: float = 0.0,
-    max_value: float = 1.0,
-    frequency_scaling: str = "exponential",
-) -> T.Tensor:
-    """Computes a positional cosine encodings with an increasing series of
-    frequencies.
-
-    The frequencies either increase linearly or exponentially (default).
-    The latter is good for when max_value is large and extremely high sensitivity to the
-    input is required.
-    If inputs greater than the max value are provided, the outputs become degenerate.
-    If inputs smaller than the min value are provided, the inputs the the cosine will
-    be both positive and negative, which may lead degenerate outputs.
-
-    Always make sure that the min and max bounds are not exceeded!
-
-    Args:
-        x: The input, the final dimension is encoded. If 1D then it will be unqueezed
-        out_dim: The dimension of the output encoding
-        min_value: Added to x (and max) as cosine embedding works with positive inputs
-        max_value: The maximum expected value, sets the scale of the lowest frequency
-        frequency_scaling: Either 'linear' or 'exponential'
-
-    Returns:
-        The cosine embeddings of the input using (out_dim) many frequencies
-    """
-
-    # Unsqueeze if final dimension is flat
-    if x.shape[-1] != 1 or x.dim() == 1:
-        x = x.unsqueeze(-1)
-
-    # Check the the bounds are obeyed
-    if T.any(x > max_value):
-        print("Warning! Passing values to cosine_encoding encoding that exceed max!")
-    if T.any(x < min_value):
-        print("Warning! Passing values to cosine_encoding encoding below min!")
-
-    # Calculate the various frequencies
-    if frequency_scaling == "exponential":
-        freqs = T.arange(outp_dim, device=x.device).exp()
-    elif frequency_scaling == "linear":
-        freqs = T.arange(1, outp_dim + 1, device=x.device)
-    else:
-        raise RuntimeError(f"Unrecognised frequency scaling: {frequency_scaling}")
-
-    return T.cos((x + min_value) * freqs * math.pi / (max_value + min_value))
 
 
 def cosine_diffusion_shedule(
@@ -188,7 +119,7 @@ def ddim_sampler(
     Args:
         model: A denoising diffusion model
             Requires: inpt_dim, device, forward() method that outputs pred noise
-        diif_sched: A diffusion schedule object to calculate signal and noise rates
+        diff_sched: A diffusion schedule object to calculate signal and noise rates
         initial_noise: The initial noise to pass through the process
             If none it will be generated here
         n_steps: The number of iterations to generate the samples
@@ -216,7 +147,6 @@ def ddim_sampler(
     diff_times = T.ones(num_samples, device=model.device)
     next_signal_rates, next_noise_rates = diff_sched(diff_times.view(expanded_shape))
     for step in tqdm(range(n_steps), "DDIM-sampling", leave=False):
-
         # Update with the previous 'next' step
         signal_rates = next_signal_rates
         noise_rates = next_noise_rates
@@ -273,7 +203,6 @@ def euler_maruyama_sampler(
     x_t = initial_noise
     t = T.ones(num_samples, device=model.device)
     for step in tqdm(range(n_steps), "Euler-Maruyama-sampling", leave=False):
-
         # Use the model to get the expected noise
         pred_noises = model(x_t, t, mask, ctxt)
 
@@ -327,7 +256,6 @@ def euler_sampler(
     signal_rates, noise_rates = diff_sched(t.view(expanded_shape))
     x_t = initial_noise * (signal_rates + noise_rates)
     for step in tqdm(range(n_steps), "Euler-sampling", leave=False):
-
         # Take a step using the euler method and the gradient calculated by the ode
         x_t += get_ode_gradient(model, diff_sched, x_t, t, mask, ctxt) * delta_t
         t -= delta_t
@@ -372,7 +300,6 @@ def runge_kutta_sampler(
     x_t = initial_noise
     t = T.ones(num_samples, device=model.device)
     for step in tqdm(range(n_steps), "Runge-Kutta-sampling", leave=False):
-
         k1 = delta_t * (ode_grad(t, x_t))
         k2 = delta_t * (ode_grad((t - delta_t / 2), (x_t + k1 / 2)))
         k3 = delta_t * (ode_grad((t - delta_t / 2), (x_t + k2 / 2)))
