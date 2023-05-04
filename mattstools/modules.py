@@ -553,21 +553,25 @@ class IterativeNormLayer(nn.Module):
             if d in self.extra_dims:
                 self.stat_dim[d] = 1
 
-        # Buffers arenneeded for saving/loading the layer
+        # Buffers are needed for saving/loading the layer
         self.register_buffer(
-            "means", T.zeros(self.stat_dim) if means is None else means
+            "means", T.zeros(self.stat_dim, dtype=T.float32) if means is None else means
         )
-        self.register_buffer("vars", T.ones(self.stat_dim) if vars is None else vars)
+        self.register_buffer(
+            "vars", T.ones(self.stat_dim, dtype=T.float32) if vars is None else vars
+        )
         self.register_buffer("n", n)
 
         # For the welford algorithm it is useful to have another variable m2
-        self.register_buffer("m2", T.ones(self.stat_dim) if vars is None else vars)
+        self.register_buffer(
+            "m2", T.ones(self.stat_dim, dtype=T.float32) if vars is None else vars
+        )
 
         # If the means are set here then the model is "frozen" and not updated
         self.frozen = means is not None
 
     def __str__(self) -> str:
-        return f"IterativeNormLayer(means={self.means}, vars={self.vars})"
+        return f"IterativeNormLayer(means={self.means.squeeze()}, vars={self.vars.squeeze()})"
 
     def _mask(self, inpt: T.Tensor, mask: Optional[T.BoolTensor] = None) -> T.Tensor:
         if mask is None:
@@ -606,7 +610,7 @@ class IterativeNormLayer(nn.Module):
             # Undo the masking
             if mask is not None:
                 inpt = inpt.clone()  # prevents inplace operation, bad for autograd
-                inpt[mask] = normed_inpt
+                inpt[mask] = normed_inpt.type(inpt.dtype)
                 return inpt
 
             return normed_inpt
@@ -619,7 +623,7 @@ class IterativeNormLayer(nn.Module):
         # Undo the masking
         if mask is not None:
             inpt = inpt.clone()  # prevents inplace operation, bad for autograd
-            inpt[mask] = unnormed_inpt
+            inpt[mask] = unnormed_inpt.type(inpt.dtype)
             return inpt
 
         return unnormed_inpt
