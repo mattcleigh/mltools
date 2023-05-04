@@ -50,15 +50,15 @@ class MLPBlock(nn.Module):
         ctxt_dim : int, optional
             The number of contextual features to concat to the inputs, by default 0
         n_layers : int, optional
-            A string indicating the name of the activation function, by default 1
+            The number of transform layers in this block, by default 1
         act : str, optional
-            A string indicating the name of the normalisation, by default "lrlu"
+            A string indicating the name of the activation function, by default "lrlu"
         nrm : str, optional
-            The dropout probability, 0 implies no dropout, by default "none"
+            A string indicating the name of the normalisation, by default "none"
         drp : float, optional
-            Add to previous output, only if dim does not change, by default 0
+            The dropout probability, 0 implies no dropout, by default 0
         do_res : bool, optional
-            The number of transform layers in this block, by default False
+            Add to previous output, only if dim does not change, by default 0
         do_bayesian : bool, optional
             If to fill the block with bayesian linear layers, by default False
         init_zeros : bool, optional,
