@@ -26,7 +26,6 @@ def heun_sampler(
     ctxt: T.BoolTensor | None = None,
     clip_predictions: tuple | None = None,
 ) -> None:
-
     # Get the initial noise for generation and the number of sammples
     batch_size = initial_noise.shape[0]
     expanded_shape = [-1] + [1] * (initial_noise.dim() - 1)
@@ -38,7 +37,6 @@ def heun_sampler(
 
     # Start iterating through each timestep
     for i in range(num_steps - 1):
-
         # Expancd the diffusion times for the number of samples in the batch
         diff_times = T.full((batch_size, 1), time_steps[i], device=model.device)
         diff_times_next = T.full(
@@ -77,7 +75,6 @@ def stochastic_sampler(
     ctxt: T.BoolTensor | None = None,
     clip_predictions: tuple | None = None,
 ) -> None:
-
     # Get the initial noise for generation and the number of sammples
     batch_size = initial_noise.shape[0]
     expanded_shape = [-1] + [1] * (initial_noise.dim() - 1)
@@ -89,7 +86,6 @@ def stochastic_sampler(
 
     # Start iterating through each timestep
     for i in range(num_steps - 1):
-
         # Expancd the diffusion times for the number of samples in the batch
         diff_times = T.full((batch_size, 1), time_steps[i], device=model.device)
         diff_times_next = T.full(

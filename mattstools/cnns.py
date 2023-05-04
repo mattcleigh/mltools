@@ -133,7 +133,6 @@ class ResNetBlock(nn.Module):
 
         # Introduce the contextual information
         if self.has_ctxt:
-
             # Check that the context tensor is present
             if ctxt is None:
                 raise ValueError("ResNet was expecting a ctxt input but none given")

@@ -122,7 +122,6 @@ class Lion(Optimizer):
         # Iterate through the parameter groups
         for group in self.param_groups:
             for p in group["params"]:
-
                 # Skip if the gradients are empty
                 if p.grad is None:
                     continue

@@ -43,7 +43,6 @@ def merge_dict(source: dict, update: dict) -> dict:
 
     # Cycle through all of the keys in the update
     for key in update:
-
         # If the key not in the source then add move on
         if key not in merged:
             merged[key] = update[key]

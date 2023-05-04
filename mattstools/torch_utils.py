@@ -481,7 +481,6 @@ def pass_with_mask(
 
     # For generalisability, if the mask is none then we just return the normal pass
     if mask is None:
-
         # Without context this is a simple pass
         if high_level is None:
             return module(inputs)

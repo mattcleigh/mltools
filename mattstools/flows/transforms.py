@@ -112,7 +112,6 @@ def stacked_norm_flow(
 
     # Cycle through each stack
     for i in range(nstacks):
-
         # For autoregressive funcions
         if param_func == "made":
             if invrt_func == "aff":
@@ -129,7 +128,6 @@ def stacked_norm_flow(
 
         # For coupling layers
         elif param_func == "cplng":
-
             # Alternate between masking first half and second half (rounded up)
             mask = T.abs(T.round(T.arange(xz_dim) / (xz_dim - 1)).int() - i % 2)
 
