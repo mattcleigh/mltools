@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 import PIL.Image
 import seaborn as sns
-from matplotlib.colors import LogNorm
+from matplotlib.colors import LinearSegmentedColormap, LogNorm
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from scipy.interpolate import make_interp_spline
 from scipy.stats import binned_statistic, pearsonr
@@ -29,6 +29,17 @@ plt.rcParams["legend.framealpha"] = 0.0
 plt.rcParams["axes.labelsize"] = "large"
 plt.rcParams["axes.titlesize"] = "large"
 plt.rcParams["legend.fontsize"] = 11
+
+
+def truncate_colormap(cmap, minval=0.0, maxval=1.0, n=100):
+    """Return only a portion of a matplotlib colormap."""
+    if isinstance(cmap, str):
+        cmap = matplotlib.colormaps[cmap]
+    new_cmap = LinearSegmentedColormap.from_list(
+        f"trunc({cmap.name},{minval:.2f},{maxval:.2f})",
+        cmap(np.linspace(minval, maxval, n)),
+    )
+    return new_cmap
 
 
 def gaussian(x_data, mu=0, sig=1):
@@ -150,7 +161,6 @@ def plot_corr_heatmaps(
     title: str = "",
     figsize=(6, 5),
     do_pearson=False,
-    do_pdf: bool = False,
     return_fig: bool = False,
     return_img: bool = False,
 ) -> None:
@@ -228,10 +238,7 @@ def plot_corr_heatmaps(
     # Save the image
     fig.tight_layout()
     if path is not None:
-        path = Path(path)
-        fig.savefig(path.with_suffix(".png"))
-        if do_pdf:
-            fig.savefig(path.with_suffix(".pdf"))
+        fig.savefig(path)
     if return_fig:
         return fig
     if return_img:
@@ -559,7 +566,7 @@ def plot_multi_hists_2(
                 ax_bins = np.append(ax_bins, unq.max() + unq.max() - ax_bins[-1])
                 ax_bins = np.insert(ax_bins, 0, unq.min() + unq.min() - ax_bins[0])
 
-            if ax_bins == "quant":
+            elif ax_bins == "quant":
                 ax_bins = quantile_bins(data_list[0][:, ax_idx])
 
         # Numpy function to get the bin edges, catches all other cases (int, etc)
