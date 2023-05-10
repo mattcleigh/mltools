@@ -312,7 +312,7 @@ def add_hist(
     if err_kwargs is not None and bool(err_kwargs):
         e_kwargs = err_kwargs
     else:
-        e_kwargs = {"color": line._edgecolor, "alpha": 0.2, "fill": True}
+        e_kwargs = {"color": line._edgecolor, "alpha": 0.5, "fill": True}
 
     # Include the uncertainty in the plots as a shaded region
     if do_err:
@@ -395,7 +395,7 @@ def plot_multi_correlations(
                 y_bounds = np.quantile(data_list[0][:, row], [0.001, 0.999])
                 for i, d in enumerate(data_list):
                     color = None
-                    if "color" in hist_kwargs[i].keys():
+                    if hist_kwargs[i] is not None and "color" in hist_kwargs[i].keys():
                         color = hist_kwargs[i]["color"]
                     sns.kdeplot(
                         x=d[:, column],
@@ -418,7 +418,7 @@ def plot_multi_correlations(
     # Create some invisible lines which will be part of the legend
     for i, d in enumerate(data_list):
         color = None
-        if "color" in hist_kwargs[i].keys():
+        if hist_kwargs[i] is not None and "color" in hist_kwargs[i].keys():
             color = hist_kwargs[i]["color"]
         axes[row, column].plot([], [], label=data_labels[i], color=color)
     fig.legend(**(legend_kwargs or {}))
@@ -593,7 +593,7 @@ def plot_multi_hists_2(
             if data.ndim > 1:
                 h = []
                 for dim in range(data.shape[-1]):
-                    h.append(np.histogram(data[:, dim], ax_bins, density=do_norm)[0])
+                    h.append(np.histogram(data[:, dim], ax_bins)[0])
 
                 # Nominal and err is based on chi2 of same value, mult measurements
                 hist = 1 / np.mean(1 / np.array(h), axis=0)
@@ -601,8 +601,14 @@ def plot_multi_hists_2(
 
             # Otherwise just calculate a single histogram
             else:
-                hist, _ = np.histogram(data, ax_bins, density=do_norm)
+                hist, _ = np.histogram(data, ax_bins)
                 hist_err = np.sqrt(hist)
+
+            # Manually do the density so that the error can be scaled
+            if do_norm:
+                divisor = np.array(np.diff(ax_bins), float) / hist.sum()
+                hist /= divisor
+                hist_err /= divisor
 
             # Apply the scale factors
             if scale_factors[data_idx] is not None:
