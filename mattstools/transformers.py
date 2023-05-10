@@ -1366,3 +1366,109 @@ class FullCrossAttentionEncoder(nn.Module):
         x = self.cae(x, mask=mask, ctxt=ctxt)
         x = self.outp_embd(x, ctxt)
         return x
+
+
+class FullTransformerDecoder(nn.Module):
+    """A transformer decoder with added input and output embedding networks.
+
+    Sequence -> Sequence
+    """
+
+    def __init__(
+        self,
+        inpt_dim: int,
+        outp_dim: int,
+        edge_dim: int = 0,
+        ctxt_dim: int = 0,
+        td_config: Optional[Mapping] = None,
+        node_embd_config: Optional[Mapping] = None,
+        outp_embd_config: Optional[Mapping] = None,
+        edge_embd_config: Optional[Mapping] = None,
+        ctxt_embd_config: Optional[Mapping] = None,
+    ) -> None:
+        """
+        Args:
+            inpt_dim: Dim. of each element of the sequence
+            outp_dim: Dim. of of the final output vector
+            edge_dim: Dim. of the input edge features
+            ctxt_dim: Dim. of the context vector to pass to the embedding nets
+            td_config: Keyword arguments to pass to the TD constructor
+            node_embd_config: Keyword arguments for node dense embedder
+            outp_embd_config: Keyword arguments for output dense embedder
+            edge_embd_config: Keyword arguments for edge dense embedder
+            ctxt_embd_config: Keyword arguments for context dense embedder
+        """
+        super().__init__()
+        self.inpt_dim = inpt_dim
+        self.outp_dim = outp_dim
+        self.ctxt_dim = ctxt_dim
+        self.edge_dim = edge_dim
+        td_config = td_config or {}
+        node_embd_config = node_embd_config or {}
+        outp_embd_config = outp_embd_config or {}
+        edge_embd_config = edge_embd_config or {}
+
+        # Initialise the context embedding network (optional)
+        if self.ctxt_dim:
+            self.ctxt_emdb = DenseNetwork(
+                inpt_dim=self.ctxt_dim,
+                **ctxt_embd_config,
+            )
+            self.ctxt_out = self.ctxt_emdb.outp_dim
+        else:
+            self.ctxt_out = 0
+
+        # Initialise the TVE, the main part of this network
+        self.td = TransformerDecoder(**td_config, ctxt_dim=self.ctxt_out)
+        self.model_dim = self.td.model_dim
+
+        # Initialise all embedding networks
+        self.node_embd = DenseNetwork(
+            inpt_dim=self.inpt_dim,
+            outp_dim=self.model_dim,
+            ctxt_dim=self.ctxt_out,
+            **node_embd_config,
+        )
+        self.outp_embd = DenseNetwork(
+            inpt_dim=self.model_dim,
+            outp_dim=self.outp_dim,
+            ctxt_dim=self.ctxt_out,
+            **outp_embd_config,
+        )
+
+        # Initialise the edge embedding network (optional)
+        if self.edge_dim:
+            self.edge_embd = DenseNetwork(
+                inpt_dim=self.edge_dim,
+                outp_dim=self.td.layers[0].self_attn.num_heads,
+                ctxt_dim=self.ctxt_out,
+                **edge_embd_config,
+            )
+
+    def forward(
+        self,
+        q_seq: T.Tensor,
+        kv_seq: T.Tensor,
+        q_mask: Optional[T.BoolTensor] = None,
+        kv_mask: Optional[T.BoolTensor] = None,
+        ctxt: Optional[T.Tensor] = None,
+        attn_bias: Optional[T.Tensor] = None,
+        attn_mask: Optional[T.BoolTensor] = None,
+    ) -> T.Tensor:
+        """Pass the input through all layers sequentially."""
+        if self.ctxt_dim:
+            ctxt = self.ctxt_emdb(ctxt)
+        if self.edge_dim:
+            attn_bias = self.edge_embd(attn_bias, ctxt)
+        q_seq = self.node_embd(q_seq, ctxt)
+        q_seq = self.td(
+            q_seq,
+            kv_seq,
+            q_mask=q_mask,
+            kv_mask=kv_mask,
+            ctxt=ctxt,
+            attn_bias=attn_bias,
+            attn_mask=attn_mask,
+        )
+        q_seq = self.outp_embd(q_seq, ctxt)
+        return q_seq
