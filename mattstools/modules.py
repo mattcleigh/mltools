@@ -50,15 +50,15 @@ class MLPBlock(nn.Module):
         ctxt_dim : int, optional
             The number of contextual features to concat to the inputs, by default 0
         n_layers : int, optional
-            A string indicating the name of the activation function, by default 1
+            The number of transform layers in this block, by default 1
         act : str, optional
-            A string indicating the name of the normalisation, by default "lrlu"
+            A string indicating the name of the activation function, by default "lrlu"
         nrm : str, optional
-            The dropout probability, 0 implies no dropout, by default "none"
+            A string indicating the name of the normalisation, by default "none"
         drp : float, optional
-            Add to previous output, only if dim does not change, by default 0
+            The dropout probability, 0 implies no dropout, by default 0
         do_res : bool, optional
-            The number of transform layers in this block, by default False
+            Add to previous output, only if dim does not change, by default 0
         do_bayesian : bool, optional
             If to fill the block with bayesian linear layers, by default False
         init_zeros : bool, optional,
@@ -553,15 +553,19 @@ class IterativeNormLayer(nn.Module):
             if d in self.extra_dims:
                 self.stat_dim[d] = 1
 
-        # Buffers arenneeded for saving/loading the layer
+        # Buffers are needed for saving/loading the layer
         self.register_buffer(
-            "means", T.zeros(self.stat_dim) if means is None else means
+            "means", T.zeros(self.stat_dim, dtype=T.float32) if means is None else means
         )
-        self.register_buffer("vars", T.ones(self.stat_dim) if vars is None else vars)
+        self.register_buffer(
+            "vars", T.ones(self.stat_dim, dtype=T.float32) if vars is None else vars
+        )
         self.register_buffer("n", n)
 
         # For the welford algorithm it is useful to have another variable m2
-        self.register_buffer("m2", T.ones(self.stat_dim) if vars is None else vars)
+        self.register_buffer(
+            "m2", T.ones(self.stat_dim, dtype=T.float32) if vars is None else vars
+        )
 
         # If the means are set here then the model is "frozen" and not updated
         self.frozen = means is not None
@@ -606,7 +610,7 @@ class IterativeNormLayer(nn.Module):
             # Undo the masking
             if mask is not None:
                 inpt = inpt.clone()  # prevents inplace operation, bad for autograd
-                inpt[mask] = normed_inpt
+                inpt[mask] = normed_inpt.type(inpt.dtype)
                 return inpt
 
             return normed_inpt
@@ -619,7 +623,7 @@ class IterativeNormLayer(nn.Module):
         # Undo the masking
         if mask is not None:
             inpt = inpt.clone()  # prevents inplace operation, bad for autograd
-            inpt[mask] = unnormed_inpt
+            inpt[mask] = unnormed_inpt.type(inpt.dtype)
             return inpt
 
         return unnormed_inpt

@@ -39,7 +39,7 @@ def champfer_loss(mask_a, pc_a, mask_b, pc_b):
     min2 = T.min(dist_matrix, dim=-2)[0] ** 2 * mask_b
 
     # Add the two metrics together (no batch reduction)
-    return T.sum(min1, dim=-1) + T.sum(min2, dim=-1)
+    return 0.5 * (T.sum(min1, dim=-1) + T.sum(min2, dim=-1))
 
 
 def kld_to_norm(means: T.Tensor, log_stds: T.Tensor, reduce="mean") -> T.Tensor:

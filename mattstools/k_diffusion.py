@@ -13,11 +13,6 @@ def append_dims(x: T.Tensor, target_dims: int) -> T.Tensor:
     return x[(...,) + (None,) * dim_diff]  # x.view(*x.shape, *dim_diff * (1,))
 
 
-def get_derivative(x: T.Tensor, denoised: T.Tensor, sigma: float) -> T.Tensor:
-    """Convers a denoiser output to a Karras ODE derivative."""
-    return (x - denoised) / sigma
-
-
 def get_sigmas_karras(
     t_max: float, t_min: float, n_steps: int = 100, rho: float = 7
 ) -> T.Tensor:
@@ -97,7 +92,7 @@ def sample_heun(
             # Heun's 2nd order method
             x_2 = x + d * dt
             denoised_2 = model(x_2, sigmas[i + 1] * sigma_shape, **extra_args)
-            d_2 = x_2 - denoised_2 / sigmas[i + 1]
+            d_2 = (x_2 - denoised_2) / sigmas[i + 1]
             d_prime = (d + d_2) / 2
             x = x + d_prime * dt
 
