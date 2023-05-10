@@ -4,15 +4,31 @@ https://github.com/alphadl/lookahead.pytorch
 """
 
 from collections import defaultdict
-from typing import Any, Callable, Optional
+from functools import partial
+from typing import Any, Callable, Iterable, Optional
 
 import torch as T
 from torch.optim import Optimizer
 
 
 class Lookahead(Optimizer):
-    def __init__(self, optimizer, k=6, alpha=0.5):
-        self.optimizer = optimizer
+    def __init__(
+        self,
+        inner_optimizer: partial | Optimizer = None,
+        params: Iterable = None,
+        k=10,
+        alpha=0.5,
+        **opt_kwargs,
+    ) -> None:
+
+        # If we have a fully initialised optimiser
+        if isinstance(inner_optimizer, Optimizer):
+            self.optimizer = inner_optimizer
+        # Otherwise we initialise using our parameters
+        else:
+            self.optimizer = inner_optimizer(params, **opt_kwargs)
+
+        # Other class features
         self.k = k
         self.alpha = alpha
         self.param_groups = self.optimizer.param_groups
@@ -122,7 +138,6 @@ class Lion(Optimizer):
         # Iterate through the parameter groups
         for group in self.param_groups:
             for p in group["params"]:
-
                 # Skip if the gradients are empty
                 if p.grad is None:
                     continue

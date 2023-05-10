@@ -158,7 +158,6 @@ def masked_fc_adjmat(
 
     # No gradients should be used in this step
     with T.no_grad():
-
         # Initialise a self distance matrix
         allow_self = allow_self and mask_b is None
         if mask_b is None:
@@ -194,10 +193,8 @@ def knn(
 
     # No gradients should be used in this step
     with T.no_grad():
-
         # If the size of the point cloud is smaller than k+1
         if distmat.shape[-1] - 1 <= k_val:
-
             # Simply return where the distance matrix is not infinite
             return distmat < distmat + EPS  # (Inf < Inf + EPS) is always false!
 

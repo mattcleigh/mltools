@@ -178,7 +178,6 @@ class EdgeBuilder(nn.Module):
 
         # Use use the existing edges, replacing the new ones with padded values
         elif self.edge_type == "same":
-
             # Create the new padded edges
             new_edges = T.zeros(
                 (new_adjmat.sum(), graph.edges.shape[-1]),
@@ -279,7 +278,6 @@ class GraphNeuralNetwork(nn.Module):
 
         # The extra blocks
         for layer in range(1, num_blocks):
-
             # Add an edge building layer
             if ebl_every > 0 and layer % ebl_every == 0:
                 self.blocks.append(

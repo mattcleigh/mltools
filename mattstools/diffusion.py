@@ -147,7 +147,6 @@ def ddim_sampler(
     diff_times = T.ones(num_samples, device=model.device)
     next_signal_rates, next_noise_rates = diff_sched(diff_times.view(expanded_shape))
     for step in tqdm(range(n_steps), "DDIM-sampling", leave=False):
-
         # Update with the previous 'next' step
         signal_rates = next_signal_rates
         noise_rates = next_noise_rates
@@ -204,7 +203,6 @@ def euler_maruyama_sampler(
     x_t = initial_noise
     t = T.ones(num_samples, device=model.device)
     for step in tqdm(range(n_steps), "Euler-Maruyama-sampling", leave=False):
-
         # Use the model to get the expected noise
         pred_noises = model(x_t, t, mask, ctxt)
 
@@ -258,7 +256,6 @@ def euler_sampler(
     signal_rates, noise_rates = diff_sched(t.view(expanded_shape))
     x_t = initial_noise * (signal_rates + noise_rates)
     for step in tqdm(range(n_steps), "Euler-sampling", leave=False):
-
         # Take a step using the euler method and the gradient calculated by the ode
         x_t += get_ode_gradient(model, diff_sched, x_t, t, mask, ctxt) * delta_t
         t -= delta_t
@@ -303,7 +300,6 @@ def runge_kutta_sampler(
     x_t = initial_noise
     t = T.ones(num_samples, device=model.device)
     for step in tqdm(range(n_steps), "Runge-Kutta-sampling", leave=False):
-
         k1 = delta_t * (ode_grad(t, x_t))
         k2 = delta_t * (ode_grad((t - delta_t / 2), (x_t + k1 / 2)))
         k3 = delta_t * (ode_grad((t - delta_t / 2), (x_t + k2 / 2)))
