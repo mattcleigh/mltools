@@ -499,10 +499,6 @@ def plot_multi_hists_2(
         return_img: Return a PIL image (will close the figure)
     """
 
-    # TODO Fix the error propagation with the normalisation
-    if do_err and do_norm:
-        print("Warning! Currently error propagation does not work with normaliation!")
-
     # Make the arguments lists for generality
     if not isinstance(data_list, list):
         data_list = [data_list]
