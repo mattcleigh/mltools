@@ -151,7 +151,7 @@ class MultiHeadedAttentionBlock(nn.Module):
         drp: float = 0,
         init_zeros: bool = False,
         do_casual: bool = False,
-        do_layer_norm: bool = True,
+        do_layer_norm: bool = False,
     ) -> None:
         """
         Args:
@@ -163,7 +163,7 @@ class MultiHeadedAttentionBlock(nn.Module):
             do_casual: Casual attention should only be used if the q, k, v are the same
                 Slightly faster matrix multiplication at the beginning
             do_layer_norm: If a layernorm is applied before the output final linear
-                projection
+                projection (Only really needed with deep models)
         """
         super().__init__()
 

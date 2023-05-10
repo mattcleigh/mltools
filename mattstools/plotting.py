@@ -499,6 +499,10 @@ def plot_multi_hists_2(
         return_img: Return a PIL image (will close the figure)
     """
 
+    # TODO Fix the error propagation with the normalisation
+    if do_err and do_norm:
+        print("Warning! Currently error propagation does not work with normaliation!")
+
     # Make the arguments lists for generality
     if not isinstance(data_list, list):
         data_list = [data_list]
@@ -693,7 +697,7 @@ def plot_multi_hists_2(
         else:
             _, ylim2 = axes[0, ax_idx].get_ylim()
             if logy:
-                axes[0, ax_idx].set_ylim(top=10 ** (np.log10(ylim2) * 1.40))
+                axes[0, ax_idx].set_ylim(top=10 ** (np.log10(ylim2) * 1.50))
             else:
                 axes[0, ax_idx].set_ylim(top=ylim2 * 1.35)
         if y_label is not None:
@@ -710,6 +714,10 @@ def plot_multi_hists_2(
                 axes[1, ax_idx].set_ylabel(rat_label)
             else:
                 axes[1, ax_idx].set_ylabel(f"Ratio to {data_labels[0]}")
+
+            # Add a black line for the ratio at y = 1
+            x_min, x_max = axes[1, ax_idx].get_xlim()
+            axes[1, ax_idx].axhline(1, x_min, x_max, color="k", zorder=-99999)
 
         # Extra text
         if extra_text[ax_idx] is not None:
@@ -988,8 +996,8 @@ def plot_multi_hists(
         else:
             _, ylim2 = axes[i, 0].get_ylim()
             if logy:
-                # pad up the ylim (which is in logscale) by 25%
-                ylim2 = 10 ** (np.log10(ylim2) * 1.40)
+                # pad up the ylim (which is in logscale) by 50%
+                ylim2 = 10 ** (np.log10(ylim2) * 1.50)
                 setylim = (1, ylim2)
             else:
                 ylim2 = ylim2 * 1.35

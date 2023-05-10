@@ -68,6 +68,7 @@ class ResNetBlock(nn.Module):
         act: str = "lrlu",
         drp: float = 0,
         nrm_groups: int = 1,
+        nrm_first: bool = True,
     ) -> None:
         """
         args:
@@ -80,6 +81,7 @@ class ResNetBlock(nn.Module):
             act: The activation function to use
             drp: The dropout probability
             nrm_groups: Normalisation groups (1=LayerNorm, c=InstanceNorm)
+            nrm_first: If normalisation should take place fist, don't do inputs
         """
         super().__init__()
 
@@ -93,12 +95,13 @@ class ResNetBlock(nn.Module):
         self.drp = drp
         self.nrm_groups = nrm_groups
         self.has_ctxt = ctxt_dim > 0
+        self.nrm_first = nrm_first
 
         # Create the main layer structure of the network which is split into two parts
         self.first_layers = nn.Sequential(
-            nn.GroupNorm(nrm_groups, inpt_channels),
-            conv_nd(dims, inpt_channels, outp_channels, kernel_size, padding=1),
+            nn.GroupNorm(nrm_groups, inpt_channels) if nrm_first else nn.Identity(),
             get_act(act),
+            conv_nd(dims, inpt_channels, outp_channels, kernel_size, padding=1),
             nn.GroupNorm(nrm_groups, outp_channels),
         )
 
@@ -284,7 +287,7 @@ class DoublingConvNet(nn.Module):
 
         # The first ResNet block changes to the starting channel dimension
         first_config = deepcopy(resnet_config)
-        first_config.nrm_groups = 1
+        first_config.nrm_first = False  # Dont want to normalise our inputs
         self.first_block = ResNetBlock(
             inpt_channels=inpt_channels,
             ctxt_dim=ctxt_dim,
@@ -458,7 +461,7 @@ class UNet(nn.Module):
 
         # The first ResNet block changes to the starting channel dimension
         first_config = deepcopy(resnet_config)
-        first_config.nrm_groups = 1
+        first_config.nrm_first = False  # Dont normalise the inputs
         self.first_block = ResNetBlock(
             inpt_channels=inpt_channels,
             ctxt_dim=emb_ctxt_size,
