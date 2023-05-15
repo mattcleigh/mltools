@@ -570,6 +570,9 @@ class IterativeNormLayer(nn.Module):
         # If the means are set here then the model is "frozen" and not updated
         self.frozen = means is not None
 
+    def __repr__(self):
+        return f"IterativeNormLayer({list(self.means.shape)})"
+
     def __str__(self) -> str:
         return f"IterativeNormLayer(means={self.means.squeeze()}, vars={self.vars.squeeze()})"
 

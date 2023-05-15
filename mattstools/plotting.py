@@ -607,8 +607,8 @@ def plot_multi_hists_2(
             # Manually do the density so that the error can be scaled
             if do_norm:
                 divisor = np.array(np.diff(ax_bins), float) / hist.sum()
-                hist /= divisor
-                hist_err /= divisor
+                hist = hist / divisor
+                hist_err = hist_err / divisor
 
             # Apply the scale factors
             if scale_factors[data_idx] is not None:
