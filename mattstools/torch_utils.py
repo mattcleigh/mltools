@@ -741,3 +741,23 @@ def get_max_cpu_suggest():
 def log_squash(data: T.Tensor) -> T.Tensor:
     """Apply a log squashing function for distributions with high tails."""
     return T.sign(data) * T.log(T.abs(data) + 1)
+
+
+@T.no_grad()
+def ema_param_sync(source: nn.Module, target: nn.Module, ema_decay: float) -> None:
+    """Synchronize the parameters of two modules using exponential moving
+    average (EMA).
+
+    Parameters
+    ----------
+    source : nn.Module
+        The source module whose parameters are used to update the target module.
+    target : nn.Module
+        The target module whose parameters are updated.
+    ema_decay : float
+        The decay rate for the EMA update.
+    """
+    for s_params, t_params in zip(source.parameters(), target.parameters()):
+        t_params.data.copy_(
+            ema_decay * t_params.data + (1.0 - ema_decay) * s_params.data
+        )

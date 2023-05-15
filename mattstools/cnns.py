@@ -7,7 +7,7 @@ import torch as T
 import torch.nn as nn
 from torch.nn.functional import scaled_dot_product_attention
 
-from .modules import DenseNetwork
+from .modules import DenseNetwork, sine_cosine_encoding
 from .torch_utils import get_act
 
 log = logging.getLogger(__name__)
@@ -40,6 +40,48 @@ def avg_pool_nd(dims, *args, **kwargs):
     elif dims == 3:
         return nn.AvgPool3d(*args, **kwargs)
     raise ValueError(f"unsupported dimensions: {dims}")
+
+
+def positionally_encode_patches(inpt: T.Tensor, encoding_dim: int) -> T.Tensor:
+    """Applies positional encoding to a tensor of image patches.
+
+    Parameters
+    ----------
+    inpt : T.Tensor
+        A tensor of shape (B, C, H, W), where B is the batch size,
+        C is the number of channels, H is the height of the image,
+        and W is the width of the image.
+    encoding_dim : int
+        The dimension of the positional encoding to be applied.
+
+    Returns
+    -------
+    T.Tensor
+        A tensor of shape (B, C, H, W), where each patch has been
+        encoded with a vector of length encoding_dim.
+
+    Notes
+    -----
+    The positional encoding is based on sine and cosine functions
+    of different frequencies along the x and y axes. The encoding_dim
+    must be divisible by 2. The first half of the encoding vector
+    corresponds to the x axis, and the second half to the y axis.
+    """
+
+    # Get the values for the positional encodings from the shape of the tensor
+    x_vals = T.linspace(0, 1, inpt.shape[-1], device=inpt.device)
+    y_vals = T.linspace(0, 1, inpt.shape[-2], device=inpt.device)
+
+    # Combine the encodings together into a single shape
+    encodings = T.zeros((1, *inpt.shape[-2:], encoding_dim), device=inpt.device)
+
+    # Get seperate sine/cosine vectors for each dimension
+    dir_dim = encoding_dim // 2
+    encodings[..., :4] = sine_cosine_encoding(x_vals, outp_dim=dir_dim).unsqueeze(-2)
+    encodings[..., 4:] = sine_cosine_encoding(y_vals, outp_dim=dir_dim).unsqueeze(-3)
+
+    # Rotate the dimensions to be B, C, H, W, then expand to match the input batch dim
+    return encodings.transpose(-1, -3).expand(inpt.shape[0], -1, -1, -1)
 
 
 class ResNetBlock(nn.Module):
@@ -169,7 +211,13 @@ class MultiHeadedAttentionBlock(nn.Module):
     of linear projections (same maths, but optimised performance)
     """
 
-    def __init__(self, inpt_channels: int, num_heads: int = 1, nrm_groups: int = 1):
+    def __init__(
+        self,
+        inpt_channels: int,
+        num_heads: int = 1,
+        nrm_groups: int = 1,
+        pos_encoding_dim: int = 0,
+    ):
         super().__init__()
 
         # Ensure that the number of channels is divisible by the number of heads
@@ -179,13 +227,14 @@ class MultiHeadedAttentionBlock(nn.Module):
         self.inpt_channels = inpt_channels
         self.num_heads = num_heads
         self.channels_per_head = inpt_channels // num_heads
+        self.pos_encoding_dim = pos_encoding_dim
 
         # The normalisation layer
         self.norm = nn.GroupNorm(nrm_groups, inpt_channels)
 
         # QKV are calculated using a 1 dimensional convolution with a 1 kernel size
         # This is equivalent to a 2D conv with 1x1 kernel, but generalises to 3D
-        self.qkv = conv_nd(1, inpt_channels, inpt_channels * 3, 1)
+        self.qkv = conv_nd(1, inpt_channels + pos_encoding_dim, inpt_channels * 3, 1)
 
         # The final convolutional layer (initiliased with zeros for stability)
         self.out_conv = zero_module(conv_nd(1, inpt_channels, inpt_channels, 1))
@@ -196,11 +245,21 @@ class MultiHeadedAttentionBlock(nn.Module):
         # Break up the input image shape into the batch, channels, and spacial
         b, c, *spatial = inpt.shape
 
-        # Flatten each image in each channel dimension
-        inpt = inpt.reshape(b, c, -1)
+        # Before flattening, get the positional encodings based on the dimensions
+        if self.pos_encoding_dim:
+            encodings = positionally_encode_patches(inpt, self.pos_encoding_dim)
 
-        # Apply the normalisation and get the qkv embeddings for each channel
-        qkv = self.qkv(self.norm(inpt))
+        # Flatten each image in each channel dimension and normalise
+        inpt = inpt.reshape(b, c, -1)
+        normed = self.norm(inpt)
+
+        # Combine with the already calculated positional encodings
+        if self.pos_encoding_dim:
+            encodings = encodings.reshape(b, self.pos_encoding_dim, -1)
+            normed = T.concat([normed, encodings], dim=-2)
+
+        # Apply get the qkv embeddings for each channel
+        qkv = self.qkv(normed)
         q, k, v = T.chunk(qkv, 3, dim=1)  # Split into the component sequences
 
         # Essentially the images have now all been flattened

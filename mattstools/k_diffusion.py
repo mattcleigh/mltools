@@ -1,7 +1,97 @@
 import math
 
 import torch as T
+import torch.nn as nn
 from pyparsing import Mapping
+
+
+@T.no_grad()
+def multistep_consistency_sampling(
+    model: nn.Module, sigmas: T.Tensor, min_sigma: float, x: T.Tensor, extra_args
+) -> T.Tensor:
+    """Perform multistep consistency sampling from a consistency model.
+
+    Parameters
+    ----------
+    model : callable
+        The consistency model.
+    sigmas : torch.Tensor
+        A sequence of sigma values to iterate through.
+    initial_noise : torch.Tensor
+        The initial noise.
+
+    Returns
+    -------
+    x : torch.Tensor
+        The final sample.
+    """
+    extra_args = extra_args or {}
+    sigma_shape = x.new_ones([x.shape[0], 1])
+
+    x = model(x, sigmas[0] * sigma_shape, **extra_args)
+    for sigma in sigmas:
+        x_t = x + (sigma**2 - min_sigma**2).sqrt() * T.randn_like(x)
+        x = model(x_t, sigma * sigma_shape)
+    return x
+
+
+def gaussian(x: T.Tensor, mu: T.Tensor, sig: T.Tensor) -> T.Tensor:
+    return T.exp(-((x - mu) ** 2) / (2 * sig * sig))
+
+
+def ideal_denoise(noisy_data, data, sigma):
+    gaus_term = gaussian(
+        noisy_data.unsqueeze(1),
+        data.unsqueeze(0),
+        append_dims(sigma, noisy_data.dim() + 1),
+    )
+    numerator = (gaus_term * data.unsqueeze(0)).sum(1)
+    denoised = numerator / (gaus_term.sum(1) + 1e-8)
+
+    return denoised
+
+
+@T.no_grad()
+def one_step_ideal_heun(x, data, sigma_start, sigma_end):
+    """Apply just one step of the heun-solver to get two adjacent points on the
+    PF-ODE."""
+
+    # Denoise the sample, and calculate derivative and the time step
+    denoised = ideal_denoise(x, data, sigma_start)
+    d = (x - denoised) / append_dims(sigma_start, x.dim())
+    dt = append_dims((sigma_end - sigma_start), x.dim())
+    x_2 = x + d * dt
+
+    # Heun's 2nd order method
+    # denoised_2 = ideal_denoise(x_2, data, sigma_end)
+    # d_2 = (x_2 - denoised_2) / append_dims(sigma_end, x.dim())
+    # d_prime = (d + d_2) / 2
+    # x = x + d_prime * dt
+
+    return x_2
+
+
+@T.no_grad()
+def one_step_heun(model, x, sigma_start, sigma_end, extra_args):
+    """Apply just one step of the heun-solver to get two adjacent points on the
+    PF-ODE."""
+
+    # Initial setup
+    extra_args = extra_args or {}
+
+    # Denoise the sample, and calculate derivative and the time step
+    denoised = model(x, sigma_start, **extra_args)
+    d = (x - denoised) / append_dims(sigma_start, x.dim())
+    dt = append_dims((sigma_end - sigma_start), x.dim())
+    x_2 = x + d * dt
+
+    # Heun's 2nd order method
+    denoised_2 = model(x_2, sigma_end, **extra_args)
+    d_2 = (x_2 - denoised_2) / append_dims(sigma_end, x.dim())
+    d_prime = (d + d_2) / 2
+    x = x + d_prime * dt
+
+    return x
 
 
 def append_dims(x: T.Tensor, target_dims: int) -> T.Tensor:
