@@ -35,15 +35,24 @@ def multistep_consistency_sampling(
     return x
 
 
-def gaussian(x: T.Tensor, mu: T.Tensor, sig: T.Tensor) -> T.Tensor:
-    return T.exp(-((x - mu) ** 2) / (2 * sig * sig))
+def logsumexp(x, do_max: bool = True):
+    c = x.max() if do_max else x.min()
+    return c + T.log(T.sum(T.exp(x - c)))
+
+
+def shift_gaussian(x: T.Tensor, mu: T.Tensor, var: T.Tensor) -> T.Tensor:
+    diff = (x - mu) ** 2
+    diff = diff.sum(dim=tuple(range(2, diff.dim())), keepdims=True)
+    diff /= -2 * var
+    diff_min = T.max(diff, dim=1, keepdim=True).values
+    return T.exp(diff - diff_min)
 
 
 def ideal_denoise(noisy_data, data, sigma):
-    gaus_term = gaussian(
+    gaus_term = shift_gaussian(
         noisy_data.unsqueeze(1),
         data.unsqueeze(0),
-        append_dims(sigma, noisy_data.dim() + 1),
+        append_dims(sigma, noisy_data.dim() + 1) ** 2,
     )
     numerator = (gaus_term * data.unsqueeze(0)).sum(1)
     denoised = numerator / (gaus_term.sum(1) + 1e-8)
