@@ -35,18 +35,18 @@ def multistep_consistency_sampling(
     return x
 
 
-def gaussian(x: T.Tensor, mu: T.Tensor, sig: T.Tensor) -> T.Tensor:
-    return T.exp(-((x - mu) ** 2) / (2 * sig * sig))
+def gaussian(x: T.Tensor, mu: T.Tensor, var: T.Tensor) -> T.Tensor:
+    return T.exp(-((x - mu) ** 2) / (2 * var))
 
 
 def ideal_denoise(noisy_data, data, sigma):
     gaus_term = gaussian(
         noisy_data.unsqueeze(1),
         data.unsqueeze(0),
-        append_dims(sigma, noisy_data.dim() + 1),
+        append_dims(sigma, noisy_data.dim() + 1) ** 2,
     )
     numerator = (gaus_term * data.unsqueeze(0)).sum(1)
-    denoised = numerator / (gaus_term.sum(1) + 1e-8)
+    denoised = numerator / gaus_term.sum(1)
 
     return denoised
 
@@ -168,7 +168,6 @@ def sample_heun(
 
     # Start iterating through each timestep
     for i in range(num_steps):
-
         # Denoise the sample, and calculate derivative and the time step
         denoised = model(x, sigmas[i] * sigma_shape, **extra_args)
         d = (x - denoised) / sigmas[i]
@@ -254,7 +253,6 @@ def sample_stochastic_heun(
 
     # Start iterating through each timestep
     for i in range(num_steps):
-
         # Get gamma factor (time perturbation)
         gamma = (
             min(s_churn / num_steps, math.sqrt(2.0) - 1)

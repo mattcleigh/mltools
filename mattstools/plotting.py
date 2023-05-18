@@ -451,6 +451,7 @@ def plot_multi_hists_2(
     logy: bool = False,
     y_label: Optional[str] = None,
     ylim: Optional[list] = None,
+    ypad: float = 1.0,
     rat_ylim: tuple = (0, 2),
     rat_label: Optional[str] = None,
     scale: int = 5,
@@ -484,6 +485,7 @@ def plot_multi_hists_2(
         logy: If we should use the log in the y-axis
         y_label: Label for the y axis of the plots
         ylim: The y limits for all plots
+        ypad: The amount by which to pad the whitespace above the plots
         rat_ylim: The y limits of the ratio plots
         rat_label: The label for the ratio plot
         scale: The size in inches for each subplot
@@ -699,9 +701,9 @@ def plot_multi_hists_2(
         else:
             _, ylim2 = axes[0, ax_idx].get_ylim()
             if logy:
-                axes[0, ax_idx].set_ylim(top=10 ** (np.log10(ylim2) * 1.50))
+                axes[0, ax_idx].set_ylim(top=10 ** (np.log10(ylim2) * ypad))
             else:
-                axes[0, ax_idx].set_ylim(top=ylim2 * 1.35)
+                axes[0, ax_idx].set_ylim(top=ylim2 * ypad)
         if y_label is not None:
             axes[0, ax_idx].set_ylabel(y_label)
         elif do_norm:
@@ -999,7 +1001,7 @@ def plot_multi_hists(
             _, ylim2 = axes[i, 0].get_ylim()
             if logy:
                 # pad up the ylim (which is in logscale) by 50%
-                ylim2 = 10 ** (np.log10(ylim2) * 1.50)
+                ylim2 = 10 ** (np.log10(ylim2) * 1.35)
                 setylim = (1, ylim2)
             else:
                 ylim2 = ylim2 * 1.35

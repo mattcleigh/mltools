@@ -568,7 +568,7 @@ class IterativeNormLayer(nn.Module):
         )
 
         # If the means are set here then the model is "frozen" and not updated
-        self.frozen = means is not None
+        self.frozen = means is not None or self.n > self.max_n
 
     def __repr__(self):
         return f"IterativeNormLayer({list(self.means.shape)})"
@@ -665,7 +665,6 @@ class SineCosineEncoding:
         max_value: float = 1.0,
         frequency_scaling: str = "exponential",
     ) -> None:
-
         assert outp_dim % 2 == 0
         self.outp_dim = outp_dim
         self.min_value = min_value
