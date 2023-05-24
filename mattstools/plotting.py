@@ -711,6 +711,11 @@ def plot_multi_hists_2(
             else:
                 axes[1, ax_idx].set_ylabel(f"Ratio to {data_labels[0]}")
 
+            # Ratio X line:
+            axes[1, ax_idx].hlines(
+                1, *axes[1, ax_idx].get_xlim(), colors="k", zorder=-9999
+            )
+
         # Extra text
         if extra_text[ax_idx] is not None:
             axes[0, ax_idx].text(**extra_text[ax_idx])

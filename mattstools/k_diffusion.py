@@ -153,7 +153,7 @@ def sample_stochastic_heun(
     - Equivalent to the deterministic case if s_churn = 0
     - Alg. 2 from the https://arxiv.org/pdf/2206.00364.pdf
     - Hard coded such that t = sigma and s(t) = 1
-    - Default s values are taken from emiprical results in the paper
+    - Default s values are taken from empirical results in the paper
     """
 
     # Initial setup
