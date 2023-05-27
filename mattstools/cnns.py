@@ -1,15 +1,13 @@
 import logging
-import math
-from copy import deepcopy
 from typing import Mapping, Optional
 
 import numpy as np
 import torch as T
 import torch.nn as nn
-from torch.nn.functional import scaled_dot_product_attention
+from torch.nn.functional import group_norm, scaled_dot_product_attention
 
 from .modules import DenseNetwork, sine_cosine_encoding
-from .torch_utils import get_act
+from .torch_utils import append_dims, get_act
 
 log = logging.getLogger(__name__)
 
@@ -87,20 +85,64 @@ def positionally_encode_patches(inpt_shape: T.Tensor, encoding_dim: int) -> T.Te
     return encodings.transpose(-1, -3)
 
 
-class ResNetBlock(nn.Module):
-    """A residual convolutional block that can optionally change the number of
-    channels. Can also take in some context tensor.
+class ConditionedModule(nn.Module):
+    pass
 
-    Does not resize the spacial dimensions of the input image, all convolutions are
-    3x3 kernals with stride 1, padding 1
 
+class ConditionedSequential(nn.Sequential):
+    def forward(self, input, ctxt):
+        for module in self:
+            if isinstance(module, ConditionedModule):
+                input = module(input, ctxt)
+            else:
+                input = module(input)
+        return input
+
+
+class AdaGN(ConditionedModule):
+    """A module that implements an adaptive group normalization layer."""
+
+    def __init__(
+        self,
+        ctxt_dim: int,
+        c_out: int,
+        nrm_groups: int,
+        eps=1e-5,
+    ) -> None:
+        """
+        Parameters
+        ----------
+        ctxt_dim : int
+            The dimension of the context tensor.
+        c_out : int
+            The number of output channels.
+        nrm_groups : int
+            The number of groups for group normalization.
+        eps : float, optional
+            A small value added to the denominator for numerical stability.
+            Default: 1e-5.
+        """
+        super().__init__()
+        self.num_groups = nrm_groups
+        self.eps = eps
+        self.layer = nn.Linear(ctxt_dim, c_out * 2)
+
+    def forward(self, input: T.Tensor, ctxt: T.Tensor) -> T.Tensor:
+        scale, shift = self.layer(ctxt).chunk(2, dim=-1)
+        scale = append_dims(scale, input.ndim)
+        shift = append_dims(shift, input.ndim)
+        input = group_norm(input, self.num_groups, eps=self.eps)
+        return T.addcmul(shift, input, scale + 1)
+
+
+class ResNetBlock(ConditionedModule):
+    """A residual convolutional block.
+
+    Can change channel dimensions but not spacial.
+    All convolutions are stride 1 with padding 1.
+    May also take in some context tensor which is injected using AdaGN.
     Forward pass applies the following:
-        (GroupNorm->Conv->Act->Drop) x 2 + skip_connection
-
-    Contextual information is added by taking a linear projection of the context tensor
-    to the number of channels and using it to scale and shift the image
-    (broadcasted across the spacial dimensions)
-    This takes place after the convolutional layers
+    - GroupNorm->Act->Conv->AdaGN->Act->Drop->0Conv + skip_connection
     """
 
     def __init__(
@@ -113,51 +155,47 @@ class ResNetBlock(nn.Module):
         act: str = "lrlu",
         drp: float = 0,
         nrm_groups: int = 1,
-        nrm_first: bool = True,
-        act_first: bool = True,
     ) -> None:
         """
-        args:
-            inpt_channels: the number of input channels.
-        kwargs:
-            ctxt_dim: The dimension of the conditioning tensor
-            outp_channels: The number of output channels, if diff from input
-            kernel_size: The size of the convolutional kernels
-            dims: The dimensions of the signal, 1D, 2D, or 3D
-            act: The activation function to use
-            drp: The dropout probability
-            nrm_groups: Normalisation groups (1=LayerNorm, c=InstanceNorm)
-            nrm_first: If normalisation should take place fist, don't do inputs
-            act_first: If an activation should take place fist, don't do inputs
+        Parameters
+        ----------
+        inpt_channels : int
+            The number of input channels.
+        ctxt_dim : int, optional
+            The dimension of the context tensor. Default: 0.
+        outp_channels : int, optional
+            The number of output channels. Default: None.
+        kernel_size : int, optional
+            The size of the convolution kernel. Default: 3.
+        dims : int, optional
+            The number of dimensions (2 is an image). Default: 2.
+        act : str, optional
+            The activation function to use. Default: "lrlu".
+        drp : float, optional
+            The dropout rate. Default: 0.
+        nrm_groups : int, optional
+            The number of groups for group normalization. Default: 1.
         """
         super().__init__()
 
         # Class attributes
         self.inpt_channels = inpt_channels
-        self.ctxt_dim = ctxt_dim
         self.outp_channels = outp_channels or inpt_channels
-        self.kernel_size = kernel_size
-        self.dims = dims
-        self.act = act
-        self.drp = drp
-        self.nrm_groups = nrm_groups
-        self.has_ctxt = ctxt_dim > 0
-        self.nrm_first = nrm_first
+        self.ctxt_dim = ctxt_dim
 
         # Create the main layer structure of the network which is split into two parts
-        self.first_layers = nn.Sequential(
-            nn.GroupNorm(nrm_groups, inpt_channels) if nrm_first else nn.Identity(),
-            get_act(act) if act_first else nn.Identity(),
-            conv_nd(dims, inpt_channels, outp_channels, kernel_size, padding=1),
-            nn.GroupNorm(nrm_groups, outp_channels),
-        )
-
-        self.second_layers = nn.Sequential(
+        self.layers = ConditionedSequential(
+            nn.GroupNorm(nrm_groups, inpt_channels),
             get_act(act),
-            nn.Dropout(drp),  # Dropout in second layer only
+            conv_nd(dims, inpt_channels, outp_channels, kernel_size, padding=1),
+            AdaGN(ctxt_dim, outp_channels, nrm_groups)
+            if ctxt_dim
+            else nn.GroupNorm(nrm_groups, outp_channels),
+            get_act(act),
+            nn.Dropout(drp),
             zero_module(
-                conv_nd(dims, outp_channels, outp_channels, 3, padding=1)
-            ),  # Start as zeros
+                conv_nd(dims, outp_channels, outp_channels, kernel_size, padding=1)
+            ),
         )
 
         # Create the skip connection, using a 1x1 conv to change channel size
@@ -167,43 +205,11 @@ class ResNetBlock(nn.Module):
             else conv_nd(dims, inpt_channels, outp_channels, 1)
         )
 
-        # The embedding layers for the contextual information
-        if self.has_ctxt:
-            self.ctxt_layers = nn.Sequential(
-                get_act(act), nn.Linear(ctxt_dim, 2 * self.outp_channels)
-            )
-
     def forward(self, input: T.Tensor, ctxt: T.Tensor = None) -> T.Tensor:
-        """Apply the block to a Tensor with optional conditioning
-        args:
-            input: The import tensor with shape [N x C x ...]
-        kwargs:
-            ctxt: The optional context tensor with shape [N x ctxt_dim]
-        """
-
-        # Pass through the first layers of the module
-        output = self.first_layers(input)
-
-        # Introduce the contextual information
-        if self.has_ctxt:
-            # Check that the context tensor is present
-            if ctxt is None:
-                raise ValueError("ResNet was expecting a ctxt input but none given")
-
-            # Pass through the layers, size for broadcasting and split int scale/shift
-            ctxt = self.ctxt_layers(ctxt)
-            ctxt = ctxt.view(ctxt.size() + self.dims * (1,))
-            scale, shift = ctxt.chunk(2, 1)
-            output = (1 + scale) * output + shift  # scale+1 so doesnt kill on init
-
-        # Pass through the second layers of the module
-        output = self.second_layers(output)
-
-        # Return with the skip connection
-        return output + self.skip_connection(input)
+        return self.layers(input, ctxt) + self.skip_connection(input)
 
 
-class MultiHeadedAttentionBlock(nn.Module):
+class MultiHeadedAttentionBlock(ConditionedModule):
     """A multi-headed self attention block that allows spatial positions to
     attend to each other.
 
@@ -220,10 +226,11 @@ class MultiHeadedAttentionBlock(nn.Module):
         self,
         inpt_channels: int,
         inpt_shape: tuple,
+        ctxt_dim: int = 0,
         num_heads: int = 1,
         nrm_groups: int = 1,
-        do_pos_encoding: bool = False,
-    ):
+        do_pos_encoding: bool = True,
+    ) -> None:
         super().__init__()
 
         # Ensure that the number of channels is divisible by the number of heads
@@ -232,67 +239,48 @@ class MultiHeadedAttentionBlock(nn.Module):
         # Class attributes
         self.inpt_channels = inpt_channels
         self.inpt_shape = inpt_shape
+        self.ctxt_dim = ctxt_dim
         self.num_heads = num_heads
-        self.channels_per_head = inpt_channels // num_heads
         self.do_pos_encoding = do_pos_encoding
 
-        # The normalisation layer
-        self.norm = nn.GroupNorm(nrm_groups, inpt_channels)
+        # The learnable positional encodings which are fixed
+        self.pos_enc = nn.Parameter(T.randn(inpt_channels, *inpt_shape))
 
-        # The positional encodings which are fixed
-        if do_pos_encoding:
-            if len(inpt_shape) != 2:
-                raise ValueError("Positional encoding is only available for 2D images")
-            self.pos_enc = nn.Parameter(
-                T.randn(inpt_channels, *inpt_shape) / math.sqrt(inpt_channels)
-            )
+        # The layers
+        self.norm = ConditionedSequential(
+            nn.GroupNorm(nrm_groups, inpt_channels)
+            if ctxt_dim
+            else AdaGN(ctxt_dim, inpt_channels, nrm_groups)
+        )
+        self.qkv = conv_nd(len(inpt_shape), inpt_channels, inpt_channels * 3, 1)
+        self.out_conv = zero_module(
+            conv_nd(len(inpt_shape), inpt_channels, inpt_channels, 1)
+        )
 
-        # QKV are calculated using a 1 dimensional convolution with a 1 kernel size
-        # This is equivalent to a 2D conv with 1x1 kernel, but generalises to 3D
-        self.qkv = conv_nd(1, inpt_channels, inpt_channels * 3, 1)
-
-        # The final convolutional layer (initiliased with zeros for stability)
-        self.out_conv = zero_module(conv_nd(1, inpt_channels, inpt_channels, 1))
-
-    def forward(self, inpt: T.Tensor, _ctxt: T.Tensor = None) -> T.Tensor:
+    def forward(self, inpt: T.Tensor, ctxt: T.Tensor = None) -> T.Tensor:
         """Apply the model the message passing, context tensor is not used."""
-
-        # Break up the input image shape into the batch, channels, and spacial
         b, c, *spatial = inpt.shape
 
-        # Before flattening, get the positional encodings based on the dimensions
+        # Pass through the layers to encode and get the qkv values
+        qkv = inpt
         if self.do_pos_encoding:
-            inpt = inpt + self.pos_enc.unsqueeze(0)
+            qkv = qkv + self.pos_enc.unsqueeze(0)
+        if self.ctxt_dim:
+            qkv = self.norm(inpt, ctxt)
+        qkv = self.qkv(qkv)
 
-        # Flatten each image in each channel dimension and normalise
-        inpt = inpt.reshape(b, c, -1)
-        normed = self.norm(inpt)
-
-        # Apply get the qkv embeddings for each channel
-        qkv = self.qkv(normed)
+        # Flatten out the spacial dimensions them swap to get: B, 3N, HxW, h_dim
+        qkv = qkv.view(b, self.num_heads * 3, c // self.num_heads, -1).transpose(-1, -2)
         q, k, v = T.chunk(qkv, 3, dim=1)  # Split into the component sequences
-
-        # Essentially the images have now all been flattened
-        # This means that we now take the image to be a sequence
-        # Currently these tensors are of shape [b, feat*heads, seq]
-        # Intermediate shape will be [b, head, feat, seq]
-        # For the attention operation we need them to be in [b, heads, seq, feat]
-        shape = (b, self.num_heads, self.channels_per_head, -1)
-        q = q.view(shape).transpose(-1, -2).contiguous()
-        k = k.view(shape).transpose(-1, -2).contiguous()
-        v = v.view(shape).transpose(-1, -2).contiguous()
 
         # Now we can use the attention operation from the transformers package
         a_out = scaled_dot_product_attention(q, k, v)
 
-        # Concatenate the all of the heads together to get shape: b,f,seq
-        a_out = a_out.transpose(-1, -2).contiguous().view(b, self.inpt_channels, -1)
-
-        # Pass through the final 1x1 convolution layer
-        a_out = self.out_conv(a_out)
+        # Concatenate the all of the heads together to get back to: B, c, H, W
+        a_out = a_out.transpose(-1, -2).contiguous().view(b, c, *spatial)
 
         # Apply redidual update and bring back spacial dimensions
-        return (a_out + inpt).view(b, -1, *spatial)
+        return inpt + self.out_conv(a_out)
 
 
 class DoublingConvNet(nn.Module):
@@ -313,6 +301,8 @@ class DoublingConvNet(nn.Module):
         outp_dim: int,
         ctxt_dim: int = 0,
         min_size: int = 2,
+        max_depth: int = 8,
+        n_blocks_per_layer: int = 1,
         attn_below: int = 8,
         start_channels: int = 32,
         max_channels: int = 256,
@@ -320,21 +310,9 @@ class DoublingConvNet(nn.Module):
         attn_config: dict = None,
         dense_config: dict = None,
     ) -> None:
-        """
-        args:
-            inpt_size: Spacial dimensions of the inputs
-            inpt_channels: Number of channels in the inputs
-            outp_dim: Number of output featurs
-            ctxt_dim: Size of the contextual tensor
-            min_size: The smallest spacial dimensions to reach before flattening
-            attn_below: Include attention below this dimension
-            resnet_config: Kwargs for the ResNetBlocks
-            attn_config: Kwargs for the MultiHeadedAttention block
-            dense_config: Kwargs for the dense network
-        """
         super().__init__()
 
-        # Save dict defaults
+        # Safe dict defaults
         resnet_config = resnet_config or {}
         attn_config = attn_config or {}
         dense_config = dense_config or {}
@@ -342,48 +320,39 @@ class DoublingConvNet(nn.Module):
         # Class attributes
         self.inpt_size = inpt_size
         self.inpt_channels = inpt_channels
-        self.ctxt_dim = ctxt_dim
         self.outp_dim = outp_dim
-        self.min_size = min_size
-        self.attn_below = attn_below
-        self.start_channels = start_channels
-        self.max_channels = max_channels
-        self.dims = len(inpt_size)
+        self.ctxt_dim = ctxt_dim
 
         # The downsampling layer (not learnable)
+        dims = len(inpt_size)
         stride = 2 if self.dims != 3 else (2, 2, 2)
-        self.down_sample = avg_pool_nd(self.dims, kernel_size=stride, stride=stride)
+        self.down_sample = avg_pool_nd(dims, kernel_size=stride, stride=stride)
 
-        # The first ResNet block changes to the starting channel dimension
-        first_config = deepcopy(resnet_config)
-        first_config.nrm_first = False  # Dont want to normalise our inputs
-        first_config.act_first = False  # Dont apply activation on inputs
-        self.first_block = ResNetBlock(
-            inpt_channels=inpt_channels,
-            ctxt_dim=ctxt_dim,
-            outp_channels=start_channels,
-            **first_config,
-        )
+        # The first conv layer sets up the starting channel size
+        self.first_block = conv_nd(inpt_channels, start_channels, 1)
 
         # Keep track of the spacial dimensions for each input and output layer
         inp_size = np.array(inpt_size)
+        out_size = inp_size // 2
         inp_c = start_channels
         out_c = start_channels * 2
 
         # Start creating the levels (should exit but max 100 for safety)
         resnet_blocks = []
-        for _ in range(100):
+        for depth in range(max_depth):
             lvl_layers = []
 
-            # Add the resnet block
-            lvl_layers.append(
-                ResNetBlock(
-                    inpt_channels=inp_c,
-                    ctxt_dim=ctxt_dim,
-                    outp_channels=out_c,
-                    **resnet_config,
+            # Add the resnet blocks
+            for j in range(n_blocks_per_layer):
+                lvl_layers.append(
+                    ResNetBlock(
+                        inpt_channels=inp_c if j == 0 else out_c,
+                        ctxt_dim=ctxt_dim,
+                        outp_channels=out_c,
+                        dims=dims,
+                        **resnet_config,
+                    )
                 )
-            )
 
             # Add an optional attention block if we downsampled enough
             if max(inpt_size) <= attn_below:
@@ -397,20 +366,21 @@ class DoublingConvNet(nn.Module):
             resnet_blocks.append(nn.ModuleList(lvl_layers))
 
             # Exit if the next iteration would lead too small spacial dimensions
-            if min(inp_size) // 2 <= min_size:
+            if min(out_size) // 2 < min_size:
                 break
 
             # Update the dimensions for the next iteration
-            inp_size = inp_size // 2  # Halve the spacial dimensions
+            inp_size = out_size
+            out_size = out_size // 2  # Halve the spacial dims
             inp_c = out_c
-            out_c = min(out_c * 2, max_channels)  # Double the channels
+            out_c = min(out_c * 2, max_channels)  # Double the channels until max
 
         # Combine layers into a module list
         self.resnet_blocks = nn.ModuleList(resnet_blocks)
 
         # Create the dense network
         self.dense = DenseNetwork(
-            inpt_dim=np.prod(inp_size // 2) * out_c,
+            inpt_dim=np.prod(out_size) * out_c,
             outp_dim=outp_dim,
             ctxt_dim=ctxt_dim,
             **dense_config,
@@ -452,6 +422,8 @@ class UNet(nn.Module):
         outp_channels: int,
         ctxt_dim: int = 0,
         min_size: int = 8,
+        max_depth: int = 8,
+        n_blocks_per_layer: int = 1,
         attn_below: int = 8,
         start_channels: int = 32,
         max_channels: int = 128,
@@ -460,64 +432,27 @@ class UNet(nn.Module):
         attn_config: Optional[Mapping] = None,
         ctxt_embed_config: Optional[Mapping] = None,
     ) -> None:
-        """
-        Parameters
-        ----------
-        inpt_size : list
-            The spacial dimensions of the input image (height, width).
-        inpt_channels : int
-            The number of channels in the input image.
-        outp_channels : int
-            The number of desired output channels.
-        ctxt_dim : int, optional
-            The dimensionality of the contextual input, by default 0.
-        min_size : int, optional
-            The minimum spacial dimension allowed, by default 8.
-        attn_below : int, optional
-            The spacial dimension below (incl) which attention is applied, by default 8.
-        start_channels : int, optional
-            The number of channels in the first convolutional block, by default 32.
-        max_channels : int, optional
-            The maximum number of channels in any convolutional block,
-            by default 128.
-        zero_out : bool, optional
-            Whether to use a final zero init conv layer after the last resnet block,
-            by default False.
-        resnet_config : Optional[Mapping], optional
-            A dictionary of configurations to pass to the ResNet blocks,
-            by default None.
-        attn_config : Optional[Mapping], optional
-            A dictionary of configurations to pass to the attention blocks,
-            by default None.
-        ctxt_embed_config : Optional[Mapping], optional
-            A dictionary of configurations to pass to the context embedding network,
-            by default None.
-        """
         super().__init__()
 
         # Save dict defaults (these are modified)
-        resnet_config = deepcopy(resnet_config) or {}
-        attn_config = deepcopy(attn_config) or {}
-        ctxt_embed_config = deepcopy(ctxt_embed_config) or {}
+        resnet_config = resnet_config or {}
+        attn_config = attn_config or {}
+        ctxt_embed_config = ctxt_embed_config or {}
 
         # Class attributes
         self.inpt_size = inpt_size
         self.inpt_channels = inpt_channels
         self.outp_channels = outp_channels
         self.ctxt_dim = ctxt_dim
-        self.min_size = min_size
-        self.attn_below = attn_below
-        self.start_channels = start_channels
-        self.max_channels = max_channels
-        self.dims = len(inpt_size)
-        self.has_ctxt = ctxt_dim > 0
-        self.zero_out = zero_out
 
-        # Add the dimensions to the resnet_config
-        resnet_config.dims = self.dims
+        # The downsampling layer and upscaling layers (not learnable)
+        dims = len(inpt_size)
+        stride = 2 if self.dims != 3 else (2, 2, 2)
+        self.down_sample = avg_pool_nd(dims, kernel_size=stride, stride=stride)
+        self.up_sample = nn.Upsample(scale_factor=2)
 
         # If there is a context input, have a network to embed it
-        if self.has_ctxt:
+        if ctxt_dim:
             self.context_embedder = DenseNetwork(
                 inpt_dim=ctxt_dim,
                 **ctxt_embed_config,
@@ -526,41 +461,33 @@ class UNet(nn.Module):
         else:
             emb_ctxt_size = 0
 
-        # The downsampling layer and upscaling layers (not learnable)
-        stride = 2 if self.dims != 3 else (2, 2, 2)
-        self.down_sample = avg_pool_nd(self.dims, kernel_size=stride, stride=stride)
-        self.up_sample = nn.Upsample(scale_factor=2)
-
-        # The first ResNet block changes to the starting channel dimension
-        first_config = deepcopy(resnet_config)
-        first_config.nrm_first = False  # Dont normalise the inputs
-        first_config.act_first = False  # Dont apply activation on the inputs
-        self.first_block = ResNetBlock(
-            inpt_channels=inpt_channels,
-            ctxt_dim=emb_ctxt_size,
-            outp_channels=start_channels,
-            **first_config,
-        )
+        # The first and last conv layer sets up the starting channel size
+        self.first_block = conv_nd(inpt_channels, start_channels, 1)
+        self.last_block = conv_nd(start_channels, outp_channels, 1)
+        if zero_out:
+            self.last_block = zero_module(self.last_block)
 
         # Keep track of the spacial dimensions for each input and output layer
         inp_size = [np.array(inpt_size)]
+        out_size = [np.array(inpt_size) // 2]
         inp_c = [start_channels]
         out_c = [start_channels * 2]
 
         # The encoder blocks are ResNet->(attn)->Downsample
         encoder_blocks = []
-        for _ in range(100):
+        for depth in range(max_depth):
             lvl_layers = []
 
-            # Add the resnet block
-            lvl_layers.append(
-                ResNetBlock(
-                    inpt_channels=inp_c[-1],
-                    ctxt_dim=emb_ctxt_size,
-                    outp_channels=out_c[-1],
-                    **resnet_config,
+            # Add the resnet blocks
+            for j in range(n_blocks_per_layer):
+                lvl_layers.append(
+                    ResNetBlock(
+                        inpt_channels=inp_c[-1] if j == 0 else out_c[-1],
+                        outp_channels=out_c[-1],
+                        ctxt_dim=emb_ctxt_size,
+                        **resnet_config,
+                    )
                 )
-            )
 
             # Add an optional attention block if we downsampled enough
             if max(inp_size[-1]) <= attn_below:
@@ -574,11 +501,12 @@ class UNet(nn.Module):
             encoder_blocks.append(nn.ModuleList(lvl_layers))
 
             # Exit if the next it would lead an output with small spacial dimensions
-            if min(inp_size[-1]) // 2 <= min_size:
+            if min(out_size[-1]) // 2 < min_size:
                 break
 
             # Update the dimensions for the NEXT iteration
-            inp_size.append(inp_size[-1] // 2)  # Halve the spacial dimensions
+            inp_size.append(out_size[-1])
+            out_size.append(out_size[-1] // 2)  # Halve the spacial dimensions
             inp_c.append(out_c[-1])
             out_c.append(min(out_c[-1] * 2, max_channels))  # Double the channels
 
@@ -590,17 +518,17 @@ class UNet(nn.Module):
             [
                 ResNetBlock(
                     inpt_channels=out_c[-1],
-                    ctxt_dim=emb_ctxt_size,
                     outp_channels=out_c[-1],
+                    ctxt_dim=emb_ctxt_size,
                     **resnet_config,
                 ),
                 MultiHeadedAttentionBlock(
-                    inpt_channels=out_c[-1], inpt_shape=inp_size[-1] // 2, **attn_config
+                    inpt_channels=out_c[-1], inpt_shape=out_size[-1], **attn_config
                 ),
                 ResNetBlock(
                     inpt_channels=out_c[-1],
-                    ctxt_dim=emb_ctxt_size,
                     outp_channels=out_c[-1],
+                    ctxt_dim=emb_ctxt_size,
                     **resnet_config,
                 ),
             ]
@@ -608,24 +536,27 @@ class UNet(nn.Module):
 
         # Loop in reverse to create the decoder blocks
         decoder_blocks = []
-        for i in range(1, len(out_c) + 1):
+        for depth in range(len(out_c) - 1, -1, -1):
             lvl_layers = []
 
-            # Add the resnet block
-            lvl_layers.append(
-                ResNetBlock(
-                    inpt_channels=out_c[-i] * 2,  # Concatenates across the unet
-                    ctxt_dim=emb_ctxt_size,
-                    outp_channels=inp_c[-i],
-                    **resnet_config,
+            # Add the resnet blocks
+            for j in range(n_blocks_per_layer):
+                lvl_layers.append(
+                    ResNetBlock(
+                        inpt_channels=out_c[depth] * 2 if j == 0 else inp_c[depth],
+                        outp_channels=inp_c[depth],
+                        ctxt_dim=emb_ctxt_size,
+                        **resnet_config,
+                    )
                 )
-            )
 
             # Add the attention layer at the appropriate levels
-            if max(inp_size[-i]) <= attn_below:
+            if max(inp_size[depth]) < attn_below:
                 lvl_layers.append(
                     MultiHeadedAttentionBlock(
-                        inpt_channels=inp_c[-i], inpt_shape=inp_size[-i], **attn_config
+                        inpt_channels=inp_c[depth],
+                        inpt_shape=inp_size[depth],
+                        **attn_config,
                     )
                 )
 
@@ -633,22 +564,6 @@ class UNet(nn.Module):
             decoder_blocks.append(nn.ModuleList(lvl_layers))
 
         self.decoder_blocks = nn.ModuleList(decoder_blocks)
-
-        # Final block in maps to the number of output channels
-        last_config = deepcopy(resnet_config)
-        last_config.nrm_groups = 1
-        last_config.drp = 0  # No dropout on final block! These are the outputs!
-        self.last_block = ResNetBlock(
-            inpt_channels=start_channels,
-            ctxt_dim=emb_ctxt_size,
-            outp_channels=outp_channels,
-            **last_config,
-        )
-
-        if self.zero_out:
-            self.zero_block = zero_module(
-                conv_nd(2, outp_channels, outp_channels, 3, padding=1)
-            )
 
     def forward(self, inpt: T.Tensor, ctxt: T.Tensor = None):
         """Forward pass of the network."""
@@ -665,7 +580,7 @@ class UNet(nn.Module):
         ctxt = self.context_embedder(ctxt)
 
         # Pass through the first convolution layer to embed the channel dimension
-        inpt = self.first_block(inpt, ctxt)
+        inpt = self.first_block(inpt)
 
         # Pass through the encoder
         dec_outs = []
@@ -687,10 +602,6 @@ class UNet(nn.Module):
                 inpt = layer(inpt, ctxt)
 
         # Pass through the final layer
-        inpt = self.last_block(inpt, ctxt)
-
-        # Pass through the final output layer to ensure zero outs
-        if self.zero_out:
-            inpt = self.zero_block(inpt)
+        inpt = self.last_block(inpt)
 
         return inpt

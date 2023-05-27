@@ -26,6 +26,15 @@ from .schedulers import CyclicWithWarmup, LinearWarmupRootDecay, WarmupToConstan
 ONNX_SAFE = False
 
 
+def append_dims(x: T.Tensor, target_dims: int) -> T.Tensor:
+    """Appends dimensions of 1 to the end of a tensor until it has target_dims
+    dimensions."""
+    dim_diff = target_dims - x.dim()
+    if dim_diff < 0:
+        raise ValueError(f"x has more dims ({x.ndim}) than target ({target_dims})")
+    return x[(...,) + (None,) * dim_diff]  # x.view(*x.shape, *dim_diff * (1,))
+
+
 def dtype_lookup(dtype: Any) -> T.dtype:
     """Function to return a torch dtype when strings dont work."""
     return {
