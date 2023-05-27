@@ -4,6 +4,8 @@ import torch as T
 import torch.nn as nn
 from pyparsing import Mapping
 
+from .torch_utils import append_dims
+
 
 @T.no_grad()
 def multistep_consistency_sampling(
@@ -100,15 +102,6 @@ def one_step_heun(model, x, sigma_start, sigma_end, extra_args):
     x = x + d_prime * dt
 
     return x
-
-
-def append_dims(x: T.Tensor, target_dims: int) -> T.Tensor:
-    """Appends dimensions of 1 to the end of a tensor until it has target_dims
-    dimensions."""
-    dim_diff = target_dims - x.dim()
-    if dim_diff < 0:
-        raise ValueError(f"x has more dims ({x.ndim}) than target ({target_dims})")
-    return x[(...,) + (None,) * dim_diff]  # x.view(*x.shape, *dim_diff * (1,))
 
 
 def get_sigmas_karras(
