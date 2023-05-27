@@ -39,7 +39,7 @@ def multistep_consistency_sampling(
         if not same_noise:
             noise = T.randn_like(x)
         x_t = x + (sigma**2 - min_sigma**2).sqrt() * noise
-        x = model(x_t, sigma * sigma_shape)
+        x = model(x_t, sigma * sigma_shape, **extra_args)
     return x
 
 
@@ -65,7 +65,7 @@ def ideal_denoise(noisy_data, data, sigma):
         append_dims(sigma, noisy_data.dim() + 1) ** 2,
     )
     numerator = (gaus_term * data.unsqueeze(0)).sum(1)
-    denoised = numerator / (gaus_term.sum(1) + 1e-8)
+    denoised = numerator / gaus_term.sum(1)
 
     return denoised
 
@@ -176,7 +176,6 @@ def sample_heun(
 
     # Start iterating through each timestep
     for i in range(num_steps):
-
         # Denoise the sample, and calculate derivative and the time step
         denoised = model(x, sigmas[i] * sigma_shape, **extra_args)
         d = (x - denoised) / sigmas[i]
@@ -251,7 +250,7 @@ def sample_stochastic_heun(
     - Equivalent to the deterministic case if s_churn = 0
     - Alg. 2 from the https://arxiv.org/pdf/2206.00364.pdf
     - Hard coded such that t = sigma and s(t) = 1
-    - Default s values are taken from emiprical results in the paper
+    - Default s values are taken from empirical results in the paper
     """
 
     # Initial setup
@@ -262,7 +261,6 @@ def sample_stochastic_heun(
 
     # Start iterating through each timestep
     for i in range(num_steps):
-
         # Get gamma factor (time perturbation)
         gamma = (
             min(s_churn / num_steps, math.sqrt(2.0) - 1)

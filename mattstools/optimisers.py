@@ -20,7 +20,6 @@ class Lookahead(Optimizer):
         alpha=0.5,
         **opt_kwargs,
     ) -> None:
-
         # If we have a fully initialised optimiser
         if isinstance(inner_optimizer, Optimizer):
             self.optimizer = inner_optimizer

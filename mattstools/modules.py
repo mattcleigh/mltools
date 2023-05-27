@@ -568,7 +568,10 @@ class IterativeNormLayer(nn.Module):
         )
 
         # If the means are set here then the model is "frozen" and not updated
-        self.frozen = means is not None
+        self.frozen = means is not None or self.n > self.max_n
+
+    def __repr__(self):
+        return f"IterativeNormLayer({list(self.means.shape)})"
 
     def __str__(self) -> str:
         return f"IterativeNormLayer(means={self.means.squeeze()}, vars={self.vars.squeeze()})"
@@ -630,6 +633,12 @@ class IterativeNormLayer(nn.Module):
 
     def update(self, inpt: T.Tensor, mask: Optional[T.BoolTensor] = None) -> None:
         """Update the running stats using a batch of data."""
+
+        # Freeze the model if we exceed the requested stats
+        self.frozen = self.n >= self.max_n
+        if self.frozen:
+            return
+
         inpt = self._mask(inpt, mask)
 
         # For first iteration
@@ -650,9 +659,6 @@ class IterativeNormLayer(nn.Module):
             ) * len(inpt)
             self.vars = self.m2 / self.n
 
-        # Freeze the model if we exceed the requested stats
-        self.frozen = self.n >= self.max_n
-
 
 class SineCosineEncoding:
     def __init__(
@@ -662,7 +668,6 @@ class SineCosineEncoding:
         max_value: float = 1.0,
         frequency_scaling: str = "exponential",
     ) -> None:
-
         assert outp_dim % 2 == 0
         self.outp_dim = outp_dim
         self.min_value = min_value

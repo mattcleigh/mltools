@@ -743,6 +743,11 @@ def log_squash(data: T.Tensor) -> T.Tensor:
     return T.sign(data) * T.log(T.abs(data) + 1)
 
 
+def torch_undo_log_squash(data: np.ndarray) -> np.ndarray:
+    """Undo the log squash function above."""
+    return T.sign(data) * (T.exp(T.abs(data)) - 1)
+
+
 @T.no_grad()
 def ema_param_sync(source: nn.Module, target: nn.Module, ema_decay: float) -> None:
     """Synchronize the parameters of two modules using exponential moving
