@@ -1,4 +1,5 @@
 import logging
+import math
 from copy import deepcopy
 from typing import Mapping, Optional
 
@@ -42,15 +43,13 @@ def avg_pool_nd(dims, *args, **kwargs):
     raise ValueError(f"unsupported dimensions: {dims}")
 
 
-def positionally_encode_patches(inpt: T.Tensor, encoding_dim: int) -> T.Tensor:
+def positionally_encode_patches(inpt_shape: T.Tensor, encoding_dim: int) -> T.Tensor:
     """Applies positional encoding to a tensor of image patches.
 
     Parameters
     ----------
-    inpt : T.Tensor
-        A tensor of shape (B, C, H, W), where B is the batch size,
-        C is the number of channels, H is the height of the image,
-        and W is the width of the image.
+    inpt_shape : T.Tensor
+        The spacial dimensions of the input image
     encoding_dim : int
         The dimension of the positional encoding to be applied.
 
@@ -69,19 +68,23 @@ def positionally_encode_patches(inpt: T.Tensor, encoding_dim: int) -> T.Tensor:
     """
 
     # Get the values for the positional encodings from the shape of the tensor
-    x_vals = T.linspace(0, 1, inpt.shape[-1], device=inpt.device)
-    y_vals = T.linspace(0, 1, inpt.shape[-2], device=inpt.device)
+    x_vals = T.linspace(0, 1, inpt_shape[-1])
+    y_vals = T.linspace(0, 1, inpt_shape[-2])
 
     # Combine the encodings together into a single shape
-    encodings = T.zeros((1, *inpt.shape[-2:], encoding_dim), device=inpt.device)
+    encodings = T.zeros((*inpt_shape, encoding_dim))
 
     # Get seperate sine/cosine vectors for each dimension
     dir_dim = encoding_dim // 2
-    encodings[..., :4] = sine_cosine_encoding(x_vals, outp_dim=dir_dim).unsqueeze(-2)
-    encodings[..., 4:] = sine_cosine_encoding(y_vals, outp_dim=dir_dim).unsqueeze(-3)
+    encodings[..., :dir_dim] = sine_cosine_encoding(
+        x_vals, outp_dim=dir_dim, frequency_scaling="linear"
+    ).unsqueeze(-2)
+    encodings[..., dir_dim:] = sine_cosine_encoding(
+        y_vals, outp_dim=dir_dim, frequency_scaling="linear"
+    ).unsqueeze(-3)
 
-    # Rotate the dimensions to be B, C, H, W, then expand to match the input batch dim
-    return encodings.transpose(-1, -3).expand(inpt.shape[0], -1, -1, -1)
+    # Rotate the dimensions to be B, C, H, W
+    return encodings.transpose(-1, -3)
 
 
 class ResNetBlock(nn.Module):
@@ -111,6 +114,7 @@ class ResNetBlock(nn.Module):
         drp: float = 0,
         nrm_groups: int = 1,
         nrm_first: bool = True,
+        act_first: bool = True,
     ) -> None:
         """
         args:
@@ -124,6 +128,7 @@ class ResNetBlock(nn.Module):
             drp: The dropout probability
             nrm_groups: Normalisation groups (1=LayerNorm, c=InstanceNorm)
             nrm_first: If normalisation should take place fist, don't do inputs
+            act_first: If an activation should take place fist, don't do inputs
         """
         super().__init__()
 
@@ -142,7 +147,7 @@ class ResNetBlock(nn.Module):
         # Create the main layer structure of the network which is split into two parts
         self.first_layers = nn.Sequential(
             nn.GroupNorm(nrm_groups, inpt_channels) if nrm_first else nn.Identity(),
-            get_act(act),
+            get_act(act) if act_first else nn.Identity(),
             conv_nd(dims, inpt_channels, outp_channels, kernel_size, padding=1),
             nn.GroupNorm(nrm_groups, outp_channels),
         )
@@ -214,9 +219,10 @@ class MultiHeadedAttentionBlock(nn.Module):
     def __init__(
         self,
         inpt_channels: int,
+        inpt_shape: tuple,
         num_heads: int = 1,
         nrm_groups: int = 1,
-        pos_encoding_dim: int = 0,
+        do_pos_encoding: bool = False,
     ):
         super().__init__()
 
@@ -225,16 +231,25 @@ class MultiHeadedAttentionBlock(nn.Module):
 
         # Class attributes
         self.inpt_channels = inpt_channels
+        self.inpt_shape = inpt_shape
         self.num_heads = num_heads
         self.channels_per_head = inpt_channels // num_heads
-        self.pos_encoding_dim = pos_encoding_dim
+        self.do_pos_encoding = do_pos_encoding
 
         # The normalisation layer
         self.norm = nn.GroupNorm(nrm_groups, inpt_channels)
 
+        # The positional encodings which are fixed
+        if do_pos_encoding:
+            if len(inpt_shape) != 2:
+                raise ValueError("Positional encoding is only available for 2D images")
+            self.pos_enc = nn.Parameter(
+                T.randn(inpt_channels, *inpt_shape) / math.sqrt(inpt_channels)
+            )
+
         # QKV are calculated using a 1 dimensional convolution with a 1 kernel size
         # This is equivalent to a 2D conv with 1x1 kernel, but generalises to 3D
-        self.qkv = conv_nd(1, inpt_channels + pos_encoding_dim, inpt_channels * 3, 1)
+        self.qkv = conv_nd(1, inpt_channels, inpt_channels * 3, 1)
 
         # The final convolutional layer (initiliased with zeros for stability)
         self.out_conv = zero_module(conv_nd(1, inpt_channels, inpt_channels, 1))
@@ -246,17 +261,12 @@ class MultiHeadedAttentionBlock(nn.Module):
         b, c, *spatial = inpt.shape
 
         # Before flattening, get the positional encodings based on the dimensions
-        if self.pos_encoding_dim:
-            encodings = positionally_encode_patches(inpt, self.pos_encoding_dim)
+        if self.do_pos_encoding:
+            inpt = inpt + self.pos_enc.unsqueeze(0)
 
         # Flatten each image in each channel dimension and normalise
         inpt = inpt.reshape(b, c, -1)
         normed = self.norm(inpt)
-
-        # Combine with the already calculated positional encodings
-        if self.pos_encoding_dim:
-            encodings = encodings.reshape(b, self.pos_encoding_dim, -1)
-            normed = T.concat([normed, encodings], dim=-2)
 
         # Apply get the qkv embeddings for each channel
         qkv = self.qkv(normed)
@@ -347,6 +357,7 @@ class DoublingConvNet(nn.Module):
         # The first ResNet block changes to the starting channel dimension
         first_config = deepcopy(resnet_config)
         first_config.nrm_first = False  # Dont want to normalise our inputs
+        first_config.act_first = False  # Dont apply activation on inputs
         self.first_block = ResNetBlock(
             inpt_channels=inpt_channels,
             ctxt_dim=ctxt_dim,
@@ -377,7 +388,9 @@ class DoublingConvNet(nn.Module):
             # Add an optional attention block if we downsampled enough
             if max(inpt_size) <= attn_below:
                 lvl_layers.append(
-                    MultiHeadedAttentionBlock(inpt_channels=out_c, **attn_config)
+                    MultiHeadedAttentionBlock(
+                        inpt_channels=out_c, inpt_shape=inp_size, **attn_config
+                    )
                 )
 
             # Add the level's layers to the block list
@@ -521,6 +534,7 @@ class UNet(nn.Module):
         # The first ResNet block changes to the starting channel dimension
         first_config = deepcopy(resnet_config)
         first_config.nrm_first = False  # Dont normalise the inputs
+        first_config.act_first = False  # Dont apply activation on the inputs
         self.first_block = ResNetBlock(
             inpt_channels=inpt_channels,
             ctxt_dim=emb_ctxt_size,
@@ -551,13 +565,15 @@ class UNet(nn.Module):
             # Add an optional attention block if we downsampled enough
             if max(inp_size[-1]) <= attn_below:
                 lvl_layers.append(
-                    MultiHeadedAttentionBlock(inpt_channels=out_c[-1], **attn_config)
+                    MultiHeadedAttentionBlock(
+                        inpt_channels=out_c[-1], inpt_shape=inp_size[-1], **attn_config
+                    )
                 )
 
             # Add the level's layers to the block list
             encoder_blocks.append(nn.ModuleList(lvl_layers))
 
-            # Exit if the next iteration would lead an output with small spacial dimensions
+            # Exit if the next it would lead an output with small spacial dimensions
             if min(inp_size[-1]) // 2 <= min_size:
                 break
 
@@ -578,7 +594,9 @@ class UNet(nn.Module):
                     outp_channels=out_c[-1],
                     **resnet_config,
                 ),
-                MultiHeadedAttentionBlock(inpt_channels=out_c[-1], **attn_config),
+                MultiHeadedAttentionBlock(
+                    inpt_channels=out_c[-1], inpt_shape=inp_size[-1] // 2, **attn_config
+                ),
                 ResNetBlock(
                     inpt_channels=out_c[-1],
                     ctxt_dim=emb_ctxt_size,
@@ -606,7 +624,9 @@ class UNet(nn.Module):
             # Add the attention layer at the appropriate levels
             if max(inp_size[-i]) <= attn_below:
                 lvl_layers.append(
-                    MultiHeadedAttentionBlock(inpt_channels=inp_c[-i], **attn_config)
+                    MultiHeadedAttentionBlock(
+                        inpt_channels=inp_c[-i], inpt_shape=inp_size[-i], **attn_config
+                    )
                 )
 
             # Add the level's layers to the block list
