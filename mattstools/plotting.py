@@ -320,7 +320,7 @@ def add_hist(
 
 
 def quantile_bins(data, bins=50, low=0.001, high=0.999, axis=None) -> np.ndarray:
-    return np.linspace(*np.quantile(data, [0.001, 0.999], axis=axis), bins)
+    return np.linspace(*np.quantile(data, [low, high], axis=axis), bins)
 
 
 def plot_multi_correlations(
@@ -451,14 +451,14 @@ def plot_multi_hists_2(
     logy: bool = False,
     y_label: Optional[str] = None,
     ylim: Optional[list] = None,
-    ypad: float = 1.0,
+    ypad: float = 1.5,
     rat_ylim: tuple = (0, 2),
     rat_label: Optional[str] = None,
     scale: int = 5,
     do_legend: bool = True,
     hist_kwargs: Optional[list] = None,
     err_kwargs: Optional[list] = None,
-    legend_kwargs: Optional[dict] = None,
+    legend_kwargs: Optional[list] = None,
     extra_text: Optional[list] = None,
     incl_overflow: bool = True,
     incl_underflow: bool = True,
@@ -518,6 +518,8 @@ def plot_multi_hists_2(
         err_kwargs = len(data_list) * [err_kwargs]
     if not isinstance(extra_text, list):
         extra_text = len(col_labels) * [extra_text]
+    if not isinstance(legend_kwargs, list):
+        legend_kwargs = len(col_labels) * [legend_kwargs]
 
     # Cycle through the datalist and ensure that they are 2D, as each column is an axis
     for data_idx in range(len(data_list)):
@@ -609,8 +611,8 @@ def plot_multi_hists_2(
             # Manually do the density so that the error can be scaled
             if do_norm:
                 divisor = np.array(np.diff(ax_bins), float) / hist.sum()
-                hist = hist / divisor
-                hist_err = hist_err / divisor
+                hist = hist * divisor
+                hist_err = hist_err * divisor
 
             # Apply the scale factors
             if scale_factors[data_idx] is not None:
@@ -713,7 +715,8 @@ def plot_multi_hists_2(
 
         # Ratio Y axis
         if do_ratio_to_first:
-            axes[1, ax_idx].set_ylim(rat_ylim)
+            if rat_ylim is not None:
+                axes[1, ax_idx].set_ylim(rat_ylim)
             if rat_label is not None:
                 axes[1, ax_idx].set_ylabel(rat_label)
             else:
@@ -729,8 +732,8 @@ def plot_multi_hists_2(
 
         # Legend
         if do_legend:
-            legend_kwargs = legend_kwargs or {}
-            axes[0, ax_idx].legend(**legend_kwargs)
+            lk = legend_kwargs[ax_idx] or {}
+            axes[0, ax_idx].legend(**lk)
 
     # Final figure layout
     fig.tight_layout()

@@ -633,6 +633,12 @@ class IterativeNormLayer(nn.Module):
 
     def update(self, inpt: T.Tensor, mask: Optional[T.BoolTensor] = None) -> None:
         """Update the running stats using a batch of data."""
+
+        # Freeze the model if we exceed the requested stats
+        self.frozen = self.n >= self.max_n
+        if self.frozen:
+            return
+
         inpt = self._mask(inpt, mask)
 
         # For first iteration
@@ -652,9 +658,6 @@ class IterativeNormLayer(nn.Module):
                 dim=(0, *self.extra_dims), keepdim=True
             ) * len(inpt)
             self.vars = self.m2 / self.n
-
-        # Freeze the model if we exceed the requested stats
-        self.frozen = self.n >= self.max_n
 
 
 class SineCosineEncoding:

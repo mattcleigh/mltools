@@ -31,7 +31,7 @@ def multistep_consistency_sampling(
     x = model(x, sigmas[0] * sigma_shape, **extra_args)
     for sigma in sigmas:
         x_t = x + (sigma**2 - min_sigma**2).sqrt() * T.randn_like(x)
-        x = model(x_t, sigma * sigma_shape)
+        x = model(x_t, sigma * sigma_shape, **extra_args)
     return x
 
 
