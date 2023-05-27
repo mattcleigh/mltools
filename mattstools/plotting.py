@@ -722,9 +722,10 @@ def plot_multi_hists_2(
             else:
                 axes[1, ax_idx].set_ylabel(f"Ratio to {data_labels[0]}")
 
-            # Add a black line for the ratio at y = 1
-            x_min, x_max = axes[1, ax_idx].get_xlim()
-            axes[1, ax_idx].axhline(1, x_min, x_max, color="k", zorder=-99999)
+            # Ratio X line:
+            axes[1, ax_idx].hlines(
+                1, *axes[1, ax_idx].get_xlim(), colors="k", zorder=-9999
+            )
 
         # Extra text
         if extra_text[ax_idx] is not None:
