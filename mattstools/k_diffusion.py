@@ -7,7 +7,12 @@ from pyparsing import Mapping
 
 @T.no_grad()
 def multistep_consistency_sampling(
-    model: nn.Module, sigmas: T.Tensor, min_sigma: float, x: T.Tensor, extra_args
+    model: nn.Module,
+    sigmas: T.Tensor,
+    min_sigma: float,
+    x: T.Tensor,
+    extra_args: Mapping | None = None,
+    same_noise: bool = True,
 ) -> T.Tensor:
     """Perform multistep consistency sampling from a consistency model.
 
@@ -28,9 +33,12 @@ def multistep_consistency_sampling(
     extra_args = extra_args or {}
     sigma_shape = x.new_ones([x.shape[0], 1])
 
+    noise = T.randn_like(x)
     x = model(x, sigmas[0] * sigma_shape, **extra_args)
     for sigma in sigmas:
-        x_t = x + (sigma**2 - min_sigma**2).sqrt() * T.randn_like(x)
+        if not same_noise:
+            noise = T.randn_like(x)
+        x_t = x + (sigma**2 - min_sigma**2).sqrt() * noise
         x = model(x_t, sigma * sigma_shape)
     return x
 
@@ -40,14 +48,16 @@ def logsumexp(x, do_max: bool = True):
     return c + T.log(T.sum(T.exp(x - c)))
 
 
+@T.no_grad()
 def shift_gaussian(x: T.Tensor, mu: T.Tensor, var: T.Tensor) -> T.Tensor:
     diff = (x - mu) ** 2
     diff = diff.sum(dim=tuple(range(2, diff.dim())), keepdims=True)
     diff /= -2 * var
-    diff_min = T.max(diff, dim=1, keepdim=True).values
-    return T.exp(diff - diff_min)
+    diff_max = T.max(diff, dim=1, keepdim=True).values
+    return T.exp(diff - diff_max)
 
 
+@T.no_grad()
 def ideal_denoise(noisy_data, data, sigma):
     gaus_term = shift_gaussian(
         noisy_data.unsqueeze(1),
@@ -61,23 +71,12 @@ def ideal_denoise(noisy_data, data, sigma):
 
 
 @T.no_grad()
-def one_step_ideal_heun(x, data, sigma_start, sigma_end):
-    """Apply just one step of the heun-solver to get two adjacent points on the
-    PF-ODE."""
-
-    # Denoise the sample, and calculate derivative and the time step
+def one_step_ideal(x, data, sigma_start, sigma_end):
+    """Apply just one step of the ideal solver using the euler method."""
     denoised = ideal_denoise(x, data, sigma_start)
     d = (x - denoised) / append_dims(sigma_start, x.dim())
     dt = append_dims((sigma_end - sigma_start), x.dim())
-    x_2 = x + d * dt
-
-    # Heun's 2nd order method
-    # denoised_2 = ideal_denoise(x_2, data, sigma_end)
-    # d_2 = (x_2 - denoised_2) / append_dims(sigma_end, x.dim())
-    # d_prime = (d + d_2) / 2
-    # x = x + d_prime * dt
-
-    return x_2
+    return x + d * dt
 
 
 @T.no_grad()
