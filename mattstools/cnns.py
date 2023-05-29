@@ -123,6 +123,8 @@ class AdaGN(ConditionedModule):
             Default: 1e-5.
         """
         super().__init__()
+        self.ctxt_dim = ctxt_dim
+        self.c_out = c_out
         self.num_groups = nrm_groups
         self.eps = eps
         self.layer = nn.Linear(ctxt_dim, c_out * 2)
@@ -130,9 +132,15 @@ class AdaGN(ConditionedModule):
     def forward(self, input: T.Tensor, ctxt: T.Tensor) -> T.Tensor:
         scale, shift = self.layer(ctxt).chunk(2, dim=-1)
         scale = append_dims(scale, input.ndim)
-        shift = append_dims(shift, input.ndim)
+        shift = append_dims(shift, input.ndim) + 1  # + 1 to not kill on init
         input = group_norm(input, self.num_groups, eps=self.eps)
-        return T.addcmul(shift, input, scale + 1)
+        return T.addcmul(shift, input, scale)
+
+    def __str__(self) -> str:
+        return f"AdaGN({self.ctxt_dim}, {self.c_out})"
+
+    def __repr__(self):
+        return str(self)
 
 
 class ResNetBlock(ConditionedModule):
@@ -208,6 +216,14 @@ class ResNetBlock(ConditionedModule):
     def forward(self, input: T.Tensor, ctxt: T.Tensor = None) -> T.Tensor:
         return self.layers(input, ctxt) + self.skip_connection(input)
 
+    def __str__(self) -> str:
+        return (
+            f"ResNetBlock({self.inpt_channels}, {self.outp_channels}, {self.ctxt_dim})"
+        )
+
+    def __repr__(self):
+        return str(self)
+
 
 class MultiHeadedAttentionBlock(ConditionedModule):
     """A multi-headed self attention block that allows spatial positions to
@@ -266,12 +282,12 @@ class MultiHeadedAttentionBlock(ConditionedModule):
         if self.do_pos_encoding:
             qkv = qkv + self.pos_enc.unsqueeze(0)
         if self.ctxt_dim:
-            qkv = self.norm(inpt, ctxt)
+            qkv = self.norm(qkv, ctxt)
         qkv = self.qkv(qkv)
 
         # Flatten out the spacial dimensions them swap to get: B, 3N, HxW, h_dim
         qkv = qkv.view(b, self.num_heads * 3, c // self.num_heads, -1).transpose(-1, -2)
-        q, k, v = T.chunk(qkv, 3, dim=1)  # Split into the component sequences
+        q, k, v = T.chunk(qkv.contiguous(), 3, dim=1)
 
         # Now we can use the attention operation from the transformers package
         a_out = scaled_dot_product_attention(q, k, v)
@@ -358,7 +374,10 @@ class DoublingConvNet(nn.Module):
             if max(inpt_size) <= attn_below:
                 lvl_layers.append(
                     MultiHeadedAttentionBlock(
-                        inpt_channels=out_c, inpt_shape=inp_size, **attn_config
+                        inpt_channels=out_c,
+                        inpt_shape=inp_size,
+                        ctxt_dim=ctxt_dim,
+                        **attn_config,
                     )
                 )
 
@@ -432,6 +451,39 @@ class UNet(nn.Module):
         attn_config: Optional[Mapping] = None,
         ctxt_embed_config: Optional[Mapping] = None,
     ) -> None:
+        """
+        Parameters
+        ----------
+        inpt_size : list
+            The size of the input image.
+        inpt_channels : int
+            The number of channels in the input image.
+        outp_channels : int
+            The number of channels in the output image.
+        ctxt_dim : int, optional
+            The dimension of the context input. Default is 0.
+        min_size : int, optional
+            The minimum size of the spacial dimensions. Default is 8.
+        max_depth : int, optional
+            The maximum depth of the network. Default is 8.
+        n_blocks_per_layer : int, optional
+            The number of ResNet blocks per layer. Default is 1.
+        attn_below : int, optional
+            The maximum size of spacial dimensions for attention operations.
+            Default is 8.
+        start_channels : int, optional
+            The number of channels at the start of the network. Default is 32.
+        max_channels : int, optional
+            The maximum number of channels in the network. Default is 128.
+        zero_out : bool, optional
+            Whether to zero out the last block. Default is False.
+        resnet_config : Optional[Mapping], optional
+            Configuration for ResNet blocks. Default is None.
+        attn_config : Optional[Mapping], optional
+            Configuration for attention blocks. Default is None.
+        ctxt_embed_config : Optional[Mapping], optional
+            Configuration for context embedding network. Default is None.
+        """
         super().__init__()
 
         # Save dict defaults (these are modified)
@@ -447,7 +499,7 @@ class UNet(nn.Module):
 
         # The downsampling layer and upscaling layers (not learnable)
         dims = len(inpt_size)
-        stride = 2 if self.dims != 3 else (2, 2, 2)
+        stride = 2 if dims != 3 else (2, 2, 2)
         self.down_sample = avg_pool_nd(dims, kernel_size=stride, stride=stride)
         self.up_sample = nn.Upsample(scale_factor=2)
 
@@ -462,8 +514,8 @@ class UNet(nn.Module):
             emb_ctxt_size = 0
 
         # The first and last conv layer sets up the starting channel size
-        self.first_block = conv_nd(inpt_channels, start_channels, 1)
-        self.last_block = conv_nd(start_channels, outp_channels, 1)
+        self.first_block = conv_nd(dims, inpt_channels, start_channels, 1)
+        self.last_block = conv_nd(dims, start_channels, outp_channels, 1)
         if zero_out:
             self.last_block = zero_module(self.last_block)
 
@@ -597,7 +649,7 @@ class UNet(nn.Module):
         # Pass through the decoder blocks
         for level in self.decoder_blocks:
             inpt = self.up_sample(inpt)  # Apply the upsampling
-            inpt = T.cat([inpt, dec_outs.pop(-1)], dim=1)  # Concat with buffer
+            inpt = T.cat([inpt, dec_outs.pop()], dim=1)  # Concat with buffer
             for layer in level:
                 inpt = layer(inpt, ctxt)
 
