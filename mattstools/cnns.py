@@ -30,6 +30,17 @@ def conv_nd(dims, *args, **kwargs):
     raise ValueError(f"unsupported dimensions: {dims}")
 
 
+def drop_nd(dims, *args, **kwargs):
+    """Create a 1D, 2D, or 3D droupout module."""
+    if dims == 1:
+        return nn.Dropout(*args, **kwargs)
+    elif dims == 2:
+        return nn.Dropout2d(*args, **kwargs)
+    elif dims == 3:
+        return nn.Dropout3d(*args, **kwargs)
+    raise ValueError(f"unsupported dimensions: {dims}")
+
+
 def avg_pool_nd(dims, *args, **kwargs):
     """Create a 1D, 2D, or 3D average pooling module."""
     if dims == 1:
@@ -90,13 +101,13 @@ class ConditionedModule(nn.Module):
 
 
 class ConditionedSequential(nn.Sequential):
-    def forward(self, input, ctxt):
+    def forward(self, inpt, ctxt):
         for module in self:
             if isinstance(module, ConditionedModule):
-                input = module(input, ctxt)
+                inpt = module(inpt, ctxt)
             else:
-                input = module(input)
-        return input
+                inpt = module(inpt)
+        return inpt
 
 
 class AdaGN(ConditionedModule):
@@ -127,14 +138,14 @@ class AdaGN(ConditionedModule):
         self.c_out = c_out
         self.num_groups = nrm_groups
         self.eps = eps
-        self.layer = nn.Linear(ctxt_dim, c_out * 2)
+        self.layer = zero_module(nn.Linear(ctxt_dim, c_out * 2))
 
-    def forward(self, input: T.Tensor, ctxt: T.Tensor) -> T.Tensor:
+    def forward(self, inpt: T.Tensor, ctxt: T.Tensor) -> T.Tensor:
         scale, shift = self.layer(ctxt).chunk(2, dim=-1)
-        scale = append_dims(scale, input.ndim)
-        shift = append_dims(shift, input.ndim) + 1  # + 1 to not kill on init
-        input = group_norm(input, self.num_groups, eps=self.eps)
-        return T.addcmul(shift, input, scale)
+        scale = append_dims(scale, inpt.ndim) + 1  # + 1 to not kill on init
+        shift = append_dims(shift, inpt.ndim)
+        inpt = group_norm(inpt, self.num_groups, eps=self.eps)
+        return T.addcmul(shift, inpt, scale)
 
     def __str__(self) -> str:
         return f"AdaGN({self.ctxt_dim}, {self.c_out})"
@@ -150,7 +161,7 @@ class ResNetBlock(ConditionedModule):
     All convolutions are stride 1 with padding 1.
     May also take in some context tensor which is injected using AdaGN.
     Forward pass applies the following:
-    - GroupNorm->Act->Conv->AdaGN->Act->Drop->0Conv + skip_connection
+    - AdaGN->Act->Conv->AdaGN->Act->Drop->0Conv + skip_connection
     """
 
     def __init__(
@@ -191,30 +202,33 @@ class ResNetBlock(ConditionedModule):
         self.outp_channels = outp_channels or inpt_channels
         self.ctxt_dim = ctxt_dim
 
-        # Create the main layer structure of the network which is split into two parts
+        # The method for normalisation is where the context is injected
+        def norm(c_out) -> AdaGN | nn.GroupNorm:
+            if ctxt_dim:
+                return AdaGN(ctxt_dim, c_out, nrm_groups)
+            return nn.GroupNorm(nrm_groups, c_out)
+
+        # Create the main layer structure of the network
         self.layers = ConditionedSequential(
-            nn.GroupNorm(nrm_groups, inpt_channels),
+            norm(inpt_channels),
             get_act(act),
             conv_nd(dims, inpt_channels, outp_channels, kernel_size, padding=1),
-            AdaGN(ctxt_dim, outp_channels, nrm_groups)
-            if ctxt_dim
-            else nn.GroupNorm(nrm_groups, outp_channels),
+            norm(outp_channels),
             get_act(act),
-            nn.Dropout(drp),
+            drop_nd(dims, drp),
             zero_module(
                 conv_nd(dims, outp_channels, outp_channels, kernel_size, padding=1)
             ),
         )
 
         # Create the skip connection, using a 1x1 conv to change channel size
-        self.skip_connection = (
-            nn.Identity()
-            if self.inpt_channels == self.outp_channels
-            else conv_nd(dims, inpt_channels, outp_channels, 1)
-        )
+        if self.inpt_channels == self.outp_channels:
+            self.skip_connection = nn.Identity()
+        else:
+            self.skip_connection = conv_nd(dims, inpt_channels, outp_channels, 1)
 
-    def forward(self, input: T.Tensor, ctxt: T.Tensor = None) -> T.Tensor:
-        return self.layers(input, ctxt) + self.skip_connection(input)
+    def forward(self, inpt: T.Tensor, ctxt: T.Tensor = None) -> T.Tensor:
+        return self.layers(inpt, ctxt) + self.skip_connection(inpt)
 
     def __str__(self) -> str:
         return (
@@ -260,14 +274,15 @@ class MultiHeadedAttentionBlock(ConditionedModule):
         self.do_pos_encoding = do_pos_encoding
 
         # The learnable positional encodings which are fixed
-        self.pos_enc = nn.Parameter(T.randn(inpt_channels, *inpt_shape))
+        self.pos_enc = nn.Parameter(T.zeros(inpt_channels, *inpt_shape))
 
-        # The layers
-        self.norm = ConditionedSequential(
-            nn.GroupNorm(nrm_groups, inpt_channels)
-            if ctxt_dim
-            else AdaGN(ctxt_dim, inpt_channels, nrm_groups)
-        )
+        # The method for normalisation is where the context is injected
+        if ctxt_dim:
+            self.norm = AdaGN(ctxt_dim, inpt_channels, nrm_groups)
+        else:
+            self.norm = nn.GroupNorm(nrm_groups, inpt_channels)
+
+        # The convoluation layers used in the attention operation
         self.qkv = conv_nd(len(inpt_shape), inpt_channels, inpt_channels * 3, 1)
         self.out_conv = zero_module(
             conv_nd(len(inpt_shape), inpt_channels, inpt_channels, 1)
@@ -345,7 +360,9 @@ class DoublingConvNet(nn.Module):
         self.down_sample = avg_pool_nd(dims, kernel_size=stride, stride=stride)
 
         # The first conv layer sets up the starting channel size
-        self.first_block = conv_nd(inpt_channels, start_channels, 1)
+        self.first_block = nn.Sequential(
+            conv_nd(inpt_channels, start_channels, 1), nn.SiLU()
+        )
 
         # Keep track of the spacial dimensions for each input and output layer
         inp_size = np.array(inpt_size)
@@ -486,7 +503,7 @@ class UNet(nn.Module):
         """
         super().__init__()
 
-        # Save dict defaults (these are modified)
+        # Safe dict defaults
         resnet_config = resnet_config or {}
         attn_config = attn_config or {}
         ctxt_embed_config = ctxt_embed_config or {}
@@ -514,8 +531,14 @@ class UNet(nn.Module):
             emb_ctxt_size = 0
 
         # The first and last conv layer sets up the starting channel size
-        self.first_block = conv_nd(dims, inpt_channels, start_channels, 1)
-        self.last_block = conv_nd(dims, start_channels, outp_channels, 1)
+        self.first_block = nn.Sequential(
+            conv_nd(dims, inpt_channels, start_channels, 1),
+            nn.SiLU(),
+        )
+        self.last_block = nn.Sequential(
+            nn.SiLU(),
+            conv_nd(dims, start_channels, outp_channels, 1),
+        )
         if zero_out:
             self.last_block = zero_module(self.last_block)
 
