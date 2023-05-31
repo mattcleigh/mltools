@@ -14,7 +14,7 @@ def multistep_consistency_sampling(
     min_sigma: float,
     x: T.Tensor,
     extra_args: Mapping | None = None,
-    same_noise: bool = True,
+    same_noise: bool = False,
 ) -> T.Tensor:
     """Perform multistep consistency sampling from a consistency model.
 
