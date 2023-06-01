@@ -555,20 +555,29 @@ class IterativeNormLayer(nn.Module):
 
         # Buffers are needed for saving/loading the layer
         self.register_buffer(
-            "means", T.zeros(self.stat_dim, dtype=T.float32) if means is None else means
+            "means",
+            T.zeros(self.stat_dim, dtype=T.float32)
+            if means is None
+            else T.as_tensor(means, dtype=T.float32),
         )
         self.register_buffer(
-            "vars", T.ones(self.stat_dim, dtype=T.float32) if vars is None else vars
+            "vars",
+            T.ones(self.stat_dim, dtype=T.float32)
+            if vars is None
+            else T.as_tensor(vars, dtype=T.float32),
         )
         self.register_buffer("n", n)
 
         # For the welford algorithm it is useful to have another variable m2
         self.register_buffer(
-            "m2", T.ones(self.stat_dim, dtype=T.float32) if vars is None else vars
+            "m2",
+            T.ones(self.stat_dim, dtype=T.float32)
+            if vars is None
+            else T.as_tensor(vars, dtype=T.float32),
         )
 
         # If the means are set here then the model is "frozen" and not updated
-        self.frozen = means is not None or self.n > self.max_n
+        self.frozen = (means is not None and vars is not None) or self.n > self.max_n
 
     def __repr__(self):
         return f"IterativeNormLayer({list(self.means.shape)})"
@@ -631,15 +640,13 @@ class IterativeNormLayer(nn.Module):
 
         return unnormed_inpt
 
-    def update(self, inpt: T.Tensor, mask: Optional[T.BoolTensor] = None) -> None:
+    def update(self, inpt: T.Tensor) -> None:
         """Update the running stats using a batch of data."""
 
         # Freeze the model if we exceed the requested stats
         self.frozen = self.n >= self.max_n
         if self.frozen:
             return
-
-        inpt = self._mask(inpt, mask)
 
         # For first iteration
         if self.n == 0:

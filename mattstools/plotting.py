@@ -703,7 +703,7 @@ def plot_multi_hists_2(
         else:
             _, ylim2 = axes[0, ax_idx].get_ylim()
             if logy:
-                axes[0, ax_idx].set_ylim(top=10 ** (np.log10(ylim2) * ypad))
+                axes[0, ax_idx].set_ylim(top=np.exp(np.log(ylim2) + ypad))
             else:
                 axes[0, ax_idx].set_ylim(top=ylim2 * ypad)
         if y_label is not None:
