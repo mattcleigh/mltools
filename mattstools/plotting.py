@@ -291,8 +291,14 @@ def add_hist(
     """
 
     # Compute the histogram
-    hist, _ = np.histogram(data, bins, density=do_norm)
+    hist, _ = np.histogram(data, bins)
     hist_err = np.sqrt(hist)
+
+    # Normalise the errors
+    if do_norm:
+        divisor = np.array(np.diff(bins), float) / hist.sum()
+        hist = hist * divisor
+        hist_err = hist_err * divisor
 
     # Apply the scale factors
     if scale_factor is not None:
@@ -330,6 +336,7 @@ def plot_multi_correlations(
     n_bins: int = 50,
     n_kde_points: int = 50,
     do_err: bool = True,
+    do_norm: bool = True,
     hist_kwargs: list | None = None,
     err_kwargs: list | None = None,
     legend_kwargs: dict | None = None,
@@ -386,6 +393,7 @@ def plot_multi_correlations(
                         hist_kwargs=hist_kwargs[i],
                         err_kwargs=err_kwargs[i],
                         do_err=do_err,
+                        do_norm=do_norm,
                     )
                     axes[row, column].set_xlim(bins[0], bins[-1])
 

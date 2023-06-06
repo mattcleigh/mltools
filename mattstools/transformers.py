@@ -41,10 +41,13 @@ def merge_masks(
     if merged_mask is not None:
         merged_mask = merged_mask.unsqueeze(1)
 
-    # If the attention bias exists, convert to a float and add
+    # If the attention bias exists, convert to a float and add to the mask
     if attn_bias is not None:
-        merged_mask = T.where(merged_mask, 0, -T.inf).type(query.dtype)
-        merged_mask = merged_mask + attn_bias.permute(0, 3, 1, 2)
+        if merged_mask is not None:
+            merged_mask = T.where(merged_mask, 0, -T.inf).type(query.dtype)
+            merged_mask = merged_mask + attn_bias.permute(0, 3, 1, 2)
+        else:
+            merged_mask = attn_bias.permute(0, 3, 1, 2)
 
     return merged_mask
 
@@ -137,9 +140,11 @@ class MultiHeadedAttentionBlock(nn.Module):
 
     3) Passes these through to the attention module (message passing)
     - In standard transformers this is the scaled dot product attention
-    - Also takes additional dropout layer to mask the attention
+    - Also takes additional dropout param to mask the attention
 
     4) Flatten out the head dimension and pass through final linear layer
+    - Optional layer norm before linear layer using `do_layer_norm=True`
+    - The output can also be zeroed on init using `init_zeros=True`
     - results are same as if attention was done seperately for each head and concat
     - dim: batch, q_seq, head_dim * num_heads
     """
@@ -150,7 +155,7 @@ class MultiHeadedAttentionBlock(nn.Module):
         num_heads: int = 1,
         drp: float = 0,
         init_zeros: bool = False,
-        do_casual: bool = False,
+        do_selfattn: bool = False,
         do_layer_norm: bool = False,
     ) -> None:
         """
@@ -160,8 +165,9 @@ class MultiHeadedAttentionBlock(nn.Module):
                 - Must allow interger division into model_dim
             drp: The dropout probability used in the MHA operation
             init_zeros: If the final linear layer is initialised with zero weights
-            do_casual: Casual attention should only be used if the q, k, v are the same
-                Slightly faster matrix multiplication at the beginning
+            do_selfattn: Only self attention should only be used if the
+                q, k, v are the same, this allows slightly faster matrix multiplication
+                at the beginning
             do_layer_norm: If a layernorm is applied before the output final linear
                 projection (Only really needed with deep models)
         """
@@ -171,7 +177,7 @@ class MultiHeadedAttentionBlock(nn.Module):
         self.model_dim = model_dim
         self.num_heads = num_heads
         self.head_dim = model_dim // num_heads
-        self.do_casual = do_casual
+        self.do_selfattn = do_selfattn
         self.drp = drp
         self.do_layer_norm = do_layer_norm
 
@@ -179,8 +185,8 @@ class MultiHeadedAttentionBlock(nn.Module):
         if self.head_dim * num_heads != model_dim:
             raise ValueError("Model dimension must be divisible by number of heads!")
 
-        # Initialise the weight matrices (only 1 for do casual)
-        if do_casual:
+        # Initialise the weight matrices (only 1 for do self attention)
+        if do_selfattn:
             self.all_linear = nn.Linear(model_dim, 3 * model_dim)
         else:
             self.q_linear = nn.Linear(model_dim, model_dim)
@@ -230,7 +236,7 @@ class MultiHeadedAttentionBlock(nn.Module):
         merged_mask = merge_masks(kv_mask, attn_mask, attn_bias, q)
 
         # Generate the q, k, v projections
-        if self.do_casual:
+        if self.do_selfattn:
             q_out, k_out, v_out = self.all_linear(q).chunk(3, -1)
         else:
             q_out = self.q_linear(q)
@@ -267,7 +273,8 @@ class TransformerEncoderLayer(nn.Module):
     """A transformer encoder layer based on the GPT-2+Normformer style
     arcitecture.
 
-    We choose Normformer as it has often proved to be the most stable to train
+    We choose a cross between Normformer and FoundationTransformers as they have often
+    proved to be the most stable to train
     https://arxiv.org/abs/2210.06423
     https://arxiv.org/abs/2110.09456
 
@@ -301,7 +308,7 @@ class TransformerEncoderLayer(nn.Module):
 
         # The basic blocks
         self.self_attn = MultiHeadedAttentionBlock(
-            model_dim, do_casual=True, **mha_config
+            model_dim, do_selfattn=True, **mha_config
         )
         self.dense = DenseNetwork(
             model_dim, outp_dim=model_dim, ctxt_dim=ctxt_dim, **dense_config
@@ -362,10 +369,10 @@ class TransformerDecoderLayer(nn.Module):
 
         # The basic blocks
         self.self_attn = MultiHeadedAttentionBlock(
-            model_dim, do_casual=True, **mha_config
+            model_dim, do_selfattn=True, **mha_config
         )
         self.cross_attn = MultiHeadedAttentionBlock(
-            model_dim, do_casual=False, **mha_config
+            model_dim, do_selfattn=False, **mha_config
         )
         self.dense = DenseNetwork(
             model_dim, outp_dim=model_dim, ctxt_dim=ctxt_dim, **dense_config
@@ -479,7 +486,7 @@ class TransformerCrossAttentionLayer(nn.Module):
 
         # The basic blocks
         self.cross_attn = MultiHeadedAttentionBlock(
-            model_dim, do_casual=False, **mha_config
+            model_dim, do_selfattn=False, **mha_config
         )
         self.dense = DenseNetwork(
             model_dim, outp_dim=model_dim, ctxt_dim=ctxt_dim, **dense_config
