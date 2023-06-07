@@ -505,6 +505,8 @@ class IterativeNormLayer(nn.Module):
         n: int = 0,
         max_n: int = 5_00_000,
         extra_dims: Union[tuple, int] = (),
+        track_grad_forward: bool = False,
+        track_grad_reverse: bool = False,
     ) -> None:
         """Init method for Normalisatiion module.
 
@@ -516,6 +518,8 @@ class IterativeNormLayer(nn.Module):
             max_n: Maximum number of iterations before the means and vars are frozen
             extra_dims: The extra dimension(s) over which to calculate the stats
                 Will always calculate over the batch dimension
+            track_grad_forward: If the gradients should be tracked for this operation
+            track_grad_reverse: If the gradients should be tracked for this operation
         """
         super().__init__()
 
@@ -576,14 +580,23 @@ class IterativeNormLayer(nn.Module):
             else T.as_tensor(vars, dtype=T.float32),
         )
 
-        # If the means are set here then the model is "frozen" and not updated
-        self.frozen = (means is not None and vars is not None) or self.n > self.max_n
+        # If the means are set here then the model is "frozen" and never updated
+        self.register_buffer(
+            "frozen",
+            T.as_tensor(
+                (means is not None and vars is not None) or self.n > self.max_n,
+            ),
+        )
+
+        # Gradient tracking options
+        self.track_grad_forward = track_grad_forward
+        self.track_grad_reverse = track_grad_reverse
 
     def __repr__(self):
         return f"IterativeNormLayer({list(self.means.shape)})"
 
     def __str__(self) -> str:
-        return f"IterativeNormLayer(means={self.means.squeeze()}, vars={self.vars.squeeze()})"
+        return f"IterativeNormLayer(m={self.means.squeeze()}, v={self.vars.squeeze()})"
 
     def _mask(self, inpt: T.Tensor, mask: Optional[T.BoolTensor] = None) -> T.Tensor:
         if mask is None:
@@ -606,29 +619,43 @@ class IterativeNormLayer(nn.Module):
         )
         self.n = T.tensor(len(inpt), device=self.means.device)
         self.m2 = self.vars * self.n
-        self.frozen = freeze
+        self.frozen.fill_(True)
 
     def forward(self, inpt: T.Tensor, mask: Optional[T.BoolTensor] = None) -> T.Tensor:
         """Applies the standardisation to a batch of inputs, also uses the
         inputs to update the running stats if in training mode."""
-        with T.no_grad():
-            sel_inpt = self._mask(inpt, mask)
-            if not self.frozen and self.training:
-                self.update(sel_inpt)
 
-            # Apply the mapping
-            normed_inpt = (sel_inpt - self.means) / (self.vars.sqrt() + 1e-8)
+        # Save and check the gradient tracking options
+        grad_setting = T.is_grad_enabled()
+        T.set_grad_enabled(self.track_grad_forward)
 
-            # Undo the masking
-            if mask is not None:
-                inpt = inpt.clone()  # prevents inplace operation, bad for autograd
-                inpt[mask] = normed_inpt.type(inpt.dtype)
-                return inpt
+        # Mask the inputs and update the stats
+        sel_inpt = self._mask(inpt, mask)
+        if not self.frozen and self.training:
+            self.update(sel_inpt)
 
-            return normed_inpt
+        # Apply the mapping
+        normed_inpt = (sel_inpt - self.means) / (self.vars.sqrt() + 1e-8)
+
+        # Undo the masking
+        if mask is not None:
+            inpt = inpt.clone()  # prevents inplace operation, bad for autograd
+            inpt[mask] = normed_inpt.type(inpt.dtype)
+            normed_inpt = inpt
+
+        # Revert the gradient setting
+        T.set_grad_enabled(grad_setting)
+
+        return normed_inpt
 
     def reverse(self, inpt: T.Tensor, mask: Optional[T.BoolTensor] = None) -> T.Tensor:
         """Unnormalises the inputs given the recorded stats."""
+
+        # Save and check the gradient tracking options
+        grad_setting = T.is_grad_enabled()
+        T.set_grad_enabled(self.track_grad_reverse)
+
+        # Mask and revert the inputs
         sel_inpt = self._mask(inpt, mask)
         unnormed_inpt = sel_inpt * self.vars.sqrt() + self.means
 
@@ -636,19 +663,22 @@ class IterativeNormLayer(nn.Module):
         if mask is not None:
             inpt = inpt.clone()  # prevents inplace operation, bad for autograd
             inpt[mask] = unnormed_inpt.type(inpt.dtype)
-            return inpt
+            unnormed_inpt = inpt
+
+        # Revert the gradient setting
+        T.set_grad_enabled(grad_setting)
 
         return unnormed_inpt
 
     def update(self, inpt: T.Tensor) -> None:
         """Update the running stats using a batch of data."""
 
-        # Freeze the model if we exceed the requested stats
-        self.frozen = self.n >= self.max_n
+        # Freeze the model if we already exceed the requested stats
+        T.fill_(self.frozen, self.n >= self.max_n)
         if self.frozen:
             return
 
-        # For first iteration
+        # For first iteration, just run the fit on the batch
         if self.n == 0:
             self.fit(inpt, freeze=False)
             return
