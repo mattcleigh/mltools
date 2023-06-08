@@ -26,6 +26,15 @@ from .schedulers import CyclicWithWarmup, LinearWarmupRootDecay, WarmupToConstan
 ONNX_SAFE = False
 
 
+def append_dims(x: T.Tensor, target_dims: int) -> T.Tensor:
+    """Appends dimensions of 1 to the end of a tensor until it has target_dims
+    dimensions."""
+    dim_diff = target_dims - x.dim()
+    if dim_diff < 0:
+        raise ValueError(f"x has more dims ({x.ndim}) than target ({target_dims})")
+    return x[(...,) + (None,) * dim_diff]  # x.view(*x.shape, *dim_diff * (1,))
+
+
 def dtype_lookup(dtype: Any) -> T.dtype:
     """Function to return a torch dtype when strings dont work."""
     return {
@@ -741,3 +750,28 @@ def get_max_cpu_suggest():
 def log_squash(data: T.Tensor) -> T.Tensor:
     """Apply a log squashing function for distributions with high tails."""
     return T.sign(data) * T.log(T.abs(data) + 1)
+
+
+def torch_undo_log_squash(data: np.ndarray) -> np.ndarray:
+    """Undo the log squash function above."""
+    return T.sign(data) * (T.exp(T.abs(data)) - 1)
+
+
+@T.no_grad()
+def ema_param_sync(source: nn.Module, target: nn.Module, ema_decay: float) -> None:
+    """Synchronize the parameters of two modules using exponential moving
+    average (EMA).
+
+    Parameters
+    ----------
+    source : nn.Module
+        The source module whose parameters are used to update the target module.
+    target : nn.Module
+        The target module whose parameters are updated.
+    ema_decay : float
+        The decay rate for the EMA update.
+    """
+    for s_params, t_params in zip(source.parameters(), target.parameters()):
+        t_params.data.copy_(
+            ema_decay * t_params.data + (1.0 - ema_decay) * s_params.data
+        )

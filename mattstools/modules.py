@@ -505,6 +505,8 @@ class IterativeNormLayer(nn.Module):
         n: int = 0,
         max_n: int = 5_00_000,
         extra_dims: Union[tuple, int] = (),
+        track_grad_forward: bool = False,
+        track_grad_reverse: bool = False,
     ) -> None:
         """Init method for Normalisatiion module.
 
@@ -516,6 +518,8 @@ class IterativeNormLayer(nn.Module):
             max_n: Maximum number of iterations before the means and vars are frozen
             extra_dims: The extra dimension(s) over which to calculate the stats
                 Will always calculate over the batch dimension
+            track_grad_forward: If the gradients should be tracked for this operation
+            track_grad_reverse: If the gradients should be tracked for this operation
         """
         super().__init__()
 
@@ -555,23 +559,44 @@ class IterativeNormLayer(nn.Module):
 
         # Buffers are needed for saving/loading the layer
         self.register_buffer(
-            "means", T.zeros(self.stat_dim, dtype=T.float32) if means is None else means
+            "means",
+            T.zeros(self.stat_dim, dtype=T.float32)
+            if means is None
+            else T.as_tensor(means, dtype=T.float32),
         )
         self.register_buffer(
-            "vars", T.ones(self.stat_dim, dtype=T.float32) if vars is None else vars
+            "vars",
+            T.ones(self.stat_dim, dtype=T.float32)
+            if vars is None
+            else T.as_tensor(vars, dtype=T.float32),
         )
         self.register_buffer("n", n)
 
         # For the welford algorithm it is useful to have another variable m2
         self.register_buffer(
-            "m2", T.ones(self.stat_dim, dtype=T.float32) if vars is None else vars
+            "m2",
+            T.ones(self.stat_dim, dtype=T.float32)
+            if vars is None
+            else T.as_tensor(vars, dtype=T.float32),
         )
 
-        # If the means are set here then the model is "frozen" and not updated
-        self.frozen = means is not None
+        # If the means are set here then the model is "frozen" and never updated
+        self.register_buffer(
+            "frozen",
+            T.as_tensor(
+                (means is not None and vars is not None) or self.n > self.max_n,
+            ),
+        )
+
+        # Gradient tracking options
+        self.track_grad_forward = track_grad_forward
+        self.track_grad_reverse = track_grad_reverse
+
+    def __repr__(self):
+        return f"IterativeNormLayer({list(self.means.shape)})"
 
     def __str__(self) -> str:
-        return f"IterativeNormLayer(means={self.means.squeeze()}, vars={self.vars.squeeze()})"
+        return f"IterativeNormLayer(m={self.means.squeeze()}, v={self.vars.squeeze()})"
 
     def _mask(self, inpt: T.Tensor, mask: Optional[T.BoolTensor] = None) -> T.Tensor:
         if mask is None:
@@ -594,29 +619,43 @@ class IterativeNormLayer(nn.Module):
         )
         self.n = T.tensor(len(inpt), device=self.means.device)
         self.m2 = self.vars * self.n
-        self.frozen = freeze
+        self.frozen.fill_(True)
 
     def forward(self, inpt: T.Tensor, mask: Optional[T.BoolTensor] = None) -> T.Tensor:
         """Applies the standardisation to a batch of inputs, also uses the
         inputs to update the running stats if in training mode."""
-        with T.no_grad():
-            sel_inpt = self._mask(inpt, mask)
-            if not self.frozen and self.training:
-                self.update(sel_inpt)
 
-            # Apply the mapping
-            normed_inpt = (sel_inpt - self.means) / (self.vars.sqrt() + 1e-8)
+        # Save and check the gradient tracking options
+        grad_setting = T.is_grad_enabled()
+        T.set_grad_enabled(self.track_grad_forward)
 
-            # Undo the masking
-            if mask is not None:
-                inpt = inpt.clone()  # prevents inplace operation, bad for autograd
-                inpt[mask] = normed_inpt.type(inpt.dtype)
-                return inpt
+        # Mask the inputs and update the stats
+        sel_inpt = self._mask(inpt, mask)
+        if not self.frozen and self.training:
+            self.update(sel_inpt)
 
-            return normed_inpt
+        # Apply the mapping
+        normed_inpt = (sel_inpt - self.means) / (self.vars.sqrt() + 1e-8)
+
+        # Undo the masking
+        if mask is not None:
+            inpt = inpt.clone()  # prevents inplace operation, bad for autograd
+            inpt[mask] = normed_inpt.type(inpt.dtype)
+            normed_inpt = inpt
+
+        # Revert the gradient setting
+        T.set_grad_enabled(grad_setting)
+
+        return normed_inpt
 
     def reverse(self, inpt: T.Tensor, mask: Optional[T.BoolTensor] = None) -> T.Tensor:
         """Unnormalises the inputs given the recorded stats."""
+
+        # Save and check the gradient tracking options
+        grad_setting = T.is_grad_enabled()
+        T.set_grad_enabled(self.track_grad_reverse)
+
+        # Mask and revert the inputs
         sel_inpt = self._mask(inpt, mask)
         unnormed_inpt = sel_inpt * self.vars.sqrt() + self.means
 
@@ -624,15 +663,22 @@ class IterativeNormLayer(nn.Module):
         if mask is not None:
             inpt = inpt.clone()  # prevents inplace operation, bad for autograd
             inpt[mask] = unnormed_inpt.type(inpt.dtype)
-            return inpt
+            unnormed_inpt = inpt
+
+        # Revert the gradient setting
+        T.set_grad_enabled(grad_setting)
 
         return unnormed_inpt
 
-    def update(self, inpt: T.Tensor, mask: Optional[T.BoolTensor] = None) -> None:
+    def update(self, inpt: T.Tensor) -> None:
         """Update the running stats using a batch of data."""
-        inpt = self._mask(inpt, mask)
 
-        # For first iteration
+        # Freeze the model if we already exceed the requested stats
+        T.fill_(self.frozen, self.n >= self.max_n)
+        if self.frozen:
+            return
+
+        # For first iteration, just run the fit on the batch
         if self.n == 0:
             self.fit(inpt, freeze=False)
             return
@@ -650,8 +696,38 @@ class IterativeNormLayer(nn.Module):
             ) * len(inpt)
             self.vars = self.m2 / self.n
 
-        # Freeze the model if we exceed the requested stats
-        self.frozen = self.n >= self.max_n
+
+class SineCosineEncoding:
+    def __init__(
+        self,
+        outp_dim: int = 32,
+        min_value: float = 0.0,
+        max_value: float = 1.0,
+        frequency_scaling: str = "exponential",
+    ) -> None:
+        assert outp_dim % 2 == 0
+        self.outp_dim = outp_dim
+        self.min_value = min_value
+        self.max_value = max_value
+        self.frequency_scaling = frequency_scaling
+
+    def __call__(self, inpt: T.Tensor) -> T.Tensor:
+        cosine = cosine_encoding(
+            inpt,
+            self.outp_dim // 2,
+            self.min_value,
+            self.max_value,
+            self.frequency_scaling,
+        )
+        sine = cosine_encoding(
+            inpt,
+            self.outp_dim // 2,
+            self.min_value,
+            self.max_value,
+            self.frequency_scaling,
+            use_sin=True,
+        )
+        return T.cat([cosine, sine], dim=-1)
 
 
 class CosineEncoding:
@@ -722,3 +798,48 @@ def cosine_encoding(
         raise RuntimeError(f"Unrecognised frequency scaling: {frequency_scaling}")
 
     return T.cos((x + min_value) * freqs * math.pi / (max_value + min_value))
+
+
+def sine_cosine_encoding(
+    x: T.Tensor,
+    outp_dim: int = 32,
+    min_value: float = 0.0,
+    max_value: float = 1.0,
+    frequency_scaling: str = "exponential",
+) -> T.Tensor:
+    """Computes a positional sine and cosine encodings with an increasing
+    series of frequencies.
+
+    See above for more details
+
+    Returns:
+        The cosine embeddings of the input using (out_dim) many frequencies
+    """
+
+    # Unsqueeze if final dimension is flat
+    if x.shape[-1] != 1 or x.dim() == 1:
+        x = x.unsqueeze(-1)
+
+    # Check the the bounds are obeyed
+    if T.any(x > max_value):
+        print("Warning! Passing values to cosine_encoding encoding that exceed max!")
+    if T.any(x < min_value):
+        print("Warning! Passing values to cosine_encoding encoding below min!")
+
+    # Calculate the various frequencies
+    if frequency_scaling == "exponential":
+        freqs = T.arange(outp_dim // 2, device=x.device).exp()
+    elif frequency_scaling == "linear":
+        freqs = T.arange(1, outp_dim // 2 + 1, device=x.device)
+    else:
+        raise RuntimeError(f"Unrecognised frequency scaling: {frequency_scaling}")
+
+    # Scale the frequencies to match the cyclic requirements (0 -> pi)
+    freqs = (x + min_value) * freqs * math.pi / (max_value + min_value)
+
+    # Place the frequencies into the encodings tensor
+    encodings = T.zeros(*x.shape[:-1], outp_dim, device=x.device)
+    encodings[..., outp_dim // 2 :] = T.sin(freqs)
+    encodings[..., : outp_dim // 2] = T.cos(freqs)
+
+    return encodings
