@@ -2,7 +2,7 @@
 projects."""
 
 import math
-from typing import Optional, Union
+from typing import Union
 
 import torch as T
 import torch.nn as nn
@@ -100,7 +100,7 @@ class MLPBlock(nn.Module):
             if drp > 0:
                 self.block.append(nn.Dropout(drp))
 
-    def forward(self, inpt: T.Tensor, ctxt: Optional[T.Tensor] = None) -> T.Tensor:
+    def forward(self, inpt: T.Tensor, ctxt: T.Tensor | None = None) -> T.Tensor:
         """
         args:
             tensor: Pytorch tensor to pass through the network
@@ -155,6 +155,8 @@ class DenseNetwork(nn.Module):
         do_out: bool = True,
         nrm: str = "none",
         drp: float = 0,
+        drp_on_output: bool = False,
+        nrm_on_output: bool = False,
         do_res: bool = False,
         ctxt_in_inpt: bool = True,
         ctxt_in_hddn: bool = False,
@@ -260,7 +262,7 @@ class DenseNetwork(nn.Module):
                     )
                 )
 
-        # Output block (optional and there is no normalisation, dropout or context)
+        # Output block
         if do_out:
             self.output_block = MLPBlock(
                 inpt_dim=self.hddn_dim[-1],
@@ -268,12 +270,16 @@ class DenseNetwork(nn.Module):
                 act=act_o,
                 do_bayesian=do_bayesian,
                 init_zeros=output_init_zeros,
+                nrm=nrm if nrm_on_output else "none",
+                drp=drp if drp_on_output else 0,
             )
 
-    def forward(self, inputs: T.Tensor, ctxt: Optional[T.Tensor] = None) -> T.Tensor:
+    def forward(self, inputs: T.Tensor, ctxt: T.Tensor | None = None) -> T.Tensor:
         """Pass through all layers of the dense network."""
 
-        # Reshape the context if it is available
+        # Reshape the context if it is available. Equivalent to performing
+        # multiple ctxt.unsqueeze(1) until the dim matches the input.
+        # Batch dimension is kept the same.
         if ctxt is not None:
             dim_diff = inputs.dim() - ctxt.dim()
             if dim_diff > 0:
@@ -500,8 +506,8 @@ class IterativeNormLayer(nn.Module):
     def __init__(
         self,
         inpt_dim: Union[T.Tensor, tuple, int],
-        means: Optional[T.Tensor] = None,
-        vars: Optional[T.Tensor] = None,
+        means: T.Tensor | None = None,
+        vars: T.Tensor | None = None,
         n: int = 0,
         max_n: int = 5_00_000,
         extra_dims: Union[tuple, int] = (),
@@ -598,7 +604,7 @@ class IterativeNormLayer(nn.Module):
     def __str__(self) -> str:
         return f"IterativeNormLayer(m={self.means.squeeze()}, v={self.vars.squeeze()})"
 
-    def _mask(self, inpt: T.Tensor, mask: Optional[T.BoolTensor] = None) -> T.Tensor:
+    def _mask(self, inpt: T.Tensor, mask: T.BoolTensor | None = None) -> T.Tensor:
         if mask is None:
             return inpt
         return inpt[mask]
@@ -610,7 +616,7 @@ class IterativeNormLayer(nn.Module):
             )
 
     def fit(
-        self, inpt: T.Tensor, mask: Optional[T.BoolTensor] = None, freeze: bool = True
+        self, inpt: T.Tensor, mask: T.BoolTensor | None = None, freeze: bool = True
     ) -> None:
         """Set the stats given a population of data."""
         inpt = self._mask(inpt, mask)
@@ -621,7 +627,7 @@ class IterativeNormLayer(nn.Module):
         self.m2 = self.vars * self.n
         self.frozen.fill_(True)
 
-    def forward(self, inpt: T.Tensor, mask: Optional[T.BoolTensor] = None) -> T.Tensor:
+    def forward(self, inpt: T.Tensor, mask: T.BoolTensor | None = None) -> T.Tensor:
         """Applies the standardisation to a batch of inputs, also uses the
         inputs to update the running stats if in training mode."""
 
@@ -648,7 +654,7 @@ class IterativeNormLayer(nn.Module):
 
         return normed_inpt
 
-    def reverse(self, inpt: T.Tensor, mask: Optional[T.BoolTensor] = None) -> T.Tensor:
+    def reverse(self, inpt: T.Tensor, mask: T.BoolTensor | None = None) -> T.Tensor:
         """Unnormalises the inputs given the recorded stats."""
 
         # Save and check the gradient tracking options

@@ -29,6 +29,7 @@ def standard_job_array(
     time_hrs: int,
     mem_gb: int,
     opt_dict: Mapping,
+    extra_slurm: str = "",
 ):
 
     # Calculate the total number of jobs to perform
@@ -54,6 +55,9 @@ def standard_job_array(
     else:
         f.write("#SBATCH --partition=shared-cpu,private-dpnc-cpu\n")
 
+    # Include the extra slurm here
+    f.write(extra_slurm + "\n")
+
     # The job array setup using the number of jobs
     f.write(f"\n#SBATCH -a 0-{n_jobs-1}\n\n")
 
@@ -67,11 +71,10 @@ def standard_job_array(
 
     # The command line arguments
     f.write('export XDG_RUNTIME_DIR=""\n')
-    f.write("module load GCC/9.3.0 Singularity/3.7.3-GCC-9.3.0-Go-1.14\n")
 
     # Creating the base singularity execution script
     f.write(f"cd {work_dir}\n")
-    f.write("srun singularity exec --nv -B /srv,/home \\\n")
+    f.write("srun apptainer exec --nv -B /srv,/home \\\n")
     f.write(f"   {image_path} \\\n")
     f.write(f"   {command} \\\n")
 
