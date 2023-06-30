@@ -29,6 +29,7 @@ def standard_job_array(
     time_hrs: int,
     mem_gb: int,
     opt_dict: Mapping,
+    use_dashes: bool = True,
     extra_slurm: str = "",
 ):
 
@@ -62,8 +63,9 @@ def standard_job_array(
     f.write(f"\n#SBATCH -a 0-{n_jobs-1}\n\n")
 
     # Creating the bash lists of the job arguments
-    for opt, vals in opt_dict.items():
-        f.write(f"{opt}=(")
+    simple_keys = [str(k).replace(".", "") for k in opt_dict]
+    for i, (opt, vals) in enumerate(opt_dict.items()):
+        f.write(f"{simple_keys[i]}=(")
         for v in vals:
             f.write(" " + str(v))
         f.write(" )\n")
@@ -80,8 +82,9 @@ def standard_job_array(
 
     # Now include the job array options using the bash lists
     run_tot = 1
-    for opt, vals in opt_dict.items():
-        f.write(f"       --{opt} ${{{opt}")
+    dashdash = "--" if use_dashes else ""
+    for i, (opt, vals) in enumerate(opt_dict.items()):
+        f.write(f"       {dashdash}{opt} ${{{simple_keys[i]}")
         f.write(f"[`expr ${{SLURM_ARRAY_TASK_ID}} / {run_tot} % {len(vals)}`]")
         f.write("} \\\n")
         run_tot *= len(vals)
