@@ -154,6 +154,15 @@ def get_sigmas_karras(
     return (max_inv_rho + ramp * (min_inv_rho - max_inv_rho)) ** rho
 
 
+def sigma_karras_fn(
+    inpt: T.Tensor | float, t_max: float, t_min: float, rho: float = 7
+) -> T.Tensor:
+    inv_rho = 1 / rho
+    max_inv_rho = t_max**inv_rho
+    min_inv_rho = t_min**inv_rho
+    return (max_inv_rho + inpt * (min_inv_rho - max_inv_rho)) ** rho
+
+
 @T.no_grad()
 def sample_heun(
     model,
