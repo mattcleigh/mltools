@@ -334,6 +334,7 @@ def plot_multi_correlations(
     data_labels: list,
     col_labels: list,
     n_bins: int = 50,
+    bins: list | None = None,
     fig_scale: float = 1,
     n_kde_points: int = 50,
     do_err: bool = True,
@@ -356,9 +357,17 @@ def plot_multi_correlations(
     fig, axes = plt.subplots(
         n_features,
         n_features,
-        figsize=((2 * n_features + 3)*fig_scale, (2 * n_features + 1)*fig_scale),
+        figsize=((2 * n_features + 3) * fig_scale, (2 * n_features + 1) * fig_scale),
         gridspec_kw={"wspace": 0.04, "hspace": 0.04},
     )
+
+    # Define the binning as auto or not
+    all_bins = []
+    for n in range(n_features):
+        if bins is None or bins[n] == "auto":
+            all_bins.append(quantile_bins(data_list[0][:, n], bins=n_bins))
+        else:
+            all_bins.append(bins[n])
 
     # Cycle through the rows and columns and set the axis labels
     for row in range(n_features):
@@ -385,7 +394,7 @@ def plot_multi_correlations(
             # For the diagonals they become histograms
             # Bins are based on the first datapoint in the list
             if row == column:
-                bins = quantile_bins(data_list[0][:, row], bins=n_bins)
+                bins = all_bins[column]
                 for i, d in enumerate(data_list):
                     add_hist(
                         axes[row, column],

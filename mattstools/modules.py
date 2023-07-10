@@ -509,7 +509,7 @@ class IterativeNormLayer(nn.Module):
         means: T.Tensor | None = None,
         vars: T.Tensor | None = None,
         n: int = 0,
-        max_n: int = 5_00_000,
+        max_n: int = 1_00_000,
         extra_dims: Union[tuple, int] = (),
         track_grad_forward: bool = False,
         track_grad_reverse: bool = False,
@@ -612,7 +612,7 @@ class IterativeNormLayer(nn.Module):
     def _check_attributes(self) -> None:
         if self.means is None or self.vars is None:
             raise ValueError(
-                "Stats for have not been initialised or fit() has not been run!"
+                "Stats have not been initialised and fit() has not been run!"
             )
 
     def fit(
@@ -625,7 +625,8 @@ class IterativeNormLayer(nn.Module):
         )
         self.n = T.tensor(len(inpt), device=self.means.device)
         self.m2 = self.vars * self.n
-        self.frozen.fill_(True)
+        if freeze:
+            self.frozen.fill_(True)
 
     def forward(self, inpt: T.Tensor, mask: T.BoolTensor | None = None) -> T.Tensor:
         """Applies the standardisation to a batch of inputs, also uses the
