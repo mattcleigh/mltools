@@ -334,6 +334,7 @@ def plot_multi_correlations(
     data_labels: list,
     col_labels: list,
     n_bins: int = 50,
+    fig_scale: float = 1,
     n_kde_points: int = 50,
     do_err: bool = True,
     do_norm: bool = True,
@@ -355,13 +356,13 @@ def plot_multi_correlations(
     fig, axes = plt.subplots(
         n_features,
         n_features,
-        figsize=(2 * n_features + 3, 2 * n_features + 1),
+        figsize=((2 * n_features + 3)*fig_scale, (2 * n_features + 1)*fig_scale),
         gridspec_kw={"wspace": 0.04, "hspace": 0.04},
     )
 
     # Cycle through the rows and columns and set the axis labels
     for row in range(n_features):
-        axes[0, 0].set_ylabel("Normalised Entries", horizontalalignment="right", y=1.0)
+        axes[0, 0].set_ylabel("A.U.", loc="top")
         if row != 0:
             axes[row, 0].set_ylabel(col_labels[row])
         for column in range(n_features):
@@ -375,7 +376,7 @@ def plot_multi_correlations(
                     axis="x", which="both", direction="in", labelbottom=False
                 )
             if row == column == 0:
-                axes[row, column].tick_params(axis="y", colors="w")
+                axes[row, column].yaxis.set_ticklabels([])
             elif column > 0:
                 axes[row, column].tick_params(
                     axis="y", which="both", direction="in", labelbottom=False
