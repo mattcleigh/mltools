@@ -6,7 +6,7 @@ from typing import Mapping, Optional, Union
 
 import torch as T
 import torch.nn as nn
-from torch.nn.functional import dropout, scaled_dot_product_attention, softmax
+from torch.nn.functional import dropout, scaled_dot_product_attention, silu, softmax
 
 from .modules import DenseNetwork
 
@@ -28,10 +28,10 @@ def merge_masks(
     # Create the full mask which combines the attention and padding masks
     merged_mask = None
 
-    # If either pad mask exists, create
+    # If either pad mask exists, expand the attention mask such that padded tokens
+    # are never attended to
     if kv_mask is not None:
-        q_mask = T.full(query.shape[:-1], True, device=query.device)  # Always full
-        merged_mask = q_mask.unsqueeze(-1) & kv_mask.unsqueeze(-2)
+        merged_mask = kv_mask.unsqueeze(-2).expand(-1, query.shape[-2], -1)
 
     # If attention mask exists, create
     if attn_mask is not None:
@@ -41,10 +41,13 @@ def merge_masks(
     if merged_mask is not None:
         merged_mask = merged_mask.unsqueeze(1)
 
-    # If the attention bias exists, convert to a float and add
+    # If the attention bias exists, convert to a float and add to the mask
     if attn_bias is not None:
-        merged_mask = T.where(merged_mask, 0, -T.inf).type(query.dtype)
-        merged_mask = merged_mask + attn_bias.permute(0, 3, 1, 2)
+        if merged_mask is not None:
+            merged_mask = T.where(merged_mask, 0, -T.inf).type(query.dtype)
+            merged_mask = merged_mask + attn_bias.permute(0, 3, 1, 2)
+        else:
+            merged_mask = attn_bias.permute(0, 3, 1, 2)
 
     return merged_mask
 
@@ -137,9 +140,11 @@ class MultiHeadedAttentionBlock(nn.Module):
 
     3) Passes these through to the attention module (message passing)
     - In standard transformers this is the scaled dot product attention
-    - Also takes additional dropout layer to mask the attention
+    - Also takes additional dropout param to mask the attention
 
     4) Flatten out the head dimension and pass through final linear layer
+    - Optional layer norm before linear layer using `do_layer_norm=True`
+    - The output can also be zeroed on init using `init_zeros=True`
     - results are same as if attention was done seperately for each head and concat
     - dim: batch, q_seq, head_dim * num_heads
     """
@@ -150,7 +155,7 @@ class MultiHeadedAttentionBlock(nn.Module):
         num_heads: int = 1,
         drp: float = 0,
         init_zeros: bool = False,
-        do_casual: bool = False,
+        do_selfattn: bool = False,
         do_layer_norm: bool = False,
     ) -> None:
         """
@@ -160,8 +165,9 @@ class MultiHeadedAttentionBlock(nn.Module):
                 - Must allow interger division into model_dim
             drp: The dropout probability used in the MHA operation
             init_zeros: If the final linear layer is initialised with zero weights
-            do_casual: Casual attention should only be used if the q, k, v are the same
-                Slightly faster matrix multiplication at the beginning
+            do_selfattn: Only self attention should only be used if the
+                q, k, v are the same, this allows slightly faster matrix multiplication
+                at the beginning
             do_layer_norm: If a layernorm is applied before the output final linear
                 projection (Only really needed with deep models)
         """
@@ -171,7 +177,7 @@ class MultiHeadedAttentionBlock(nn.Module):
         self.model_dim = model_dim
         self.num_heads = num_heads
         self.head_dim = model_dim // num_heads
-        self.do_casual = do_casual
+        self.do_selfattn = do_selfattn
         self.drp = drp
         self.do_layer_norm = do_layer_norm
 
@@ -179,8 +185,8 @@ class MultiHeadedAttentionBlock(nn.Module):
         if self.head_dim * num_heads != model_dim:
             raise ValueError("Model dimension must be divisible by number of heads!")
 
-        # Initialise the weight matrices (only 1 for do casual)
-        if do_casual:
+        # Initialise the weight matrices (only 1 for do self attention)
+        if do_selfattn:
             self.all_linear = nn.Linear(model_dim, 3 * model_dim)
         else:
             self.q_linear = nn.Linear(model_dim, model_dim)
@@ -230,7 +236,7 @@ class MultiHeadedAttentionBlock(nn.Module):
         merged_mask = merge_masks(kv_mask, attn_mask, attn_bias, q)
 
         # Generate the q, k, v projections
-        if self.do_casual:
+        if self.do_selfattn:
             q_out, k_out, v_out = self.all_linear(q).chunk(3, -1)
         else:
             q_out = self.q_linear(q)
@@ -267,7 +273,8 @@ class TransformerEncoderLayer(nn.Module):
     """A transformer encoder layer based on the GPT-2+Normformer style
     arcitecture.
 
-    We choose Normformer as it has often proved to be the most stable to train
+    We choose a cross between Normformer and FoundationTransformers as they have often
+    proved to be the most stable to train
     https://arxiv.org/abs/2210.06423
     https://arxiv.org/abs/2110.09456
 
@@ -301,7 +308,7 @@ class TransformerEncoderLayer(nn.Module):
 
         # The basic blocks
         self.self_attn = MultiHeadedAttentionBlock(
-            model_dim, do_casual=True, **mha_config
+            model_dim, do_selfattn=True, **mha_config
         )
         self.dense = DenseNetwork(
             model_dim, outp_dim=model_dim, ctxt_dim=ctxt_dim, **dense_config
@@ -362,10 +369,10 @@ class TransformerDecoderLayer(nn.Module):
 
         # The basic blocks
         self.self_attn = MultiHeadedAttentionBlock(
-            model_dim, do_casual=True, **mha_config
+            model_dim, do_selfattn=True, **mha_config
         )
         self.cross_attn = MultiHeadedAttentionBlock(
-            model_dim, do_casual=False, **mha_config
+            model_dim, do_selfattn=False, **mha_config
         )
         self.dense = DenseNetwork(
             model_dim, outp_dim=model_dim, ctxt_dim=ctxt_dim, **dense_config
@@ -479,7 +486,7 @@ class TransformerCrossAttentionLayer(nn.Module):
 
         # The basic blocks
         self.cross_attn = MultiHeadedAttentionBlock(
-            model_dim, do_casual=False, **mha_config
+            model_dim, do_selfattn=False, **mha_config
         )
         self.dense = DenseNetwork(
             model_dim, outp_dim=model_dim, ctxt_dim=ctxt_dim, **dense_config
@@ -1290,6 +1297,7 @@ class FullCrossAttentionEncoder(nn.Module):
         inpt_dim: int,
         outp_dim: int,
         ctxt_dim: int = 0,
+        use_lite: bool = False,
         cae_config: Optional[Mapping] = None,
         node_embd_config: Optional[Mapping] = None,
         outp_embd_config: Optional[Mapping] = None,
@@ -1300,6 +1308,7 @@ class FullCrossAttentionEncoder(nn.Module):
             inpt_dim: Dim. of each element of the sequence
             outp_dim: Dim. of each element of output sequence
             ctxt_dim: Dim. of the context vector to pass to the embedding nets
+            use_lite: Use the lite version (no global MLP block)
             cae_config: Keyword arguments to pass to the CrossAttentionEncoder
             node_embd_config: Keyword arguments for node dense embedder
             outp_embd_config: Keyword arguments for output dense embedder
@@ -1336,7 +1345,10 @@ class FullCrossAttentionEncoder(nn.Module):
             self.ctxt_out = 0
 
         # Initialise the TVE, the main part of this network
-        self.cae = CrossAttentionEncoder(**cae_config, ctxt_dim=self.ctxt_out)
+        if use_lite:
+            self.cae = CrossAttentionLiteEncoder(**cae_config, ctxt_dim=self.ctxt_out)
+        else:
+            self.cae = CrossAttentionEncoder(**cae_config, ctxt_dim=self.ctxt_out)
         self.model_dim = self.cae.model_dim
 
         # Initialise all embedding networks
@@ -1472,3 +1484,75 @@ class FullTransformerDecoder(nn.Module):
         )
         q_seq = self.outp_embd(q_seq, ctxt)
         return q_seq
+
+
+class CrossAttentionLiteEncoder(nn.Module):
+    """A type of encoder which includes uses cross attention to pool into a
+    global token which is then distributed back to the point cloud.
+
+    This is a lite model as we dont include an MLP update for the global token.
+
+    Sequence -> Squence
+
+    It is non resizing, so model_dim must be used for inputs and outputs
+    """
+
+    def __init__(
+        self,
+        model_dim: int = 64,
+        num_layers: int = 5,
+        mha_config: Optional[Mapping] = None,
+        dense_config: Optional[Mapping] = None,
+        ctxt_dim: int = 0,
+    ) -> None:
+        """
+        Args:
+            model_dim: Feature size for input, output, and all intermediate sequences
+            num_layers: Number of there and back cross attention layers
+            mha_config: Keyword arguments for all multiheaded attention layers
+            dense_config: Keyword arguments for the dense network in each layer
+            ctxt_dim: Dimension of the context inputs
+        """
+        super().__init__()
+        self.model_dim = model_dim
+        self.num_layers = num_layers
+
+        # Initialise the learnable perceiver tokens as random values
+        self.class_token = nn.Parameter(T.randn((1, 1, model_dim)))
+
+        # The cross attention layers going from our original sequence
+        self.from_layers = nn.ModuleList(
+            [
+                MultiHeadedAttentionBlock(model_dim, **(mha_config or {}))
+                for _ in range(num_layers)
+            ]
+        )
+
+        # The cross attention layers going to our original sequence
+        self.to_layers = nn.ModuleList(
+            [
+                TransformerCrossAttentionLayer(
+                    model_dim, mha_config, dense_config, ctxt_dim
+                )
+                for _ in range(num_layers)
+            ]
+        )
+
+    def forward(
+        self,
+        seq: T.Tensor,
+        mask: Optional[T.BoolTensor] = None,
+        ctxt: Optional[T.Tensor] = None,
+    ) -> Union[T.Tensor, tuple]:
+        """Pass the input through all layers sequentially."""
+
+        # Make sure the class token is expanded to batch size
+        # Use shape not len as it is ONNX safe!
+        class_token = self.class_token.expand(seq.shape[0], 1, self.model_dim)
+
+        # Pass through the layers of there and back cross attention
+        for from_layer, to_layer in zip(self.from_layers, self.to_layers):
+            class_token = from_layer(class_token, seq, kv_mask=mask)
+            class_token = silu(class_token)  # No MLP, just non-linearity
+            seq = to_layer(seq, class_token, None, ctxt)
+        return seq

@@ -100,6 +100,7 @@ class MyBCEWithLogit(nn.Module):
 
     - Automatically squeezes out the batch dimension to ensure same shape
     - Automatically changes targets to floats
+    - Automatically puts anything nonzero into class 1
 
     Vanilla BCE wants identical shapes (batch x output)
     While CE loss wants targets just as indices (batch)
@@ -111,7 +112,7 @@ class MyBCEWithLogit(nn.Module):
 
     def forward(self, outputs, targets):
         """Return the loss."""
-        return self.loss_fn(outputs.squeeze(dim=-1), targets.float())
+        return self.loss_fn(outputs.squeeze(dim=-1), (targets != 0).float())
 
 
 class ModifiedSinkhorn(nn.Module):

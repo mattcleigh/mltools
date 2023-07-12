@@ -291,8 +291,14 @@ def add_hist(
     """
 
     # Compute the histogram
-    hist, _ = np.histogram(data, bins, density=do_norm)
+    hist, _ = np.histogram(data, bins)
     hist_err = np.sqrt(hist)
+
+    # Normalise the errors
+    if do_norm:
+        divisor = np.array(np.diff(bins), float) / hist.sum()
+        hist = hist * divisor
+        hist_err = hist_err * divisor
 
     # Apply the scale factors
     if scale_factor is not None:
@@ -320,7 +326,7 @@ def add_hist(
 
 
 def quantile_bins(data, bins=50, low=0.001, high=0.999, axis=None) -> np.ndarray:
-    return np.linspace(*np.quantile(data, [0.001, 0.999], axis=axis), bins)
+    return np.linspace(*np.quantile(data, [low, high], axis=axis), bins)
 
 
 def plot_multi_correlations(
@@ -328,8 +334,11 @@ def plot_multi_correlations(
     data_labels: list,
     col_labels: list,
     n_bins: int = 50,
+    bins: list | None = None,
+    fig_scale: float = 1,
     n_kde_points: int = 50,
     do_err: bool = True,
+    do_norm: bool = True,
     hist_kwargs: list | None = None,
     err_kwargs: list | None = None,
     legend_kwargs: dict | None = None,
@@ -348,13 +357,21 @@ def plot_multi_correlations(
     fig, axes = plt.subplots(
         n_features,
         n_features,
-        figsize=(2 * n_features + 3, 2 * n_features + 1),
+        figsize=((2 * n_features + 3) * fig_scale, (2 * n_features + 1) * fig_scale),
         gridspec_kw={"wspace": 0.04, "hspace": 0.04},
     )
 
+    # Define the binning as auto or not
+    all_bins = []
+    for n in range(n_features):
+        if bins is None or bins[n] == "auto":
+            all_bins.append(quantile_bins(data_list[0][:, n], bins=n_bins))
+        else:
+            all_bins.append(bins[n])
+
     # Cycle through the rows and columns and set the axis labels
     for row in range(n_features):
-        axes[0, 0].set_ylabel("Normalised Entries", horizontalalignment="right", y=1.0)
+        axes[0, 0].set_ylabel("A.U.", loc="top")
         if row != 0:
             axes[row, 0].set_ylabel(col_labels[row])
         for column in range(n_features):
@@ -368,7 +385,7 @@ def plot_multi_correlations(
                     axis="x", which="both", direction="in", labelbottom=False
                 )
             if row == column == 0:
-                axes[row, column].tick_params(axis="y", colors="w")
+                axes[row, column].yaxis.set_ticklabels([])
             elif column > 0:
                 axes[row, column].tick_params(
                     axis="y", which="both", direction="in", labelbottom=False
@@ -377,7 +394,7 @@ def plot_multi_correlations(
             # For the diagonals they become histograms
             # Bins are based on the first datapoint in the list
             if row == column:
-                bins = quantile_bins(data_list[0][:, row], bins=n_bins)
+                bins = all_bins[column]
                 for i, d in enumerate(data_list):
                     add_hist(
                         axes[row, column],
@@ -386,6 +403,7 @@ def plot_multi_correlations(
                         hist_kwargs=hist_kwargs[i],
                         err_kwargs=err_kwargs[i],
                         do_err=do_err,
+                        do_norm=do_norm,
                     )
                     axes[row, column].set_xlim(bins[0], bins[-1])
 
@@ -451,13 +469,14 @@ def plot_multi_hists_2(
     logy: bool = False,
     y_label: Optional[str] = None,
     ylim: Optional[list] = None,
+    ypad: float = 1.5,
     rat_ylim: tuple = (0, 2),
     rat_label: Optional[str] = None,
     scale: int = 5,
     do_legend: bool = True,
     hist_kwargs: Optional[list] = None,
     err_kwargs: Optional[list] = None,
-    legend_kwargs: Optional[dict] = None,
+    legend_kwargs: Optional[list] = None,
     extra_text: Optional[list] = None,
     incl_overflow: bool = True,
     incl_underflow: bool = True,
@@ -484,6 +503,7 @@ def plot_multi_hists_2(
         logy: If we should use the log in the y-axis
         y_label: Label for the y axis of the plots
         ylim: The y limits for all plots
+        ypad: The amount by which to pad the whitespace above the plots
         rat_ylim: The y limits of the ratio plots
         rat_label: The label for the ratio plot
         scale: The size in inches for each subplot
@@ -516,6 +536,8 @@ def plot_multi_hists_2(
         err_kwargs = len(data_list) * [err_kwargs]
     if not isinstance(extra_text, list):
         extra_text = len(col_labels) * [extra_text]
+    if not isinstance(legend_kwargs, list):
+        legend_kwargs = len(col_labels) * [legend_kwargs]
 
     # Cycle through the datalist and ensure that they are 2D, as each column is an axis
     for data_idx in range(len(data_list)):
@@ -607,8 +629,8 @@ def plot_multi_hists_2(
             # Manually do the density so that the error can be scaled
             if do_norm:
                 divisor = np.array(np.diff(ax_bins), float) / hist.sum()
-                hist /= divisor
-                hist_err /= divisor
+                hist = hist * divisor
+                hist_err = hist_err * divisor
 
             # Apply the scale factors
             if scale_factors[data_idx] is not None:
@@ -699,9 +721,9 @@ def plot_multi_hists_2(
         else:
             _, ylim2 = axes[0, ax_idx].get_ylim()
             if logy:
-                axes[0, ax_idx].set_ylim(top=10 ** (np.log10(ylim2) * 1.50))
+                axes[0, ax_idx].set_ylim(top=np.exp(np.log(ylim2) + ypad))
             else:
-                axes[0, ax_idx].set_ylim(top=ylim2 * 1.35)
+                axes[0, ax_idx].set_ylim(top=ylim2 * ypad)
         if y_label is not None:
             axes[0, ax_idx].set_ylabel(y_label)
         elif do_norm:
@@ -711,15 +733,17 @@ def plot_multi_hists_2(
 
         # Ratio Y axis
         if do_ratio_to_first:
-            axes[1, ax_idx].set_ylim(rat_ylim)
+            if rat_ylim is not None:
+                axes[1, ax_idx].set_ylim(rat_ylim)
             if rat_label is not None:
                 axes[1, ax_idx].set_ylabel(rat_label)
             else:
                 axes[1, ax_idx].set_ylabel(f"Ratio to {data_labels[0]}")
 
-            # Add a black line for the ratio at y = 1
-            x_min, x_max = axes[1, ax_idx].get_xlim()
-            axes[1, ax_idx].axhline(1, x_min, x_max, color="k", zorder=-99999)
+            # Ratio X line:
+            axes[1, ax_idx].hlines(
+                1, *axes[1, ax_idx].get_xlim(), colors="k", zorder=-9999
+            )
 
         # Extra text
         if extra_text[ax_idx] is not None:
@@ -727,8 +751,8 @@ def plot_multi_hists_2(
 
         # Legend
         if do_legend:
-            legend_kwargs = legend_kwargs or {}
-            axes[0, ax_idx].legend(**legend_kwargs)
+            lk = legend_kwargs[ax_idx] or {}
+            axes[0, ax_idx].legend(**lk)
 
     # Final figure layout
     fig.tight_layout()
@@ -999,7 +1023,7 @@ def plot_multi_hists(
             _, ylim2 = axes[i, 0].get_ylim()
             if logy:
                 # pad up the ylim (which is in logscale) by 50%
-                ylim2 = 10 ** (np.log10(ylim2) * 1.50)
+                ylim2 = 10 ** (np.log10(ylim2) * 1.35)
                 setylim = (1, ylim2)
             else:
                 ylim2 = ylim2 * 1.35
