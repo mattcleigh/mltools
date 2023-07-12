@@ -19,20 +19,22 @@ log = logging.getLogger(__name__)
 
 
 @rank_zero_only
-def reload_original_config(cfg: OmegaConf, get_best: bool = False) -> OmegaConf:
+def reload_original_config(
+    cfg: OmegaConf, get_best: bool = False, path: str = "."
+) -> OmegaConf:
     """Replaces the cfg with the one stored at the checkpoint location.
 
     Will also set the chkpt_dir to the latest version of the last or
     best checkpoint
     """
 
-    # Load the original config found in the the file directory
-    orig_cfg = OmegaConf.load(Path("full_config.yaml"))
+    # Load the original config found in the the file directorys
+    orig_cfg = OmegaConf.load(Path(path, "full_config.yaml"))
 
     # Get the latest updated checkpoint with the prefix last or best
     flag = "best" if get_best else "last"
     orig_cfg.ckpt_path = str(
-        sorted(Path.cwd().glob(f"checkpoints/{flag}*.ckpt"), key=os.path.getmtime)[-1]
+        sorted(Path(path).glob(f"checkpoints/{flag}*.ckpt"), key=os.path.getmtime)[-1]
     )
 
     # Set the wandb logger to attempt to resume the job

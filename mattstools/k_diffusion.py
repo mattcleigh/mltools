@@ -3,6 +3,7 @@ import math
 import torch as T
 import torch.nn as nn
 from pyparsing import Mapping
+from tqdm import trange
 
 from .torch_utils import append_dims
 
@@ -81,6 +82,37 @@ def one_step_ideal(x, data, sigma_start, sigma_end):
     return x + d * dt
 
 
+def to_d(x, sigma, denoised):
+    """Converts a denoiser output to a Karras ODE derivative."""
+    return (x - denoised) / append_dims(sigma, x.ndim)
+
+
+@T.no_grad()
+def one_step_dpm_2(model, x, sigma_start, sigma_end, extra_args):
+    """Apply just one step of the DPM2 to get two adjacent points on the PF-
+    ODE."""
+
+    # Initial setup
+    extra_args = extra_args or {}
+
+    # Denoise the sample, and calculate derivative
+    denoised = model(x, sigma_start, **extra_args)
+    d = to_d(x, sigma_start, denoised)
+
+    # Get the midpoint sigma between the start and end
+    sigma_mid = sigma_start.log().lerp(sigma_end.log(), 0.5).exp()
+    dt_1 = append_dims(sigma_mid - sigma_start, x.dim())
+    dt_2 = append_dims(sigma_end - sigma_start, x.dim())
+
+    # DPM2 2nd order method
+    x_2 = x + d * dt_1
+    denoised_2 = model(x_2, sigma_mid, **extra_args)
+    d_2 = to_d(x_2, sigma_mid, denoised_2)
+    x = x + d_2 * dt_2
+
+    return x
+
+
 @T.no_grad()
 def one_step_heun(model, x, sigma_start, sigma_end, extra_args):
     """Apply just one step of the heun-solver to get two adjacent points on the
@@ -139,6 +171,7 @@ def sample_heun(
     do_heun_step: bool = True,
     keep_all: bool = False,
     extra_args: Mapping | None = None,
+    disable: bool | None = None,
 ) -> None:
     """Deterministic sampler using Heun's second order method.
 
@@ -177,7 +210,7 @@ def sample_heun(
     extra_args = extra_args or {}
 
     # Start iterating through each timestep
-    for i in range(num_steps):
+    for i in trange(num_steps, disable=disable):
         # Denoise the sample, and calculate derivative and the time step
         denoised = model(x, sigmas[i] * sigma_shape, **extra_args)
         d = (x - denoised) / sigmas[i]
@@ -214,6 +247,7 @@ def sample_stochastic_heun(
     s_tmax: float = 50.0,
     s_noise: float = 1.003,
     extra_args: Mapping | None = None,
+    disable: bool | None = None,
 ) -> None:
     """Stochastic sampler using Heun's second order method.
 
@@ -262,7 +296,7 @@ def sample_stochastic_heun(
     extra_args = extra_args or {}
 
     # Start iterating through each timestep
-    for i in range(num_steps):
+    for i in trange(num_steps, disable=disable):
         # Get gamma factor (time perturbation)
         gamma = (
             min(s_churn / num_steps, math.sqrt(2.0) - 1)
