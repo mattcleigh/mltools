@@ -741,3 +741,8 @@ def get_max_cpu_suggest():
 def log_squash(data: T.Tensor) -> T.Tensor:
     """Apply a log squashing function for distributions with high tails."""
     return T.sign(data) * T.log(T.abs(data) + 1)
+
+
+def undo_log_squash(data: T.Tensor) -> T.Tensor:
+    """Undo the log squash function above."""
+    return T.sign(data) * (T.exp(T.abs(data)) - 1)

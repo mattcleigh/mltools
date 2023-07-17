@@ -313,7 +313,7 @@ def add_hist(
 
 
 def quantile_bins(data, bins=50, low=0.001, high=0.999, axis=None) -> np.ndarray:
-    return np.linspace(*np.quantile(data, [0.001, 0.999], axis=axis), bins)
+    return np.linspace(*np.quantile(data, [low, high], axis=axis), bins)
 
 
 def plot_multi_correlations(

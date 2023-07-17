@@ -42,7 +42,7 @@ def champfer_loss(mask_a, pc_a, mask_b, pc_b):
     return 0.5 * (T.sum(min1, dim=-1) + T.sum(min2, dim=-1))
 
 
-def kld_to_norm(means: T.Tensor, log_stds: T.Tensor, reduce="mean") -> T.Tensor:
+def kld_to_norm(means: T.Tensor, log_stds: T.Tensor, reduce="none") -> T.Tensor:
     """Calculate the KL-divergence to a unit normal distribution."""
     loss = 0.5 * (means * means + (2 * log_stds).exp() - 2 * log_stds - 1)
     if reduce == "mean":
@@ -178,7 +178,7 @@ def masked_dist_loss(
     pc_a_mask: T.BoolTensor,
     pc_b: T.Tensor,
     pc_b_mask: T.BoolTensor,
-    reduce: str = "mean",
+    reduce: str = "none",
 ) -> T.Tensor:
     """Calculates the distribution loss between two masked pointclouds.
 
