@@ -704,39 +704,6 @@ class IterativeNormLayer(nn.Module):
             self.vars = self.m2 / self.n
 
 
-class SineCosineEncoding:
-    def __init__(
-        self,
-        outp_dim: int = 32,
-        min_value: float = 0.0,
-        max_value: float = 1.0,
-        frequency_scaling: str = "exponential",
-    ) -> None:
-        assert outp_dim % 2 == 0
-        self.outp_dim = outp_dim
-        self.min_value = min_value
-        self.max_value = max_value
-        self.frequency_scaling = frequency_scaling
-
-    def __call__(self, inpt: T.Tensor) -> T.Tensor:
-        cosine = cosine_encoding(
-            inpt,
-            self.outp_dim // 2,
-            self.min_value,
-            self.max_value,
-            self.frequency_scaling,
-        )
-        sine = cosine_encoding(
-            inpt,
-            self.outp_dim // 2,
-            self.min_value,
-            self.max_value,
-            self.frequency_scaling,
-            use_sin=True,
-        )
-        return T.cat([cosine, sine], dim=-1)
-
-
 class CosineEncoding:
     def __init__(
         self,
@@ -807,46 +774,76 @@ def cosine_encoding(
     return T.cos((x + min_value) * freqs * math.pi / (max_value + min_value))
 
 
-def sine_cosine_encoding(
-    x: T.Tensor,
-    outp_dim: int = 32,
-    min_value: float = 0.0,
-    max_value: float = 1.0,
-    frequency_scaling: str = "exponential",
-) -> T.Tensor:
-    """Computes a positional sine and cosine encodings with an increasing
-    series of frequencies.
+class CosineEncodingLayer(nn.Module):
+    def __init__(
+        self,
+        inpt_dim,
+        encoding_dim,
+        scheme: str = "exponential",
+        min_value: float | list | T.Tensor = 0.0,
+        max_value: float | list | T.Tensor = 1.0,
+        do_sin: bool = False,
+    ) -> None:
+        super().__init__()
 
-    See above for more details
+        # Check that the output dim is compatible with cos/sin
+        if do_sin:
+            assert encoding_dim % 2 == 0
 
-    Returns:
-        The cosine embeddings of the input using (out_dim) many frequencies
-    """
+        # Attributes
+        self.scheme = scheme
+        self.do_sin = do_sin
+        self.inpt_dim = inpt_dim
+        self.encoding_dim = encoding_dim
+        self.outp_dim = encoding_dim * inpt_dim
 
-    # Unsqueeze if final dimension is flat
-    if x.shape[-1] != 1 or x.dim() == 1:
-        x = x.unsqueeze(-1)
+        # Convert the min and max to tensors
+        if not isinstance(min_value, T.Tensor):
+            min_value = T.tensor(min_value)
+        if not isinstance(max_value, T.Tensor):
+            max_value = T.tensor(max_value)
 
-    # Check the the bounds are obeyed
-    if T.any(x > max_value):
-        print("Warning! Passing values to cosine_encoding encoding that exceed max!")
-    if T.any(x < min_value):
-        print("Warning! Passing values to cosine_encoding encoding below min!")
+        # Store the min and max values as buffers
+        self.register_buffer("min_value", min_value)
+        self.register_buffer("max_value", max_value)
 
-    # Calculate the various frequencies
-    if frequency_scaling == "exponential":
-        freqs = T.arange(outp_dim // 2, device=x.device).exp()
-    elif frequency_scaling == "linear":
-        freqs = T.arange(1, outp_dim // 2 + 1, device=x.device)
-    else:
-        raise RuntimeError(f"Unrecognised frequency scaling: {frequency_scaling}")
+        # Create the frequencies to use
+        freq_dim = encoding_dim // 2 if do_sin else encoding_dim
+        freqs = T.arange(freq_dim).float().unsqueeze(-1)
+        if scheme == "exponential":
+            freqs = 2**freqs
+        elif scheme == "linear":
+            freqs = freqs + 1
+        else:
+            raise ValueError(f"Unrecognised frequency scaling: {scheme}")
+        self.register_buffer("freqs", freqs)
 
-    # Scale the frequencies to match the cyclic requirements (0 -> pi)
-    freqs = (x + min_value) * freqs * math.pi / (max_value + min_value)
+    def _check_bounds(self, x: T.Tensor) -> None:
+        """Throw a warning if the input to the layer will yeild degenerate
+        outputs."""
 
-    # Place the frequencies into the encodings tensor
-    encodings = T.zeros(*x.shape[:-1], outp_dim, device=x.device)
-    encodings[..., outp_dim // 2 :] = T.sin(freqs)
-    encodings[..., : outp_dim // 2] = T.cos(freqs)
+        # Check to see if the inputs are within the bounds
+        if T.any(x > self.max_value):
+            print("Warning! Passing values to CosineEncodingLayer encoding above max!")
+        if T.any(x < self.min_value):
+            print("Warning! Passing values to CosineEncodingLayer encoding below min!")
 
-    return encodings
+    def forward(self, x: T.Tensor):
+        self._check_bounds(x)
+
+        # Scale the inputs between 0 and pi
+        x = (x + self.min_value) * math.pi / (self.max_value + self.min_value)
+
+        # Apply with the frequencies which broadcasts all inputs
+        x = (x.unsqueeze(-2) * self.freqs).flatten(start_dim=-2)
+
+        # Return either the sin/cosine transformations
+        if self.do_sin:
+            return T.cat([x.cos(), x.sin()], dim=-1)
+        return x.cos()
+
+    def __str__(self) -> str:
+        return self.__repr__()
+
+    def __repr__(self) -> str:
+        return f"CosineEncodingLayer({self.inpt_dim}, {self.encoding_dim})"

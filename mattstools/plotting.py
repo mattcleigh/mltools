@@ -364,7 +364,7 @@ def plot_multi_correlations(
     # Define the binning as auto or not
     all_bins = []
     for n in range(n_features):
-        if bins is None or bins[n] == "auto":
+        if bins is None or (isinstance(bins[n], str) and bins[n] == "auto"):
             all_bins.append(quantile_bins(data_list[0][:, n], bins=n_bins))
         else:
             all_bins.append(bins[n])
