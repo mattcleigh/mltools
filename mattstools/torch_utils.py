@@ -12,7 +12,7 @@ import torch.optim.lr_scheduler as schd
 # from geomloss import SamplesLoss
 from torch.utils.data import Dataset, Subset, random_split
 
-from .loss import ChampferLoss, EnergyMovers, ModifiedSinkhorn, MyBCEWithLogit, VAELoss
+from .loss import ChampferLoss, MyBCEWithLogit, VAELoss
 from .optimisers import Lookahead
 from .schedulers import CyclicWithWarmup, LinearWarmupRootDecay, WarmupToConstant
 
@@ -257,14 +257,8 @@ def get_loss_fn(name: Union[partial, str], **kwargs) -> nn.Module:
         return nn.MSELoss(reduction="none")
     if name == "mae":
         return nn.L1Loss(reduction="none")
-
     if name == "champfer":
         return ChampferLoss()
-    if name == "modifiedsinkhorn":
-        return ModifiedSinkhorn()
-    if name == "energymovers":
-        return EnergyMovers(**kwargs)
-
     # Encoding losses
     if name == "vaeloss":
         return VAELoss()
