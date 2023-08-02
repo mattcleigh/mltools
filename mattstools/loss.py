@@ -4,7 +4,8 @@ from typing import Tuple, Union
 
 import torch as T
 import torch.nn as nn
-from geomloss import SamplesLoss
+
+# from geomloss import SamplesLoss
 
 # from jetnet.losses import EMDLoss
 
@@ -115,30 +116,30 @@ class MyBCEWithLogit(nn.Module):
         return self.loss_fn(outputs.squeeze(dim=-1), (targets != 0).float())
 
 
-class ModifiedSinkhorn(nn.Module):
-    def __init__(self) -> None:
-        """Applies four different sinkhorn loss functions:
+# class ModifiedSinkhorn(nn.Module):
+#     def __init__(self) -> None:
+#         """Applies four different sinkhorn loss functions:
 
-        1)  PT Weighted sinkhorn loss of eta/phi point cloud (main one)
-        2)  Champfer loss on eta/phi point cloud (no weights) 3)
-        Champfer loss on sinkhorn marginal 4)  Huber loss on all total
-        Pt
-        """
-        super().__init__()
-        self.snk = GeomWrapper(SamplesLoss(loss="sinkhorn"))
-        self.w = 1
+#         1)  PT Weighted sinkhorn loss of eta/phi point cloud (main one)
+#         2)  Champfer loss on eta/phi point cloud (no weights) 3)
+#         Champfer loss on sinkhorn marginal 4)  Huber loss on all total
+#         Pt
+#         """
+#         super().__init__()
+#         self.snk = GeomWrapper(SamplesLoss(loss="sinkhorn"))
+#         self.w = 1
 
-    def forward(self, a_mask, pc_a, b_mask, pc_b):
-        a_pt = a_mask * pc_a[..., -1]
-        b_pt = b_mask * pc_b[..., -1]
-        a_etaphi = pc_a[..., :-1]
-        b_etaphi = pc_b[..., :-1]
-        loss = (
-            self.snk(a_pt, a_etaphi.detach(), b_pt, b_etaphi.detach())
-            + self.snk(a_mask, a_etaphi, b_mask, b_etaphi)
-            + self.snk(a_mask, a_pt.unsqueeze(-1), b_mask, b_pt.unsqueeze(-1))
-        )
-        return loss
+#     def forward(self, a_mask, pc_a, b_mask, pc_b):
+#         a_pt = a_mask * pc_a[..., -1]
+#         b_pt = b_mask * pc_b[..., -1]
+#         a_etaphi = pc_a[..., :-1]
+#         b_etaphi = pc_b[..., :-1]
+#         loss = (
+#             self.snk(a_pt, a_etaphi.detach(), b_pt, b_etaphi.detach())
+#             + self.snk(a_mask, a_etaphi, b_mask, b_etaphi)
+#             + self.snk(a_mask, a_pt.unsqueeze(-1), b_mask, b_pt.unsqueeze(-1))
+#         )
+#         return loss
 
 
 class EnergyMovers(nn.Module):
