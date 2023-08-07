@@ -834,7 +834,7 @@ class FullTransformerVectorEncoder(nn.Module):
         if self.edge_dim:
             attn_bias = self.edge_embd(attn_bias, ctxt)
 
-        # Pass throught the tve
+        # Pass through the tve
         output = self.tve(
             seq,
             mask,
