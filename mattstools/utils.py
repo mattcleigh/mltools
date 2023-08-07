@@ -40,7 +40,7 @@ def standard_job_array(
             vals = [vals]
             opt_dict[key] = vals
         n_jobs *= len(vals)
-    print(f"Generating gridsearch with {n_jobs} subjobs")
+    print(f"Generating job array with {n_jobs} subjobs")
 
     # Creating the slurm submision file
     f = open(f"{job_name}.sh", "w", newline="\n", encoding="utf-8")
@@ -84,7 +84,7 @@ def standard_job_array(
     run_tot = 1
     dashdash = "--" if use_dashes else ""
     for i, (opt, vals) in enumerate(opt_dict.items()):
-        f.write(f"       {dashdash}{opt} ${{{simple_keys[i]}")
+        f.write(f"       {dashdash}{opt}=${{{simple_keys[i]}")
         f.write(f"[`expr ${{SLURM_ARRAY_TASK_ID}} / {run_tot} % {len(vals)}`]")
         f.write("} \\\n")
         run_tot *= len(vals)
