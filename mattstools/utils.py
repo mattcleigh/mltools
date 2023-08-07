@@ -5,8 +5,9 @@ import json
 import math
 import operator
 from functools import reduce
+from itertools import islice
 from pathlib import Path
-from typing import Any, Mapping, Union
+from typing import Any, Generator, Iterable, Mapping, Union
 
 import yaml
 from dotmap import DotMap
@@ -307,3 +308,12 @@ def args_into_conf(
     # Cycle through all of the destinations and place in the dictionary
     for dest in dest_keychains:
         set_in_dict(conf, dest.split("/"), val)
+
+
+def batched(iterable: Iterable, n: int) -> Generator:
+    "Batch data into tuples of length n. The last batch may be shorter."
+    # batched('ABCDEFG', 3) --> ABC DEF G
+    assert n >= 1
+    it = iter(iterable)
+    while batch := tuple(islice(it, n)):
+        yield batch

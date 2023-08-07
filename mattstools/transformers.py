@@ -1297,7 +1297,6 @@ class FullCrossAttentionEncoder(nn.Module):
         inpt_dim: int,
         outp_dim: int,
         ctxt_dim: int = 0,
-        use_lite: bool = False,
         cae_config: Mapping | None = None,
         node_embd_config: Mapping | None = None,
         outp_embd_config: Mapping | None = None,
@@ -1308,7 +1307,6 @@ class FullCrossAttentionEncoder(nn.Module):
             inpt_dim: Dim. of each element of the sequence
             outp_dim: Dim. of each element of output sequence
             ctxt_dim: Dim. of the context vector to pass to the embedding nets
-            use_lite: Use the lite version (no global MLP block)
             cae_config: Keyword arguments to pass to the CrossAttentionEncoder
             node_embd_config: Keyword arguments for node dense embedder
             outp_embd_config: Keyword arguments for output dense embedder
@@ -1345,10 +1343,7 @@ class FullCrossAttentionEncoder(nn.Module):
             self.ctxt_out = 0
 
         # Initialise the TVE, the main part of this network
-        if use_lite:
-            self.cae = CrossAttentionLiteEncoder(**cae_config, ctxt_dim=self.ctxt_out)
-        else:
-            self.cae = CrossAttentionEncoder(**cae_config, ctxt_dim=self.ctxt_out)
+        self.cae = CrossAttentionEncoder(**cae_config, ctxt_dim=self.ctxt_out)
         self.model_dim = self.cae.model_dim
 
         # Initialise all embedding networks
