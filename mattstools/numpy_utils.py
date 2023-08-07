@@ -3,6 +3,45 @@ from typing import Optional
 import numpy as np
 
 
+def unison_shuffled_copies(*args) -> tuple:
+    """Shuffle multiple arrays in unison along the first axis.
+
+    Parameters
+    ----------
+    *args : array_like
+        One or more input arrays to be shuffled.
+
+    Returns
+    -------
+    tuple
+        A tuple of shuffled copies of the input arrays.
+
+    Raises
+    ------
+    AssertionError
+        If the input arrays do not have the same length along the first axis.
+
+    Examples
+    --------
+    >>> a = np.array([1, 2, 3])
+    >>> b = np.array([4, 5, 6])
+    >>> c, d = unison_shuffled_copies(a, b)
+    >>> print(c)
+    [2 1 3]
+    >>> print(d)
+    [5 4 6]
+
+    Notes
+    -----
+    This function uses `numpy.random.permutation` to generate a random permutation
+    of indices and applies it to each input array.
+    """
+    n = len(args[0])
+    assert all(len(a) == n for a in args)
+    p = np.random.permutation(n)
+    return (a[p] for a in args)
+
+
 def onehot_encode(
     a: np.ndarray,
     max_idx: None | int = None,

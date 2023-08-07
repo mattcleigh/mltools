@@ -61,6 +61,7 @@ def my_scaled_dot_product_attention(
     key: T.Tensor,
     value: T.Tensor,
     attn_mask: T.Tensor | None = None,
+    attn_bias: T.Tensor | None = None,
     dropout_p: float = 0.0,
     is_causal: bool = False,
     attn_act: callable = partial(softmax, dim=-1),
@@ -217,11 +218,11 @@ class MultiHeadedAttentionBlock(nn.Module):
     def forward(
         self,
         q: T.Tensor,
-        k: Optional[T.Tensor] = None,
-        v: Optional[T.Tensor] = None,
+        k: T.Tensor | None = None,
+        v: T.Tensor | None = None,
         kv_mask: Optional[T.BoolTensor] = None,
         attn_mask: Optional[T.BoolTensor] = None,
-        attn_bias: Optional[T.Tensor] = None,
+        attn_bias: T.Tensor | None = None,
     ) -> T.Tensor:
         """
         Args:
@@ -310,8 +311,8 @@ class TransformerEncoderLayer(nn.Module):
     def __init__(
         self,
         model_dim: int,
-        mha_config: Optional[Mapping] = None,
-        dense_config: Optional[Mapping] = None,
+        mha_config: Mapping | None = None,
+        dense_config: Mapping | None = None,
         ctxt_dim: int = 0,
     ) -> None:
         """
@@ -343,8 +344,8 @@ class TransformerEncoderLayer(nn.Module):
         self,
         x: T.Tensor,
         mask: Optional[T.BoolTensor] = None,
-        ctxt: Optional[T.Tensor] = None,
-        attn_bias: Optional[T.Tensor] = None,
+        ctxt: T.Tensor | None = None,
+        attn_bias: T.Tensor | None = None,
         attn_mask: Optional[T.BoolTensor] = None,
     ) -> T.Tensor:
         "Pass through the layer using residual connections and layer normalisation"
@@ -373,8 +374,8 @@ class TransformerDecoderLayer(nn.Module):
     def __init__(
         self,
         model_dim: int,
-        mha_config: Optional[Mapping] = None,
-        dense_config: Optional[Mapping] = None,
+        mha_config: Mapping | None = None,
+        dense_config: Mapping | None = None,
         ctxt_dim: int = 0,
     ) -> None:
         """
@@ -411,8 +412,8 @@ class TransformerDecoderLayer(nn.Module):
         kv_seq: T.Tensor,
         q_mask: Optional[T.BoolTensor] = None,
         kv_mask: Optional[T.BoolTensor] = None,
-        ctxt: Optional[T.Tensor] = None,
-        attn_bias: Optional[T.Tensor] = None,
+        ctxt: T.Tensor | None = None,
+        attn_bias: T.Tensor | None = None,
         attn_mask: Optional[T.BoolTensor] = None,
     ) -> T.Tensor:
         "Pass through the layer using residual connections and layer normalisation"
@@ -448,8 +449,8 @@ class ReverseTransformerDecoderLayer(TransformerDecoderLayer):
         kv_seq: T.Tensor,
         q_mask: Optional[T.BoolTensor] = None,
         kv_mask: Optional[T.BoolTensor] = None,
-        ctxt: Optional[T.Tensor] = None,
-        attn_bias: Optional[T.Tensor] = None,
+        ctxt: T.Tensor | None = None,
+        attn_bias: T.Tensor | None = None,
         attn_mask: Optional[T.BoolTensor] = None,
     ) -> T.Tensor:
         "Pass through the layer cross attention update before the self attention"
@@ -488,8 +489,8 @@ class TransformerCrossAttentionLayer(nn.Module):
     def __init__(
         self,
         model_dim: int,
-        mha_config: Optional[Mapping] = None,
-        dense_config: Optional[Mapping] = None,
+        mha_config: Mapping | None = None,
+        dense_config: Mapping | None = None,
         ctxt_dim: int = 0,
     ) -> None:
         """
@@ -523,7 +524,7 @@ class TransformerCrossAttentionLayer(nn.Module):
         q_seq: T.Tensor,
         kv_seq: T.Tensor,
         kv_mask: Optional[T.BoolTensor] = None,
-        ctxt: Optional[T.Tensor] = None,
+        ctxt: T.Tensor | None = None,
     ) -> T.Tensor:
         "Pass through the layer using residual connections and layer normalisation"
         q_seq = q_seq + self.cross_attn(
@@ -545,8 +546,8 @@ class TransformerEncoder(nn.Module):
         self,
         model_dim: int = 64,
         num_layers: int = 3,
-        mha_config: Optional[Mapping] = None,
-        dense_config: Optional[Mapping] = None,
+        mha_config: Mapping | None = None,
+        dense_config: Mapping | None = None,
         ctxt_dim: int = 0,
     ) -> None:
         """
@@ -586,8 +587,8 @@ class TransformerDecoder(nn.Module):
         self,
         model_dim: int,
         num_layers: int,
-        mha_config: Optional[Mapping] = None,
-        dense_config: Optional[Mapping] = None,
+        mha_config: Mapping | None = None,
+        dense_config: Mapping | None = None,
         ctxt_dim: int = 0,
     ) -> None:
         """
@@ -635,8 +636,8 @@ class TransformerVectorEncoder(nn.Module):
         model_dim: int = 64,
         num_sa_layers: int = 2,
         num_ca_layers: int = 2,
-        mha_config: Optional[Mapping] = None,
-        dense_config: Optional[Mapping] = None,
+        mha_config: Mapping | None = None,
+        dense_config: Mapping | None = None,
         ctxt_dim: int = 0,
     ) -> None:
         """
@@ -676,8 +677,8 @@ class TransformerVectorEncoder(nn.Module):
         self,
         seq: T.Tensor,
         mask: Optional[T.BoolTensor] = None,
-        ctxt: Optional[T.Tensor] = None,
-        attn_bias: Optional[T.Tensor] = None,
+        ctxt: T.Tensor | None = None,
+        attn_bias: T.Tensor | None = None,
         attn_mask: Optional[T.BoolTensor] = None,
         return_seq: bool = False,
     ) -> Union[T.Tensor, tuple]:
@@ -723,8 +724,8 @@ class TransformerVectorDecoder(nn.Module):
         self,
         model_dim: int = 64,
         num_layers: int = 2,
-        mha_config: Optional[Mapping] = None,
-        dense_config: Optional[Mapping] = None,
+        mha_config: Mapping | None = None,
+        dense_config: Mapping | None = None,
         ctxt_dim: int = 0,
     ) -> None:
         """
@@ -746,7 +747,7 @@ class TransformerVectorDecoder(nn.Module):
         self.final_norm = nn.LayerNorm(model_dim)
 
     def forward(
-        self, vec: T.Tensor, mask: T.BoolTensor, ctxt: Optional[T.Tensor] = None
+        self, vec: T.Tensor, mask: T.BoolTensor, ctxt: T.Tensor | None = None
     ) -> T.Tensor:
         """Pass the input through all layers sequentially."""
 
@@ -784,10 +785,10 @@ class FullTransformerVectorEncoder(nn.Module):
         outp_dim: int,
         edge_dim: int = 0,
         ctxt_dim: int = 0,
-        tve_config: Optional[Mapping] = None,
-        node_embd_config: Optional[Mapping] = None,
-        outp_embd_config: Optional[Mapping] = None,
-        edge_embd_config: Optional[Mapping] = None,
+        tve_config: Mapping | None = None,
+        node_embd_config: Mapping | None = None,
+        outp_embd_config: Mapping | None = None,
+        edge_embd_config: Mapping | None = None,
     ) -> None:
         """
         Args:
@@ -841,9 +842,9 @@ class FullTransformerVectorEncoder(nn.Module):
         self,
         seq: T.Tensor,
         mask: Optional[T.BoolTensor] = None,
-        ctxt: Optional[T.Tensor] = None,
+        ctxt: T.Tensor | None = None,
         attn_mask: Optional[T.BoolTensor] = None,
-        attn_bias: Optional[T.Tensor] = None,
+        attn_bias: T.Tensor | None = None,
         return_seq: bool = False,
     ) -> Union[T.Tensor, tuple]:
         """Pass the input through all layers sequentially."""
@@ -891,9 +892,9 @@ class FullTransformerVectorDecoder(nn.Module):
         self,
         inpt_dim: int,
         outp_dim: int,
-        tvd_config: Optional[Mapping] = None,
-        vect_embd_config: Optional[Mapping] = None,
-        outp_embd_config: Optional[Mapping] = None,
+        tvd_config: Mapping | None = None,
+        vect_embd_config: Mapping | None = None,
+        outp_embd_config: Mapping | None = None,
         ctxt_dim: int = 0,
     ) -> None:
         """
@@ -932,7 +933,7 @@ class FullTransformerVectorDecoder(nn.Module):
         )
 
     def forward(
-        self, vec: T.Tensor, mask: T.BoolTensor, ctxt: Optional[T.Tensor] = None
+        self, vec: T.Tensor, mask: T.BoolTensor, ctxt: T.Tensor | None = None
     ) -> T.Tensor:
         """Pass the input through all layers sequentially."""
         vec = self.vec_embd(vec, ctxt=ctxt)
@@ -954,11 +955,11 @@ class FullTransformerEncoder(nn.Module):
         outp_dim: int,
         edge_dim: int = 0,
         ctxt_dim: int = 0,
-        te_config: Optional[Mapping] = None,
-        node_embd_config: Optional[Mapping] = None,
-        outp_embd_config: Optional[Mapping] = None,
-        edge_embd_config: Optional[Mapping] = None,
-        ctxt_embd_config: Optional[Mapping] = None,
+        te_config: Mapping | None = None,
+        node_embd_config: Mapping | None = None,
+        outp_embd_config: Mapping | None = None,
+        edge_embd_config: Mapping | None = None,
+        ctxt_embd_config: Mapping | None = None,
     ) -> None:
         """
         Args:
@@ -1035,8 +1036,8 @@ class FullTransformerEncoder(nn.Module):
         self,
         x: T.Tensor,
         mask: Optional[T.BoolTensor] = None,
-        ctxt: Optional[T.Tensor] = None,
-        attn_bias: Optional[T.Tensor] = None,
+        ctxt: T.Tensor | None = None,
+        attn_bias: T.Tensor | None = None,
         attn_mask: Optional[T.BoolTensor] = None,
     ) -> T.Tensor:
         """Pass the input through all layers sequentially."""
@@ -1065,8 +1066,8 @@ class PerceiverEncoder(nn.Module):
         model_dim: int = 64,
         num_tokens: int = 8,
         num_sa_layers: int = 2,
-        mha_config: Optional[Mapping] = None,
-        dense_config: Optional[Mapping] = None,
+        mha_config: Mapping | None = None,
+        dense_config: Mapping | None = None,
         ctxt_dim: int = 0,
     ) -> None:
         """
@@ -1116,7 +1117,7 @@ class PerceiverEncoder(nn.Module):
         self,
         seq: T.Tensor,
         mask: Optional[T.BoolTensor] = None,
-        ctxt: Optional[T.Tensor] = None,
+        ctxt: T.Tensor | None = None,
     ) -> Union[T.Tensor, tuple]:
         """Pass the input through all layers sequentially."""
 
@@ -1155,10 +1156,10 @@ class FullPerceiverEncoder(nn.Module):
         inpt_dim: int,
         outp_dim: int,
         ctxt_dim: int = 0,
-        percv_config: Optional[Mapping] = None,
-        node_embd_config: Optional[Mapping] = None,
-        outp_embd_config: Optional[Mapping] = None,
-        ctxt_embd_config: Optional[Mapping] = None,
+        percv_config: Mapping | None = None,
+        node_embd_config: Mapping | None = None,
+        outp_embd_config: Mapping | None = None,
+        ctxt_embd_config: Mapping | None = None,
     ) -> None:
         """
         Args:
@@ -1222,7 +1223,7 @@ class FullPerceiverEncoder(nn.Module):
         self,
         x: T.Tensor,
         mask: Optional[T.BoolTensor] = None,
-        ctxt: Optional[T.Tensor] = None,
+        ctxt: T.Tensor | None = None,
     ) -> T.Tensor:
         """Pass the input through all layers sequentially."""
         if self.ctxt_dim:
@@ -1248,8 +1249,8 @@ class CrossAttentionEncoder(nn.Module):
         model_dim: int = 64,
         num_tokens: int = 4,
         num_layers: int = 5,
-        mha_config: Optional[Mapping] = None,
-        dense_config: Optional[Mapping] = None,
+        mha_config: Mapping | None = None,
+        dense_config: Mapping | None = None,
         ctxt_dim: int = 0,
     ) -> None:
         """
@@ -1293,7 +1294,7 @@ class CrossAttentionEncoder(nn.Module):
         self,
         seq: T.Tensor,
         mask: Optional[T.BoolTensor] = None,
-        ctxt: Optional[T.Tensor] = None,
+        ctxt: T.Tensor | None = None,
     ) -> Union[T.Tensor, tuple]:
         """Pass the input through all layers sequentially."""
 
@@ -1323,10 +1324,10 @@ class FullCrossAttentionEncoder(nn.Module):
         inpt_dim: int,
         outp_dim: int,
         ctxt_dim: int = 0,
-        cae_config: Optional[Mapping] = None,
-        node_embd_config: Optional[Mapping] = None,
-        outp_embd_config: Optional[Mapping] = None,
-        ctxt_embd_config: Optional[Mapping] = None,
+        cae_config: Mapping | None = None,
+        node_embd_config: Mapping | None = None,
+        outp_embd_config: Mapping | None = None,
+        ctxt_embd_config: Mapping | None = None,
     ) -> None:
         """
         Args:
@@ -1390,7 +1391,7 @@ class FullCrossAttentionEncoder(nn.Module):
         self,
         x: T.Tensor,
         mask: Optional[T.BoolTensor] = None,
-        ctxt: Optional[T.Tensor] = None,
+        ctxt: T.Tensor | None = None,
     ) -> T.Tensor:
         """Pass the input through all layers sequentially."""
         if self.ctxt_dim:
@@ -1413,11 +1414,11 @@ class FullTransformerDecoder(nn.Module):
         outp_dim: int,
         edge_dim: int = 0,
         ctxt_dim: int = 0,
-        td_config: Optional[Mapping] = None,
-        node_embd_config: Optional[Mapping] = None,
-        outp_embd_config: Optional[Mapping] = None,
-        edge_embd_config: Optional[Mapping] = None,
-        ctxt_embd_config: Optional[Mapping] = None,
+        td_config: Mapping | None = None,
+        node_embd_config: Mapping | None = None,
+        outp_embd_config: Mapping | None = None,
+        edge_embd_config: Mapping | None = None,
+        ctxt_embd_config: Mapping | None = None,
     ) -> None:
         """
         Args:
@@ -1484,8 +1485,8 @@ class FullTransformerDecoder(nn.Module):
         kv_seq: T.Tensor,
         q_mask: Optional[T.BoolTensor] = None,
         kv_mask: Optional[T.BoolTensor] = None,
-        ctxt: Optional[T.Tensor] = None,
-        attn_bias: Optional[T.Tensor] = None,
+        ctxt: T.Tensor | None = None,
+        attn_bias: T.Tensor | None = None,
         attn_mask: Optional[T.BoolTensor] = None,
     ) -> T.Tensor:
         """Pass the input through all layers sequentially."""

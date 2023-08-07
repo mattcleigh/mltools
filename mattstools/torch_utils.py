@@ -8,17 +8,11 @@ import torch as T
 import torch.nn as nn
 import torch.optim as optim
 import torch.optim.lr_scheduler as schd
-from geomloss import SamplesLoss
+
+# from geomloss import SamplesLoss
 from torch.utils.data import Dataset, Subset, random_split
 
-from .loss import (
-    ChampferLoss,
-    EnergyMovers,
-    GeomWrapper,
-    ModifiedSinkhorn,
-    MyBCEWithLogit,
-    VAELoss,
-)
+from .loss import ChampferLoss, MyBCEWithLogit, VAELoss
 from .optimisers import Lookahead
 from .schedulers import CyclicWithWarmup, LinearWarmupRootDecay, WarmupToConstant
 
@@ -263,21 +257,8 @@ def get_loss_fn(name: Union[partial, str], **kwargs) -> nn.Module:
         return nn.MSELoss(reduction="none")
     if name == "mae":
         return nn.L1Loss(reduction="none")
-
-    # Distribution matching losses
-    if name == "energymmd":
-        return GeomWrapper(SamplesLoss("energy"))
-    if name == "sinkhorn":
-        return GeomWrapper(SamplesLoss("sinkhorn", p=2, blur=0.01))
-    if name == "sinkhorn1":
-        return GeomWrapper(SamplesLoss("sinkhorn", p=1, blur=0.01))
     if name == "champfer":
         return ChampferLoss()
-    if name == "modifiedsinkhorn":
-        return ModifiedSinkhorn()
-    if name == "energymovers":
-        return EnergyMovers(**kwargs)
-
     # Encoding losses
     if name == "vaeloss":
         return VAELoss()
