@@ -5,8 +5,9 @@ import json
 import math
 import operator
 from functools import reduce
+from itertools import islice
 from pathlib import Path
-from typing import Any, Mapping, Union
+from typing import Any, Generator, Iterable, Mapping, Union
 
 import yaml
 from dotmap import DotMap
@@ -40,7 +41,7 @@ def standard_job_array(
             vals = [vals]
             opt_dict[key] = vals
         n_jobs *= len(vals)
-    print(f"Generating gridsearch with {n_jobs} subjobs")
+    print(f"Generating job array with {n_jobs} subjobs")
 
     # Creating the slurm submision file
     f = open(f"{job_name}.sh", "w", newline="\n", encoding="utf-8")
@@ -84,7 +85,7 @@ def standard_job_array(
     run_tot = 1
     dashdash = "--" if use_dashes else ""
     for i, (opt, vals) in enumerate(opt_dict.items()):
-        f.write(f"       {dashdash}{opt} ${{{simple_keys[i]}")
+        f.write(f"       {dashdash}{opt}=${{{simple_keys[i]}")
         f.write(f"[`expr ${{SLURM_ARRAY_TASK_ID}} / {run_tot} % {len(vals)}`]")
         f.write("} \\\n")
         run_tot *= len(vals)
@@ -259,3 +260,15 @@ def get_scaler(name: str):
     if name == "none":
         return None
     raise ValueError(f"No sklearn scaler with name: {name}")
+
+
+def batched(iterable: Iterable, n: int) -> Generator:
+    """Batch data into tuples of length n.
+
+    The last batch may be shorter.
+    """
+    # batched('ABCDEFG', 3) --> ABC DEF G
+    assert n >= 1
+    it = iter(iterable)
+    while batch := tuple(islice(it, n)):
+        yield batch

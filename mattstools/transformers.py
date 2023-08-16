@@ -2,13 +2,17 @@
 
 import math
 from copy import deepcopy
-from typing import Mapping, Optional, Union
+from functools import partial
+from typing import Callable, Mapping, Optional, Union
 
 import torch as T
 import torch.nn as nn
-from torch.nn.functional import dropout, scaled_dot_product_attention, silu, softmax
+from torch.nn.functional import scaled_dot_product_attention, softmax
 
 from .modules import DenseNetwork
+
+# # Set the default operation to be flass attention
+# T.backends.cuda.sdp_kernel(enable_flash=True, enable_math=False, enable_mem_efficient=False)
 
 
 def merge_masks(
@@ -56,69 +60,64 @@ def my_scaled_dot_product_attention(
     query: T.Tensor,
     key: T.Tensor,
     value: T.Tensor,
-    attn_mask: Optional[T.BoolTensor] = None,
-    attn_bias: Optional[T.Tensor] = None,
+    attn_mask: T.Tensor | None = None,
+    attn_bias: T.Tensor | None = None,
     dropout_p: float = 0.0,
+    is_causal: bool = False,
+    attn_act: callable = partial(softmax, dim=-1),
+    pad_val: float = -float("inf"),
 ) -> T.Tensor:
-    """Attention operation using standard pytorch matrix multiplications.
-
-    Apply the attention using the scaled dot product between the key query
-    and key tensors, then matrix multiplied by the value.
-
-    Note that the attention scores are ordered in recv x send, which is the opposite
-    to how I usually do it for the graph network, which is send x recv
-
-    We use masked fill -T.inf as this kills the padded key/values elements but
-    introduces nans for padded query elements. We could used a very small number like
-    -1e9 but this would need to scale with if we are using half precision.
+    """Compute dot product attention using the given query, key, and value tensors.
 
     Parameters
     ----------
-    query : tensor
-        Batched query sequence of tensors (b, h, s, f).
-    key : tensor
-        Batched key sequence of tensors (b, h, s, f).
-    value : tensor
-        Batched value sequence of tensors (b, h, s, f).
-    attn_mask : tensor
-        The attention mask, used to blind certain combinations of k,q pairs.
-    attn_bias : tensor
-        Extra weights to combine with attention weights.
-    drp : float
-        Dropout probability.
+    query : T.Tensor
+        The query tensor.
+    key : T.Tensor
+        The key tensor.
+    value : T.Tensor
+        The value tensor.
+    attn_mask : T.Tensor | None, optional
+        The attention mask tensor, by default None.
+    dropout_p : float, optional
+        The dropout probability, by default 0.0.
+    is_causal : bool, optional
+        Whether to use causal attention, by default False.
+    attn_act : callable, optional
+        The attention activation function, by default partial(softmax, dim=-1).
+    pad_val : float, optional
+        The padding value for the attention mask, by default -float("inf").
 
     Returns
     -------
-    tensor
-        The result of the attention operation.
+    T.Tensor
+        The result of the scaled dot product attention operation.
+
+    Notes
+    -----
+    This function is a Pytorch equivalent operation of scaled_dot_product_attention but
+    here we have freedom to use any activation we want as long as attn_act(pad_val) = 0.
     """
-    DeprecationWarning("Dont use this! Switch to pytorch 2.0 built in version!")
 
-    # Perform the matrix multiplication
-    scores = query @ key.transpose(-2, -1) / math.sqrt(key.shape[-1])
+    # Get the shapes
+    L = query.shape[-2]
+    S = key.shape[-2]
 
-    # Add the bias terms if present
-    if attn_bias is not None:  # Move the head dimension to the first
-        scores = scores + attn_bias
+    # Build the attention mask as a float
+    if is_causal:
+        attn_mask = T.ones(L, S, dtype=T.bool).tril(diagonal=0)
+    elif attn_mask is not None and attn_mask.dtype == T.bool:
+        attn_mask = attn_mask.float().masked_fill(~attn_mask, pad_val)
+    else:
+        attn_mask = 0.0
 
-    # Mask away the scores between invalid elements in sequence
-    if attn_mask is not None:
-        scores = scores.masked_fill(~attn_mask, -T.inf)
+    # Apply the attention operation using the mask as a bias
+    attn_weight = attn_act(
+        (query @ key.transpose(-2, -1) / math.sqrt(query.size(-1))) + attn_mask
+    )
+    attn_weight = T.dropout(attn_weight, dropout_p, train=dropout_p > 0.0)
 
-    # Apply the softmax function per head feature
-    scores = softmax(scores, dim=-1)
-
-    # Kill the nans introduced by the padded query elements
-    if attn_mask is not None:
-        scores = T.nan_to_num(scores)
-
-    # Apply dropout to the attention scores
-    scores = dropout(scores, p=dropout_p)
-
-    # Finally multiply these scores by the output
-    scores = scores @ value
-
-    return scores
+    return attn_weight @ value
 
 
 class MultiHeadedAttentionBlock(nn.Module):
@@ -167,6 +166,7 @@ class MultiHeadedAttentionBlock(nn.Module):
         init_zeros: bool = False,
         do_selfattn: bool = False,
         do_layer_norm: bool = False,
+        attn_act: Callable | None = None,
     ) -> None:
         """
         Args:
@@ -190,6 +190,7 @@ class MultiHeadedAttentionBlock(nn.Module):
         self.do_selfattn = do_selfattn
         self.drp = drp
         self.do_layer_norm = do_layer_norm
+        self.attn_act = attn_act
 
         # Check that the dimension of each head makes internal sense
         if self.head_dim * num_heads != model_dim:
@@ -216,11 +217,11 @@ class MultiHeadedAttentionBlock(nn.Module):
     def forward(
         self,
         q: T.Tensor,
-        k: Optional[T.Tensor] = None,
-        v: Optional[T.Tensor] = None,
+        k: T.Tensor | None = None,
+        v: T.Tensor | None = None,
         kv_mask: Optional[T.BoolTensor] = None,
         attn_mask: Optional[T.BoolTensor] = None,
-        attn_bias: Optional[T.Tensor] = None,
+        attn_bias: T.Tensor | None = None,
     ) -> T.Tensor:
         """
         Args:
@@ -236,7 +237,7 @@ class MultiHeadedAttentionBlock(nn.Module):
         # Store the batch size, useful for reshaping
         b_size, seq, feat = q.shape
 
-        # If only q and q_mask are provided then we automatically apply self attention
+        # If only q is provided then we automatically apply self attention
         if k is None:
             k = q
         if v is None:
@@ -260,13 +261,23 @@ class MultiHeadedAttentionBlock(nn.Module):
         v_out = v_out.view(shape).transpose(1, 2)
 
         # Calculate the new sequence values
-        a_out = scaled_dot_product_attention(
-            q_out,
-            k_out,
-            v_out,
-            attn_mask=merged_mask,
-            dropout_p=self.drp if self.training else 0,
-        )
+        if self.attn_act:
+            a_out = my_scaled_dot_product_attention(
+                q_out,
+                k_out,
+                v_out,
+                attn_mask=merged_mask,
+                dropout_p=self.drp if self.training else 0,
+                attn_act=self.attn_act,
+            )
+        else:
+            a_out = scaled_dot_product_attention(
+                q_out,
+                k_out,
+                v_out,
+                attn_mask=merged_mask,
+                dropout_p=self.drp if self.training else 0,
+            )
 
         # Concatenate the all of the heads together to get shape: B,Seq,F
         a_out = a_out.transpose(1, 2).contiguous().view(b_size, -1, self.model_dim)
@@ -298,8 +309,8 @@ class TransformerEncoderLayer(nn.Module):
     def __init__(
         self,
         model_dim: int,
-        mha_config: Optional[Mapping] = None,
-        dense_config: Optional[Mapping] = None,
+        mha_config: Mapping | None = None,
+        dense_config: Mapping | None = None,
         ctxt_dim: int = 0,
     ) -> None:
         """
@@ -331,8 +342,8 @@ class TransformerEncoderLayer(nn.Module):
         self,
         x: T.Tensor,
         mask: Optional[T.BoolTensor] = None,
-        ctxt: Optional[T.Tensor] = None,
-        attn_bias: Optional[T.Tensor] = None,
+        ctxt: T.Tensor | None = None,
+        attn_bias: T.Tensor | None = None,
         attn_mask: Optional[T.BoolTensor] = None,
     ) -> T.Tensor:
         """Pass using residual connections and layer normalisation."""
@@ -360,8 +371,8 @@ class TransformerDecoderLayer(nn.Module):
     def __init__(
         self,
         model_dim: int,
-        mha_config: Optional[Mapping] = None,
-        dense_config: Optional[Mapping] = None,
+        mha_config: Mapping | None = None,
+        dense_config: Mapping | None = None,
         ctxt_dim: int = 0,
     ) -> None:
         """
@@ -398,8 +409,8 @@ class TransformerDecoderLayer(nn.Module):
         kv_seq: T.Tensor,
         q_mask: Optional[T.BoolTensor] = None,
         kv_mask: Optional[T.BoolTensor] = None,
-        ctxt: Optional[T.Tensor] = None,
-        attn_bias: Optional[T.Tensor] = None,
+        ctxt: T.Tensor | None = None,
+        attn_bias: T.Tensor | None = None,
         attn_mask: Optional[T.BoolTensor] = None,
     ) -> T.Tensor:
         """Pass using residual connections and layer normalisation."""
@@ -432,8 +443,8 @@ class ReverseTransformerDecoderLayer(TransformerDecoderLayer):
         kv_seq: T.Tensor,
         q_mask: Optional[T.BoolTensor] = None,
         kv_mask: Optional[T.BoolTensor] = None,
-        ctxt: Optional[T.Tensor] = None,
-        attn_bias: Optional[T.Tensor] = None,
+        ctxt: T.Tensor | None = None,
+        attn_bias: T.Tensor | None = None,
         attn_mask: Optional[T.BoolTensor] = None,
     ) -> T.Tensor:
         """Pass through CA before SA."""
@@ -470,8 +481,8 @@ class TransformerCrossAttentionLayer(nn.Module):
     def __init__(
         self,
         model_dim: int,
-        mha_config: Optional[Mapping] = None,
-        dense_config: Optional[Mapping] = None,
+        mha_config: Mapping | None = None,
+        dense_config: Mapping | None = None,
         ctxt_dim: int = 0,
     ) -> None:
         """
@@ -505,7 +516,7 @@ class TransformerCrossAttentionLayer(nn.Module):
         q_seq: T.Tensor,
         kv_seq: T.Tensor,
         kv_mask: Optional[T.BoolTensor] = None,
-        ctxt: Optional[T.Tensor] = None,
+        ctxt: T.Tensor | None = None,
     ) -> T.Tensor:
         """Pass using residual connections and layer normalisation."""
         q_seq = q_seq + self.cross_attn(
@@ -526,8 +537,8 @@ class TransformerEncoder(nn.Module):
         self,
         model_dim: int = 64,
         num_layers: int = 3,
-        mha_config: Optional[Mapping] = None,
-        dense_config: Optional[Mapping] = None,
+        mha_config: Mapping | None = None,
+        dense_config: Mapping | None = None,
         ctxt_dim: int = 0,
     ) -> None:
         """
@@ -566,8 +577,8 @@ class TransformerDecoder(nn.Module):
         self,
         model_dim: int,
         num_layers: int,
-        mha_config: Optional[Mapping] = None,
-        dense_config: Optional[Mapping] = None,
+        mha_config: Mapping | None = None,
+        dense_config: Mapping | None = None,
         ctxt_dim: int = 0,
     ) -> None:
         """
@@ -613,8 +624,8 @@ class TransformerVectorEncoder(nn.Module):
         model_dim: int = 64,
         num_sa_layers: int = 2,
         num_ca_layers: int = 2,
-        mha_config: Optional[Mapping] = None,
-        dense_config: Optional[Mapping] = None,
+        mha_config: Mapping | None = None,
+        dense_config: Mapping | None = None,
         ctxt_dim: int = 0,
     ) -> None:
         """
@@ -654,8 +665,8 @@ class TransformerVectorEncoder(nn.Module):
         self,
         seq: T.Tensor,
         mask: Optional[T.BoolTensor] = None,
-        ctxt: Optional[T.Tensor] = None,
-        attn_bias: Optional[T.Tensor] = None,
+        ctxt: T.Tensor | None = None,
+        attn_bias: T.Tensor | None = None,
         attn_mask: Optional[T.BoolTensor] = None,
         return_seq: bool = False,
     ) -> Union[T.Tensor, tuple]:
@@ -701,8 +712,8 @@ class TransformerVectorDecoder(nn.Module):
         self,
         model_dim: int = 64,
         num_layers: int = 2,
-        mha_config: Optional[Mapping] = None,
-        dense_config: Optional[Mapping] = None,
+        mha_config: Mapping | None = None,
+        dense_config: Mapping | None = None,
         ctxt_dim: int = 0,
     ) -> None:
         """
@@ -724,7 +735,7 @@ class TransformerVectorDecoder(nn.Module):
         self.final_norm = nn.LayerNorm(model_dim)
 
     def forward(
-        self, vec: T.Tensor, mask: T.BoolTensor, ctxt: Optional[T.Tensor] = None
+        self, vec: T.Tensor, mask: T.BoolTensor, ctxt: T.Tensor | None = None
     ) -> T.Tensor:
         """Pass the input through all layers sequentially."""
         # Initialise the q-sequence randomly (adhere to mask)
@@ -761,10 +772,10 @@ class FullTransformerVectorEncoder(nn.Module):
         outp_dim: int,
         edge_dim: int = 0,
         ctxt_dim: int = 0,
-        tve_config: Optional[Mapping] = None,
-        node_embd_config: Optional[Mapping] = None,
-        outp_embd_config: Optional[Mapping] = None,
-        edge_embd_config: Optional[Mapping] = None,
+        tve_config: Mapping | None = None,
+        node_embd_config: Mapping | None = None,
+        outp_embd_config: Mapping | None = None,
+        edge_embd_config: Mapping | None = None,
     ) -> None:
         """
         Args:
@@ -818,9 +829,9 @@ class FullTransformerVectorEncoder(nn.Module):
         self,
         seq: T.Tensor,
         mask: Optional[T.BoolTensor] = None,
-        ctxt: Optional[T.Tensor] = None,
+        ctxt: T.Tensor | None = None,
         attn_mask: Optional[T.BoolTensor] = None,
-        attn_bias: Optional[T.Tensor] = None,
+        attn_bias: T.Tensor | None = None,
         return_seq: bool = False,
     ) -> Union[T.Tensor, tuple]:
         """Pass the input through all layers sequentially."""
@@ -866,9 +877,9 @@ class FullTransformerVectorDecoder(nn.Module):
         self,
         inpt_dim: int,
         outp_dim: int,
-        tvd_config: Optional[Mapping] = None,
-        vect_embd_config: Optional[Mapping] = None,
-        outp_embd_config: Optional[Mapping] = None,
+        tvd_config: Mapping | None = None,
+        vect_embd_config: Mapping | None = None,
+        outp_embd_config: Mapping | None = None,
         ctxt_dim: int = 0,
     ) -> None:
         """
@@ -907,7 +918,7 @@ class FullTransformerVectorDecoder(nn.Module):
         )
 
     def forward(
-        self, vec: T.Tensor, mask: T.BoolTensor, ctxt: Optional[T.Tensor] = None
+        self, vec: T.Tensor, mask: T.BoolTensor, ctxt: T.Tensor | None = None
     ) -> T.Tensor:
         """Pass the input through all layers sequentially."""
         vec = self.vec_embd(vec, ctxt=ctxt)
@@ -929,11 +940,11 @@ class FullTransformerEncoder(nn.Module):
         outp_dim: int,
         edge_dim: int = 0,
         ctxt_dim: int = 0,
-        te_config: Optional[Mapping] = None,
-        node_embd_config: Optional[Mapping] = None,
-        outp_embd_config: Optional[Mapping] = None,
-        edge_embd_config: Optional[Mapping] = None,
-        ctxt_embd_config: Optional[Mapping] = None,
+        te_config: Mapping | None = None,
+        node_embd_config: Mapping | None = None,
+        outp_embd_config: Mapping | None = None,
+        edge_embd_config: Mapping | None = None,
+        ctxt_embd_config: Mapping | None = None,
     ) -> None:
         """
         Args:
@@ -1007,8 +1018,8 @@ class FullTransformerEncoder(nn.Module):
         self,
         x: T.Tensor,
         mask: Optional[T.BoolTensor] = None,
-        ctxt: Optional[T.Tensor] = None,
-        attn_bias: Optional[T.Tensor] = None,
+        ctxt: T.Tensor | None = None,
+        attn_bias: T.Tensor | None = None,
         attn_mask: Optional[T.BoolTensor] = None,
     ) -> T.Tensor:
         """Pass the input through all layers sequentially."""
@@ -1036,8 +1047,8 @@ class PerceiverEncoder(nn.Module):
         model_dim: int = 64,
         num_tokens: int = 8,
         num_sa_layers: int = 2,
-        mha_config: Optional[Mapping] = None,
-        dense_config: Optional[Mapping] = None,
+        mha_config: Mapping | None = None,
+        dense_config: Mapping | None = None,
         ctxt_dim: int = 0,
     ) -> None:
         """
@@ -1084,7 +1095,7 @@ class PerceiverEncoder(nn.Module):
         self,
         seq: T.Tensor,
         mask: Optional[T.BoolTensor] = None,
-        ctxt: Optional[T.Tensor] = None,
+        ctxt: T.Tensor | None = None,
     ) -> Union[T.Tensor, tuple]:
         """Pass the input through all layers sequentially."""
         # Make sure the learnable tokens are expanded to batch size
@@ -1122,10 +1133,10 @@ class FullPerceiverEncoder(nn.Module):
         inpt_dim: int,
         outp_dim: int,
         ctxt_dim: int = 0,
-        percv_config: Optional[Mapping] = None,
-        node_embd_config: Optional[Mapping] = None,
-        outp_embd_config: Optional[Mapping] = None,
-        ctxt_embd_config: Optional[Mapping] = None,
+        percv_config: Mapping | None = None,
+        node_embd_config: Mapping | None = None,
+        outp_embd_config: Mapping | None = None,
+        ctxt_embd_config: Mapping | None = None,
     ) -> None:
         """
         Args:
@@ -1186,7 +1197,7 @@ class FullPerceiverEncoder(nn.Module):
         self,
         x: T.Tensor,
         mask: Optional[T.BoolTensor] = None,
-        ctxt: Optional[T.Tensor] = None,
+        ctxt: T.Tensor | None = None,
     ) -> T.Tensor:
         """Pass the input through all layers sequentially."""
         if self.ctxt_dim:
@@ -1209,14 +1220,16 @@ class CrossAttentionEncoder(nn.Module):
     def __init__(
         self,
         model_dim: int = 64,
+        num_tokens: int = 4,
         num_layers: int = 5,
-        mha_config: Optional[Mapping] = None,
-        dense_config: Optional[Mapping] = None,
+        mha_config: Mapping | None = None,
+        dense_config: Mapping | None = None,
         ctxt_dim: int = 0,
     ) -> None:
         """
         Args:
             model_dim: Feature size for input, output, and all intermediate sequences
+            num_tokens: The number of global tokens to use,
             num_layers: Number of there and back cross attention layers
             mha_config: Keyword arguments for all multiheaded attention layers
             dense_config: Keyword arguments for the dense network in each layer
@@ -1225,9 +1238,10 @@ class CrossAttentionEncoder(nn.Module):
         super().__init__()
         self.model_dim = model_dim
         self.num_layers = num_layers
+        self.num_tokens = num_tokens
 
         # Initialise the learnable perceiver tokens as random values
-        self.class_token = nn.Parameter(T.randn((1, 1, model_dim)))
+        self.global_tokens = nn.Parameter(T.randn((1, num_tokens, model_dim)))
 
         # The cross attention layers going from our original sequence
         self.from_layers = nn.ModuleList(
@@ -1253,17 +1267,20 @@ class CrossAttentionEncoder(nn.Module):
         self,
         seq: T.Tensor,
         mask: Optional[T.BoolTensor] = None,
-        ctxt: Optional[T.Tensor] = None,
+        ctxt: T.Tensor | None = None,
     ) -> Union[T.Tensor, tuple]:
         """Pass the input through all layers sequentially."""
-        # Make sure the class token is expanded to batch size
+
+        # Make sure the class tokens are expanded to batch size
         # Use shape not len as it is ONNX safe!
-        class_token = self.class_token.expand(seq.shape[0], 1, self.model_dim)
+        global_tokens = self.global_tokens.expand(
+            seq.shape[0], self.num_tokens, self.model_dim
+        )
 
         # Pass through the layers of there and back cross attention
         for from_layer, to_layer in zip(self.from_layers, self.to_layers):
-            class_token = from_layer(class_token, seq, mask, ctxt)
-            seq = to_layer(seq, class_token, None, ctxt)
+            global_tokens = from_layer(global_tokens, seq, mask, ctxt)
+            seq = to_layer(seq, global_tokens, None, ctxt)
 
         return seq
 
@@ -1279,18 +1296,16 @@ class FullCrossAttentionEncoder(nn.Module):
         inpt_dim: int,
         outp_dim: int,
         ctxt_dim: int = 0,
-        use_lite: bool = False,
-        cae_config: Optional[Mapping] = None,
-        node_embd_config: Optional[Mapping] = None,
-        outp_embd_config: Optional[Mapping] = None,
-        ctxt_embd_config: Optional[Mapping] = None,
+        cae_config: Mapping | None = None,
+        node_embd_config: Mapping | None = None,
+        outp_embd_config: Mapping | None = None,
+        ctxt_embd_config: Mapping | None = None,
     ) -> None:
         """
         Args:
             inpt_dim: Dim. of each element of the sequence
             outp_dim: Dim. of each element of output sequence
             ctxt_dim: Dim. of the context vector to pass to the embedding nets
-            use_lite: Use the lite version (no global MLP block)
             cae_config: Keyword arguments to pass to the CrossAttentionEncoder
             node_embd_config: Keyword arguments for node dense embedder
             outp_embd_config: Keyword arguments for output dense embedder
@@ -1324,10 +1339,7 @@ class FullCrossAttentionEncoder(nn.Module):
             self.ctxt_out = 0
 
         # Initialise the TVE, the main part of this network
-        if use_lite:
-            self.cae = CrossAttentionLiteEncoder(**cae_config, ctxt_dim=self.ctxt_out)
-        else:
-            self.cae = CrossAttentionEncoder(**cae_config, ctxt_dim=self.ctxt_out)
+        self.cae = CrossAttentionEncoder(**cae_config, ctxt_dim=self.ctxt_out)
         self.model_dim = self.cae.model_dim
 
         # Initialise all embedding networks
@@ -1348,7 +1360,7 @@ class FullCrossAttentionEncoder(nn.Module):
         self,
         x: T.Tensor,
         mask: Optional[T.BoolTensor] = None,
-        ctxt: Optional[T.Tensor] = None,
+        ctxt: T.Tensor | None = None,
     ) -> T.Tensor:
         """Pass the input through all layers sequentially."""
         if self.ctxt_dim:
@@ -1439,8 +1451,8 @@ class FullTransformerDecoder(nn.Module):
         kv_seq: T.Tensor,
         q_mask: Optional[T.BoolTensor] = None,
         kv_mask: Optional[T.BoolTensor] = None,
-        ctxt: Optional[T.Tensor] = None,
-        attn_bias: Optional[T.Tensor] = None,
+        ctxt: T.Tensor | None = None,
+        attn_bias: T.Tensor | None = None,
         attn_mask: Optional[T.BoolTensor] = None,
     ) -> T.Tensor:
         """Pass the input through all layers sequentially."""
@@ -1460,74 +1472,3 @@ class FullTransformerDecoder(nn.Module):
         )
         q_seq = self.outp_embd(q_seq, ctxt)
         return q_seq
-
-
-class CrossAttentionLiteEncoder(nn.Module):
-    """A type of encoder which includes uses cross attention to pool into a global token
-    which is then distributed back to the point cloud.
-
-    This is a lite model as we dont include an MLP update for the global token.
-
-    Sequence -> Squence
-
-    It is non resizing, so model_dim must be used for inputs and outputs
-    """
-
-    def __init__(
-        self,
-        model_dim: int = 64,
-        num_layers: int = 5,
-        mha_config: Optional[Mapping] = None,
-        dense_config: Optional[Mapping] = None,
-        ctxt_dim: int = 0,
-    ) -> None:
-        """
-        Args:
-            model_dim: Feature size for input, output, and all intermediate sequences
-            num_layers: Number of there and back cross attention layers
-            mha_config: Keyword arguments for all multiheaded attention layers
-            dense_config: Keyword arguments for the dense network in each layer
-            ctxt_dim: Dimension of the context inputs
-        """
-        super().__init__()
-        self.model_dim = model_dim
-        self.num_layers = num_layers
-
-        # Initialise the learnable perceiver tokens as random values
-        self.class_token = nn.Parameter(T.randn((1, 1, model_dim)))
-
-        # The cross attention layers going from our original sequence
-        self.from_layers = nn.ModuleList(
-            [
-                MultiHeadedAttentionBlock(model_dim, **(mha_config or {}))
-                for _ in range(num_layers)
-            ]
-        )
-
-        # The cross attention layers going to our original sequence
-        self.to_layers = nn.ModuleList(
-            [
-                TransformerCrossAttentionLayer(
-                    model_dim, mha_config, dense_config, ctxt_dim
-                )
-                for _ in range(num_layers)
-            ]
-        )
-
-    def forward(
-        self,
-        seq: T.Tensor,
-        mask: Optional[T.BoolTensor] = None,
-        ctxt: Optional[T.Tensor] = None,
-    ) -> Union[T.Tensor, tuple]:
-        """Pass the input through all layers sequentially."""
-        # Make sure the class token is expanded to batch size
-        # Use shape not len as it is ONNX safe!
-        class_token = self.class_token.expand(seq.shape[0], 1, self.model_dim)
-
-        # Pass through the layers of there and back cross attention
-        for from_layer, to_layer in zip(self.from_layers, self.to_layers):
-            class_token = from_layer(class_token, seq, kv_mask=mask)
-            class_token = silu(class_token)  # No MLP, just non-linearity
-            seq = to_layer(seq, class_token, None, ctxt)
-        return seq
