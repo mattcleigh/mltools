@@ -1,3 +1,6 @@
+"""Now deprecated code used in my first diffusion project."""
+
+
 import math
 from abc import ABC, abstractmethod
 from typing import Optional, Tuple
@@ -7,12 +10,15 @@ from tqdm import tqdm
 
 
 class DiffusionSchedule(ABC):
+    """Base class for a diffusion schedule."""
+
     def __init__(self, max_sr: float = 1, min_sr: float = 1e-2) -> None:
         self.max_sr = max_sr
         self.min_sr = min_sr
 
     @abstractmethod
-    def __call__(self, time: T.Tensor) -> T.Tensor:
+    def __call__(self, time: T.Tensor) -> tuple:
+        """Get the signal and noise rates."""
         pass
 
     def get_betas(self, time: T.Tensor) -> T.Tensor:
@@ -21,18 +27,24 @@ class DiffusionSchedule(ABC):
 
 
 class VPDiffusionSchedule(DiffusionSchedule):
+    """Variance Preserving diffusion."""
+
     def __init__(self, max_sr: float = 1, min_sr: float = 1e-2) -> None:
         self.max_sr = max_sr
         self.min_sr = min_sr
 
-    def __call__(self, time: T.Tensor) -> T.Tensor:
+    def __call__(self, time: T.Tensor) -> tuple:
+        """Get the signal and noise rates."""
         return cosine_diffusion_shedule(time, self.max_sr, self.min_sr)
 
     def get_betas(self, time: T.Tensor) -> T.Tensor:
+        """Return the drift coefficient for the reverse SDE."""
         return cosine_beta_shedule(time, self.max_sr, self.min_sr)
 
 
 class KarrasDiffusionSchedule(DiffusionSchedule):
+    """The EDM diffusion schedule."""
+
     def __init__(self, max_sigma: float = 1) -> None:
         self.max_sigma = max_sigma
 
@@ -45,9 +57,8 @@ class KarrasDiffusionSchedule(DiffusionSchedule):
 
 def cosine_diffusion_shedule(
     diff_time: T.Tensor, max_sr: float = 1, min_sr: float = 1e-2
-) -> Tuple[T.Tensor, T.Tensor]:
-    """Calculates the signal and noise rate for any point in the diffusion
-    processes.
+) -> tuple:
+    """Calculate the signal and noise rate for any point in the diffusion processes.
 
     Using continuous diffusion times between 0 and 1 which make switching between
     different numbers of diffusion steps between training and testing much easier.
@@ -62,13 +73,16 @@ def cosine_diffusion_shedule(
     Uses a cosine annealing schedule as proposed in
     Proposed in https://arxiv.org/abs/2102.09672
 
-    Args:
-        diff_time: The time used to sample the diffusion scheduler
-            Output will match the shape
-            Must be between 0 and 1
-        max_sr: The initial rate at the first step
-        min_sr: How much signal is preserved at end of diffusion
-            (can't be zero due to log)
+    Args
+    ----
+    diff_time:
+        The time used to sample the diffusion scheduler
+        Output will match the shape, must be between 0 and 1
+    max_sr:
+        The initial rate at the first step
+    min_sr:
+        How much signal is preserved at end of diffusion
+        (can't be zero due to log)
     """
 
     # Use cosine annealing, which requires switching from times -> angles
@@ -83,8 +97,7 @@ def cosine_diffusion_shedule(
 def cosine_beta_shedule(
     diff_time: T.Tensor, max_sr: float = 1, min_sr: float = 1e-2
 ) -> T.Tensor:
-    """Returns the beta values for the continuous flows using the above cosine
-    scheduler."""
+    """Return beta values for the continuous flows using cosine scheduler."""
     start_angle = math.acos(max_sr)
     end_angle = math.acos(min_sr)
     diffusion_angles = start_angle + diff_time * (end_angle - start_angle)
@@ -97,8 +110,7 @@ def ddim_predict(
     signal_rates: T.Tensor,
     noise_rates: T.Tensor,
 ) -> T.Tensor:
-    """Use a single ddim step to predict the final image from anywhere in the
-    diffusion process."""
+    """Use a single ddim step to predict the final image."""
     return (noisy_data - noise_rates * pred_noises) / signal_rates
 
 
@@ -113,23 +125,32 @@ def ddim_sampler(
     ctxt: Optional[T.BoolTensor] = None,
     clip_predictions: Optional[tuple] = None,
 ) -> Tuple[T.Tensor, list]:
-    """Apply the DDIM sampling process to generate a batch of samples from
-    noise.
+    """Apply the DDIM sampling process to generate a batch of samples from noise.
 
-    Args:
-        model: A denoising diffusion model
-            Requires: inpt_dim, device, forward() method that outputs pred noise
-        diff_sched: A diffusion schedule object to calculate signal and noise rates
-        initial_noise: The initial noise to pass through the process
-            If none it will be generated here
-        n_steps: The number of iterations to generate the samples
-        keep_all: Return all stages of diffusion process
-            Can be memory heavy for large batches
-        num_samples: How many samples to generate
-            Ignored if initial_noise is provided
-        mask: The mask for the output point clouds
-        ctxt: The context tensor for the output point clouds
-        clip_predictions: Can stabalise generation by clipping the outputs
+    Args
+    ----
+    model:
+        A denoising diffusion model
+        Requires: inpt_dim, device, forward() method that outputs pred noise
+    diff_sched:
+        A diffusion schedule object to calculate signal and noise rates
+    initial_noise:
+        The initial noise to pass through the process
+        If none it will be generated here
+    n_steps:
+        The number of iterations to generate the samples
+    keep_all:
+        Return all stages of diffusion process
+        Can be memory heavy for large batches
+    num_samples:
+        How many samples to generate
+        Ignored if initial_noise is provided
+    mask:
+        The mask for the output point clouds
+    ctxt:
+        The context tensor for the output point clouds
+    clip_predictions:
+        Can stabalise generation by clipping the outputs
     """
 
     # Get the initial noise for generation and the number of sammples
@@ -186,8 +207,7 @@ def euler_maruyama_sampler(
     ctxt: Optional[T.BoolTensor] = None,
     clip_predictions: Optional[tuple] = None,
 ) -> Tuple[T.Tensor, list]:
-    """Apply the full reverse process to noise to generate a batch of
-    samples."""
+    """Apply the full reverse process to noise to generate a batch of samples."""
 
     # Get the initial noise for generation and the number of sammples
     num_samples = initial_noise.shape[0]
@@ -238,8 +258,7 @@ def euler_sampler(
     ctxt: Optional[T.BoolTensor] = None,
     clip_predictions: Optional[tuple] = None,
 ) -> Tuple[T.Tensor, list]:
-    """Apply the full reverse process to noise to generate a batch of
-    samples."""
+    """Apply the full reverse process to noise to generate a batch of samples."""
 
     # Get the initial noise for generation and the number of sammples
     num_samples = initial_noise.shape[0]
@@ -282,8 +301,7 @@ def runge_kutta_sampler(
     ctxt: Optional[T.BoolTensor] = None,
     clip_predictions: Optional[tuple] = None,
 ) -> Tuple[T.Tensor, list]:
-    """Apply the full reverse process to noise to generate a batch of
-    samples."""
+    """Apply the full reverse process to noise to generate a batch of samples."""
 
     # Get the initial noise for generation and the number of sammples
     num_samples = initial_noise.shape[0]
@@ -327,6 +345,7 @@ def get_ode_gradient(
     mask: Optional[T.BoolTensor] = None,
     ctxt: Optional[T.Tensor] = None,
 ) -> T.Tensor:
+    """Calculate the ODE gradient vector using the a diffusion schedule."""
     expanded_shape = [-1] + [1] * (x_t.dim() - 1)
     _, noise_rates = diff_sched(t.view(expanded_shape))
     betas = diff_sched.get_betas(t.view(expanded_shape))
@@ -334,6 +353,7 @@ def get_ode_gradient(
 
 
 def run_sampler(sampler: str, *args, **kwargs) -> Tuple[T.Tensor, list]:
+    """Select and run a specific sampler."""
     if sampler == "em":
         return euler_maruyama_sampler(*args, **kwargs)
     if sampler == "euler":

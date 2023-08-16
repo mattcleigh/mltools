@@ -1,3 +1,6 @@
+"""A collection of functions for the karras EDM diffusion method."""
+
+
 import math
 
 import torch as T
@@ -46,13 +49,18 @@ def multistep_consistency_sampling(
     return x
 
 
-def logsumexp(x, do_max: bool = True):
+def logsumexp(x: T.Tensor, do_max: bool = True) -> T.Tensor:
+    """Apply the log sum exp trux for numerical precision.
+
+    https://gregorygundersen.com/blog/2020/02/09/log-sum-exp/
+    """
     c = x.max() if do_max else x.min()
     return c + T.log(T.sum(T.exp(x - c)))
 
 
 @T.no_grad()
 def shift_gaussian(x: T.Tensor, mu: T.Tensor, var: T.Tensor) -> T.Tensor:
+    """Gaussian function shifted such that the max is always 1."""
     diff = (x - mu) ** 2
     diff = diff.sum(dim=tuple(range(2, diff.dim())), keepdims=True)
     diff /= -2 * var
@@ -62,6 +70,7 @@ def shift_gaussian(x: T.Tensor, mu: T.Tensor, var: T.Tensor) -> T.Tensor:
 
 @T.no_grad()
 def ideal_denoise(noisy_data, data, sigma):
+    """Get the ideal denoised target using a kde of your dataset."""
     gaus_term = shift_gaussian(
         noisy_data.unsqueeze(1),
         data.unsqueeze(0),
@@ -83,14 +92,13 @@ def one_step_ideal(x, data, sigma_start, sigma_end):
 
 
 def to_d(x, sigma, denoised):
-    """Converts a denoiser output to a Karras ODE derivative."""
+    """Convert a denoiser output to a Karras ODE derivative."""
     return (x - denoised) / append_dims(sigma, x.ndim)
 
 
 @T.no_grad()
 def one_step_dpm_2(model, x, sigma_start, sigma_end, extra_args):
-    """Apply just one step of the DPM2 to get two adjacent points on the PF-
-    ODE."""
+    """Apply just one step of the DPM2 to get two adjacent points on the PF- ODE."""
 
     # Initial setup
     extra_args = extra_args or {}
@@ -115,8 +123,7 @@ def one_step_dpm_2(model, x, sigma_start, sigma_end, extra_args):
 
 @T.no_grad()
 def one_step_heun(model, x, sigma_start, sigma_end, extra_args):
-    """Apply just one step of the heun-solver to get two adjacent points on the
-    PF-ODE."""
+    """Apply just one step of the heun-solver."""
 
     # Initial setup
     extra_args = extra_args or {}
@@ -139,28 +146,24 @@ def one_step_heun(model, x, sigma_start, sigma_end, extra_args):
 def get_sigmas_karras(
     t_max: float, t_min: float, n_steps: int = 100, rho: float = 7
 ) -> T.Tensor:
-    """Constructs the noise schedule of Karras et al. (2022)
+    """Construct sigmas for the Karras et al schedule.
 
-    Args:
-        t_max: The maximum/starting time
-        t_min: The minimum/final time
-        n_steps: The number of time steps
-        p: The degree of curvature, p=1 equal step size, recommened 7 for diffusion
+    Parameters
+    ----------
+    t_max:
+        The maximum/starting time
+    t_min:
+        The minimum/final time
+    n_steps:
+        The number of time steps
+    p:
+        The degree of curvature, p=1 equal step size, recommened 7 for diffusion
     """
     ramp = T.linspace(0, 1, n_steps)
     inv_rho = 1 / rho
     max_inv_rho = t_max**inv_rho
     min_inv_rho = t_min**inv_rho
     return (max_inv_rho + ramp * (min_inv_rho - max_inv_rho)) ** rho
-
-
-def sigma_karras_fn(
-    inpt: T.Tensor | float, t_max: float, t_min: float, rho: float = 7
-) -> T.Tensor:
-    inv_rho = 1 / rho
-    max_inv_rho = t_max**inv_rho
-    min_inv_rho = t_min**inv_rho
-    return (max_inv_rho + inpt * (min_inv_rho - max_inv_rho)) ** rho
 
 
 @T.no_grad()
@@ -281,8 +284,8 @@ def sample_stochastic_heun(
         - The generated samples.
         - All the intermediate samples (if keep_all is True), otherwise None.
 
-    Notes:
-    ------
+    Notes
+    -----
     - Equivalent to the deterministic case if s_churn = 0
     - Alg. 2 from the https://arxiv.org/pdf/2206.00364.pdf
     - Hard coded such that t = sigma and s(t) = 1

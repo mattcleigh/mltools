@@ -1,3 +1,5 @@
+"""Setup for pip installable package."""
+
 import setuptools
 
 with open("README.md", encoding="utf-8") as fh:
@@ -5,7 +7,7 @@ with open("README.md", encoding="utf-8") as fh:
 
 setuptools.setup(
     name="mattstools",
-    version="1.0.0",
+    version="1.5.0",
     author="Matthew Leigh",
     author_email="mattcleigh@gmail.com",
     description="Some common utilities used in my DL projects",

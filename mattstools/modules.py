@@ -1,5 +1,4 @@
-"""Collection of pytorch modules that make up the common networks used in my
-projects."""
+"""Collection of pytorch modules that make up the common networks."""
 
 import math
 from typing import Union
@@ -38,6 +37,7 @@ class MLPBlock(nn.Module):
         do_res: bool = False,
         do_bayesian: bool = False,
         init_zeros: bool = False,
+        use_bias: bool = True,
     ) -> None:
         """Init method for MLPBlock.
 
@@ -61,9 +61,11 @@ class MLPBlock(nn.Module):
             Add to previous output, only if dim does not change, by default 0
         do_bayesian : bool, optional
             If to fill the block with bayesian linear layers, by default False
-        init_zeros : bool, optional,
+        init_zeros : bool, optional
             If the final layer weights and bias values are set to zero
             Does not apply to bayesian layers
+        use_bias: bool, optional
+            If the linear layers use bias terms
         """
         super().__init__()
 
@@ -85,13 +87,14 @@ class MLPBlock(nn.Module):
             self.block.append(
                 BayesianLinear(lyr_in, outp_dim)
                 if do_bayesian
-                else nn.Linear(lyr_in, outp_dim)
+                else nn.Linear(lyr_in, outp_dim, bias=use_bias)
             )
 
             # Initialise the final layer with zeros
             if init_zeros and n == n_layers - 1 and not do_bayesian:
                 self.block[-1].weight.data.fill_(0)
-                self.block[-1].bias.data.fill_(0)
+                if use_bias:
+                    self.block[-1].bias.data.fill_(0)
 
             if act != "none":
                 self.block.append(get_act(act))
@@ -125,8 +128,7 @@ class MLPBlock(nn.Module):
         return temp
 
     def __repr__(self) -> str:
-        """Generate a one line string summing up the components of the
-        block."""
+        """Generate a one line string summing up the components of the block."""
         string = str(self.inpt_dim)
         if self.ctxt_dim:
             string += f"({self.ctxt_dim})"
@@ -139,8 +141,10 @@ class MLPBlock(nn.Module):
 
 
 class DenseNetwork(nn.Module):
-    """A dense neural network made from a series of consecutive MLP blocks and
-    context injection layers."""
+    """A dense neural network made from a series of consecutive MLP blocks.
+
+    Supports context injection layers.
+    """
 
     def __init__(
         self,
@@ -162,6 +166,7 @@ class DenseNetwork(nn.Module):
         ctxt_in_hddn: bool = False,
         do_bayesian: bool = False,
         output_init_zeros: bool = False,
+        use_bias: bool = True,
     ) -> None:
         """Initialise the DenseNetwork.
 
@@ -204,6 +209,8 @@ class DenseNetwork(nn.Module):
             Create the network with bayesian linear layers, by default False
         output_init_zeros : bool, optional
             Initialise the output layer weights as zeros
+        use_bias: bool, optional
+            If the linear layers use a bias terms
 
         Raises
         ------
@@ -241,6 +248,7 @@ class DenseNetwork(nn.Module):
             nrm=nrm,
             drp=drp,
             do_bayesian=do_bayesian,
+            use_bias=use_bias,
         )
 
         # All hidden blocks as a single module list
@@ -259,6 +267,7 @@ class DenseNetwork(nn.Module):
                         drp=drp,
                         do_res=do_res,
                         do_bayesian=do_bayesian,
+                        use_bias=use_bias,
                     )
                 )
 
@@ -272,6 +281,7 @@ class DenseNetwork(nn.Module):
                 init_zeros=output_init_zeros,
                 nrm=nrm if nrm_on_output else "none",
                 drp=drp if drp_on_output else 0,
+                use_bias=use_bias,
             )
 
     def forward(self, inputs: T.Tensor, ctxt: T.Tensor | None = None) -> T.Tensor:
@@ -398,14 +408,12 @@ class DeepSet(nn.Module):
         )
 
     def forward(
-        self, inpt: T.tensor, mask: T.BoolTensor, ctxt: Union[T.Tensor, list] = None
+        self,
+        inpt: T.tensor,
+        mask: T.BoolTensor,
+        ctxt: Union[T.Tensor, list] | None = None,
     ):
-        """The expected shapes of the inputs are.
-
-        - tensor: batch x setsize x features
-        - mask: batch x setsize
-        - ctxt: batch x features
-        """
+        """Forward pass for deep set."""
 
         # Combine the context information if it is a list
         if isinstance(ctxt, list):
@@ -469,8 +477,7 @@ class GRF(Function):
 class GRL(nn.Module):
     """A gradient reversal layer.
 
-    This layer has no parameters, and simply reverses the gradient in
-    the backward pass.
+    This layer has no parameters, and simply reverses the gradient in the backward pass.
     """
 
     def __init__(self, alpha=1.0):
@@ -513,21 +520,38 @@ class IterativeNormLayer(nn.Module):
         extra_dims: Union[tuple, int] = (),
         track_grad_forward: bool = False,
         track_grad_reverse: bool = False,
+        ema_sync: float = 0.0,
     ) -> None:
         """Init method for Normalisatiion module.
 
-        Args:
-            inpt_dim: Shape of the input tensor (non batched), required for reloading
-            means: Calculated means for the mapping. Defaults to None.
-            vars: Calculated variances for the mapping. Defaults to None.
-            n: Number of samples used to make the mapping. Defaults to None.
-            max_n: Maximum number of iterations before the means and vars are frozen
-            extra_dims: The extra dimension(s) over which to calculate the stats
-                Will always calculate over the batch dimension
-            track_grad_forward: If the gradients should be tracked for this operation
-            track_grad_reverse: If the gradients should be tracked for this operation
+        Parameters
+        ----------
+        inpt_dim : int
+            Shape of the input tensor (non batched), required for reloading.
+        means : float, optional
+            Calculated means for the mapping. Defaults to None.
+        vars : float, optional
+            Calculated variances for the mapping. Defaults to None.
+        n : int, optional
+            Number of samples used to make the mapping. Defaults to None.
+        max_n : int
+            Maximum number of iterations before the means and vars are frozen.
+        extra_dims : int
+            The extra dimension(s) over which to calculate the stats.
+            Dimensions must be expressed for non-batched data!
+            Will always calculate over the batch dimension!
+        track_grad_forward : bool
+            If the gradients should be tracked for this operation.
+        track_grad_reverse : bool
+            If the gradients should be tracked for this operation.
+        ema_sync : bool
+            If we should use an exponential moving average.
         """
         super().__init__()
+
+        # If the layer does exponential moving average
+        self.ema_sync = ema_sync
+        self.do_ema = ema_sync > 0
 
         # Fail if only one of means or vars is provided
         if (means is None) ^ (vars is None):  # XOR
@@ -590,7 +614,7 @@ class IterativeNormLayer(nn.Module):
         self.register_buffer(
             "frozen",
             T.as_tensor(
-                (means is not None and vars is not None) or self.n > self.max_n,
+                (means is not None and vars is not None) or self.n > self.max_n
             ),
         )
 
@@ -608,6 +632,15 @@ class IterativeNormLayer(nn.Module):
         if mask is None:
             return inpt
         return inpt[mask]
+
+    def _unmask(
+        self, inpt: T.Tensor, output: T.Tensor, mask: T.BoolTensor | None = None
+    ) -> T.Tensor:
+        if mask is None:
+            return output
+        masked_out = inpt.clone()  # prevents inplace operation, bad for autograd
+        masked_out[mask] = output.type(masked_out.dtype)
+        return masked_out
 
     def _check_attributes(self) -> None:
         if self.means is None or self.vars is None:
@@ -629,8 +662,10 @@ class IterativeNormLayer(nn.Module):
             self.frozen.fill_(True)
 
     def forward(self, inpt: T.Tensor, mask: T.BoolTensor | None = None) -> T.Tensor:
-        """Applies the standardisation to a batch of inputs, also uses the
-        inputs to update the running stats if in training mode."""
+        """Apply standardisation to a batch of inputs.
+
+        Uses the inputs to update the running stats if in training mode.
+        """
 
         # Save and check the gradient tracking options
         grad_setting = T.is_grad_enabled()
@@ -638,17 +673,16 @@ class IterativeNormLayer(nn.Module):
 
         # Mask the inputs and update the stats
         sel_inpt = self._mask(inpt, mask)
-        if not self.frozen and self.training:
+
+        # Only update if in training mode
+        if self.training:
             self.update(sel_inpt)
 
         # Apply the mapping
         normed_inpt = (sel_inpt - self.means) / (self.vars.sqrt() + 1e-8)
 
         # Undo the masking
-        if mask is not None:
-            inpt = inpt.clone()  # prevents inplace operation, bad for autograd
-            inpt[mask] = normed_inpt.type(inpt.dtype)
-            normed_inpt = inpt
+        normed_inpt = self._unmask(inpt, normed_inpt, mask)
 
         # Revert the gradient setting
         T.set_grad_enabled(grad_setting)
@@ -662,15 +696,10 @@ class IterativeNormLayer(nn.Module):
         grad_setting = T.is_grad_enabled()
         T.set_grad_enabled(self.track_grad_reverse)
 
-        # Mask and revert the inputs
+        # Mask, revert the inputs, unmask
         sel_inpt = self._mask(inpt, mask)
         unnormed_inpt = sel_inpt * self.vars.sqrt() + self.means
-
-        # Undo the masking
-        if mask is not None:
-            inpt = inpt.clone()  # prevents inplace operation, bad for autograd
-            inpt[mask] = unnormed_inpt.type(inpt.dtype)
-            unnormed_inpt = inpt
+        unnormed_inpt = self._unmask(inpt, unnormed_inpt, mask)
 
         # Revert the gradient setting
         T.set_grad_enabled(grad_setting)
@@ -690,100 +719,68 @@ class IterativeNormLayer(nn.Module):
             self.fit(inpt, freeze=False)
             return
 
-        # later iterations based on batched welford algorithm
-        with T.no_grad():
-            self.n += len(inpt)
-            delta = inpt - self.means
-            self.means += (delta / self.n).mean(
-                dim=(0, *self.extra_dims), keepdim=True
-            ) * len(inpt)
-            delta2 = inpt - self.means
-            self.m2 += (delta * delta2).mean(
-                dim=(0, *self.extra_dims), keepdim=True
-            ) * len(inpt)
-            self.vars = self.m2 / self.n
+        # Otherwise update the statistics
+        if self.do_ema:
+            self._apply_ema_update(inpt)
+        else:
+            self._apply_welford_update(inpt)
 
+    @T.no_grad()
+    def _apply_ema_update(self, inpt: T.Tensor) -> None:
+        """Use an exponential moving average to update the means and vars."""
+        self.n += len(inpt)
+        nm = inpt.mean(dim=(0, *self.extra_dims), keepdim=True)
+        self.means = self.ema_sync * self.means + (1 - self.ema_sync) * nm
+        nv = (inpt - self.means).square().mean((0, *self.extra_dims), keepdim=True)
+        self.vars = self.ema_sync * self.vars + (1 - self.ema_sync) * nv
 
-class CosineEncoding:
-    def __init__(
-        self,
-        outp_dim: int = 32,
-        min_value: float = 0.0,
-        max_value: float = 1.0,
-        frequency_scaling: str = "exponential",
-    ) -> None:
-        self.outp_dim = outp_dim
-        self.min_value = min_value
-        self.max_value = max_value
-        self.frequency_scaling = frequency_scaling
-
-    def __call__(self, inpt: T.Tensor) -> T.Tensor:
-        return cosine_encoding(
-            inpt, self.outp_dim, self.min_value, self.max_value, self.frequency_scaling
-        )
-
-
-def cosine_encoding(
-    x: T.Tensor,
-    outp_dim: int = 32,
-    min_value: float = 0.0,
-    max_value: float = 1.0,
-    frequency_scaling: str = "exponential",
-) -> T.Tensor:
-    """Computes a positional cosine encodings with an increasing series of
-    frequencies.
-
-    The frequencies either increase linearly or exponentially (default).
-    The latter is good for when max_value is large and extremely high sensitivity to the
-    input is required.
-    If inputs greater than the max value are provided, the outputs become degenerate.
-    If inputs smaller than the min value are provided, the inputs the the cosine will
-    be both positive and negative, which may lead degenerate outputs.
-
-    Always make sure that the min and max bounds are not exceeded!
-
-    Args:
-        x: The input, the final dimension is encoded. If 1D then it will be unqueezed
-        out_dim: The dimension of the output encoding
-        min_value: Added to x (and max) as cosine embedding works with positive inputs
-        max_value: The maximum expected value, sets the scale of the lowest frequency
-        frequency_scaling: Either 'linear' or 'exponential'
-
-    Returns:
-        The cosine embeddings of the input using (out_dim) many frequencies
-    """
-
-    # Unsqueeze if final dimension is flat
-    if x.shape[-1] != 1 or x.dim() == 1:
-        x = x.unsqueeze(-1)
-
-    # Check the the bounds are obeyed
-    if T.any(x > max_value):
-        print("Warning! Passing values to cosine_encoding encoding that exceed max!")
-    if T.any(x < min_value):
-        print("Warning! Passing values to cosine_encoding encoding below min!")
-
-    # Calculate the various frequencies
-    if frequency_scaling == "exponential":
-        freqs = T.arange(outp_dim, device=x.device).exp()
-    elif frequency_scaling == "linear":
-        freqs = T.arange(1, outp_dim + 1, device=x.device)
-    else:
-        raise RuntimeError(f"Unrecognised frequency scaling: {frequency_scaling}")
-
-    return T.cos((x + min_value) * freqs * math.pi / (max_value + min_value))
+    @T.no_grad()
+    def _apply_welford_update(self, inpt: T.Tensor) -> None:
+        """Use an the welford algorithm to update the means and vars."""
+        m = len(inpt)
+        d = inpt - self.means
+        self.n += m
+        self.means += (d / self.n).mean(dim=(0, *self.extra_dims), keepdim=True) * m
+        delta2 = inpt - self.means
+        self.m2 += (d * delta2).mean(dim=(0, *self.extra_dims), keepdim=True) * m
+        self.vars = self.m2 / self.n
 
 
 class CosineEncodingLayer(nn.Module):
+    """Module for applying cosine encoding with increasing frequencies."""
+
     def __init__(
         self,
-        inpt_dim,
-        encoding_dim,
+        inpt_dim: int,
+        encoding_dim: int,
         scheme: str = "exponential",
         min_value: float | list | T.Tensor = 0.0,
         max_value: float | list | T.Tensor = 1.0,
         do_sin: bool = False,
     ) -> None:
+        """
+        Parameters
+        ----------
+        inpt_dim : int
+            The dimension of the input tensor.
+        encoding_dim : int
+            The dimension of the encoding tensor.
+        scheme : str, optional
+            The frequency scaling scheme to use. Options are "exponential" or "linear".
+            Default is "exponential".
+        min_value : float | list | T.Tensor, optional
+            The minimum value for the input tensor. Default is 0.0.
+        max_value : float | list | T.Tensor, optional
+            The maximum value for the input tensor. Default is 1.0.
+        do_sin : bool, optional
+            If True, applies both sine and cosine transformations to the input tensor.
+            Default is False.
+
+        Raises
+        ------
+        ValueError
+            If an unrecognised frequency scaling scheme is provided.
+        """
         super().__init__()
 
         # Check that the output dim is compatible with cos/sin
@@ -819,8 +816,7 @@ class CosineEncodingLayer(nn.Module):
         self.register_buffer("freqs", freqs)
 
     def _check_bounds(self, x: T.Tensor) -> None:
-        """Throw a warning if the input to the layer will yeild degenerate
-        outputs."""
+        """Throw a warning if the input to the layer will yeild degenerate outputs."""
 
         # Check to see if the inputs are within the bounds
         if T.any(x > self.max_value):
@@ -828,7 +824,8 @@ class CosineEncodingLayer(nn.Module):
         if T.any(x < self.min_value):
             print("Warning! Passing values to CosineEncodingLayer encoding below min!")
 
-    def forward(self, x: T.Tensor):
+    def forward(self, x: T.Tensor) -> T.Tensor:
+        """Encode the final dimension of x with sines and cosines."""
         self._check_bounds(x)
 
         # Scale the inputs between 0 and pi

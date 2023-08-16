@@ -5,17 +5,22 @@ https://github.com/alphadl/lookahead.pytorch
 
 from collections import defaultdict
 from functools import partial
-from typing import Any, Callable, Iterable, Optional
+from typing import Any, Callable, Iterable
 
 import torch as T
 from torch.optim import Optimizer
 
 
 class Lookahead(Optimizer):
+    """The lookahead optimizer.
+
+    https://arxiv.org/abs/1907.08610
+    """
+
     def __init__(
         self,
-        inner_optimizer: partial | Optimizer = None,
-        params: Iterable = None,
+        inner_optimizer: partial | Optimizer | None = None,
+        params: Iterable | None = None,
         k=10,
         alpha=0.5,
         **opt_kwargs,
@@ -41,6 +46,7 @@ class Lookahead(Optimizer):
         return self.optimizer.defaults
 
     def update(self, group):
+        """Update the parameter groups."""
         for fast in group["params"]:
             param_state = self.state[fast]
             if "slow_param" not in param_state:
@@ -50,11 +56,8 @@ class Lookahead(Optimizer):
             slow += (fast.data - slow) * self.alpha
             fast.data.copy_(slow)
 
-    def update_lookahead(self):
-        for group in self.param_groups:
-            self.update(group)
-
     def step(self, closure=None):
+        """Update all parameter groups with gradient descent."""
         loss = self.optimizer.step(closure)
         for group in self.param_groups:
             if group["counter"] == 0:
@@ -65,6 +68,7 @@ class Lookahead(Optimizer):
         return loss
 
     def state_dict(self):
+        """Return the date dict for saving and realoading."""
         fast_state_dict = self.optimizer.state_dict()
         slow_state = {
             (id(k) if isinstance(k, T.Tensor) else k): v for k, v in self.state.items()
@@ -78,6 +82,7 @@ class Lookahead(Optimizer):
         }
 
     def load_state_dict(self, state_dict):
+        """Load a saved state dictionary."""
         slow_state_dict = {
             "state": state_dict["slow_state"],
             "param_groups": state_dict["param_groups"],
@@ -91,6 +96,7 @@ class Lookahead(Optimizer):
         self.fast_state = self.optimizer.state
 
     def add_param_group(self, param_group):
+        """Add to the parameter group, needed by pytorch."""
         param_group["counter"] = 0
         self.optimizer.add_param_group(param_group)
 
@@ -121,11 +127,13 @@ class Lion(Optimizer):
         super().__init__(params, defaults)
 
     @T.no_grad()
-    def step(self, closure: Optional[Callable] = None) -> Any:
-        """Performs a single optimization step.
+    def step(self, closure: Callable | None = None) -> Any:
+        """Perform a single optimization step.
 
-        Args:
-          closure: A closure that reevaluates the model and returns the loss
+        Args
+        ----
+          closure:
+            A closure that reevaluates the model and returns the loss
         """
 
         # Define the loss using the closure function

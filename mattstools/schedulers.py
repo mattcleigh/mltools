@@ -7,6 +7,8 @@ from torch.optim.lr_scheduler import OneCycleLR, _LRScheduler
 
 
 class LinearWarmupRootDecay(_LRScheduler):
+    """Learning rate scheduler with a linear wamup and a sqrt decay."""
+
     def __init__(
         self,
         optimizer: Optimizer,
@@ -59,16 +61,15 @@ class WarmupToConstant(_LRScheduler):
 
 
 class CyclicWithWarmup(OneCycleLR):
-    """A cyclic scheduler with dedicated warmup periods based on the onecycle
-    LR.
+    """A cyclic scheduler with dedicated warmup periods based on the onecycle LR.
 
-    The only difference is the get_lr method, which resets the scheduler
-    after each cycle instead of throwing out an error
+    The only difference is the get_lr method, which resets the scheduler after each
+    cycle instead of throwing out an error
     """
 
     def get_lr(self):
-        """Overloaded method for aquiring new learning rates Only line that is
-        changed from the original method is the step number!
+        """Overloaded method for aquiring new learning rates Only line that is changed
+        from the original method is the step number!
 
         Also removed the warning that step > length
         """

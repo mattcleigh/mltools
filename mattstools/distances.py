@@ -6,98 +6,116 @@ import torch.nn.functional as F
 EPS = 1e-8  # epsilon for preventing division by zero
 
 
-def masked_diff_matrix(
-    tensor_a: T.Tensor,
-    mask_a: T.BoolTensor,
-    tensor_b: T.Tensor = None,
-    mask_b: T.BoolTensor = None,
-    pad_val: float = float("Inf"),
-    allow_self: bool = False,
-    track_grad: bool = False,
-) -> T.Tensor:
-    """Builds a difference matrix between two masked/padded tensors.
+# def masked_diff_matrix(
+#     tensor_a: T.Tensor,
+#     mask_a: T.BoolTensor,
+#     tensor_b: T.Tensor | None = None,
+#     mask_b: T.BoolTensor | None = None,
+#     pad_val: float = float("Inf"),
+#     allow_self: bool = False,
+#     track_grad: bool = False,
+# ) -> T.Tensor:
+#     """Build a difference matrix between two masked/padded tensors.
 
-    - DOES NOT WORK WITH BATCH DIMENSION FOR NOW!
+#     - DOES NOT WORK WITH BATCH DIMENSION FOR NOW!
 
-    - Will create the self distance matrix if only one tensor and mask is provided
-    - The distance matrix will be padded
-    - Uses the tensors as a->senders (dim 1) vs b->receivers (dim 2)
-        - Symettrical if doing self distance (tensor_b is none)
-    - Attributes of the matrix will be the senders-receivers
+#     - Will create the self distance matrix if only one tensor and mask is provided
+#     - The distance matrix will be padded
+#     - Uses the tensors as a->senders (dim 1) vs b->receivers (dim 2)
+#         - Symettrical if doing self distance (tensor_b is none)
+#     - Attributes of the matrix will be the senders-receivers
 
-    args:
-        tensor_a: The first tensor to use (n_nodes x n_features)
-        mask_a: Shows which nodes in tensor_a are real (n_nodes)
-    kwargs:
-        tensor_b: The second tensor to use (N_nodes x n_features)
-        mask_b: Shows which nodes in tensor_b are real (n_nodes)
-        pad_val: The value to use for distances between fake and real (fake) nodes
-        allow_self: Only applicable for self distances. Allows self connections.
-        track_grad: If the gradients are tracked during this step (memory heavy!)
-    returns:
-        diff_matrix matrix: distance between tensor_a and tensor_a(b)
-        matrix_mask: location of connections between real nodes
-    """
+#     args:
+#         tensor_a: The first tensor to use (n_nodes x n_features)
+#         mask_a: Shows which nodes in tensor_a are real (n_nodes)
+#     kwargs:
+#         tensor_b:
+#             The second tensor to use (N_nodes x n_features)
+#         mask_b:
+#             Shows which nodes in tensor_b are real (n_nodes)
+#         pad_val:
+#             The value to use for distances between fake and real (fake) nodes
+#         allow_self:
+#             Only applicable for self distances. Allows self connections.
+#         track_grad:
+#             If the gradients are tracked during this step (memory heavy!)
+#     Return:
+#         diff_matrix:
+#             distance between tensor_a and tensor_a(b)
+#         matrix_mask:
+#             location of connections between real nodes
+#     """
 
-    # Save current gradient settings then change to argument
-    has_grad = T.is_grad_enabled()
-    T.set_grad_enabled(track_grad)
+#     # Save current gradient settings then change to argument
+#     has_grad = T.is_grad_enabled()
+#     T.set_grad_enabled(track_grad)
 
-    # Check if this is a self distance matrix
-    is_self_dist = tensor_b is None
-    if is_self_dist:
-        tensor_b = tensor_a
-        mask_b = mask_a
+#     # Check if this is a self distance matrix
+#     is_self_dist = tensor_b is None
+#     if is_self_dist:
+#         tensor_b = tensor_a
+#         mask_b = mask_a
 
-    # Calculate the matrix mask of real nodes to real nodes
-    matrix_mask = mask_a.unsqueeze(-1) * mask_b.unsqueeze(-2)
+#     # Calculate the matrix mask of real nodes to real nodes
+#     matrix_mask = mask_a.unsqueeze(-1) * mask_b.unsqueeze(-2)
 
-    # Remove diagonal (loops) from the mask for self connections
-    if not allow_self and is_self_dist:
-        matrix_mask *= ~T.eye(len(mask_a)).bool()
+#     # Remove diagonal (loops) from the mask for self connections
+#     if not allow_self and is_self_dist:
+#         matrix_mask *= ~T.eye(len(mask_a)).bool()
 
-    # Calculate the distance matrix as normal
-    diff_matrix = tensor_a.unsqueeze(-2) - tensor_b.unsqueeze(-3)
+#     # Calculate the distance matrix as normal
+#     diff_matrix = tensor_a.unsqueeze(-2) - tensor_b.unsqueeze(-3)
 
-    # Ensure the distances between fake nodes take the padding value
-    diff_matrix[~matrix_mask] = pad_val
+#     # Ensure the distances between fake nodes take the padding value
+#     diff_matrix[~matrix_mask] = pad_val
 
-    # Revert the gradient tracking to the previous setting
-    T.set_grad_enabled(has_grad)
+#     # Revert the gradient tracking to the previous setting
+#     T.set_grad_enabled(has_grad)
 
-    return diff_matrix, matrix_mask.detach()
+#     return diff_matrix, matrix_mask.detach()
 
 
 def masked_dist_matrix(
     tensor_a: T.Tensor,
     mask_a: T.BoolTensor,
-    tensor_b: T.Tensor = None,
-    mask_b: T.BoolTensor = None,
+    tensor_b: T.Tensor | None = None,
+    mask_b: T.BoolTensor | None = None,
     pad_val: float = float("Inf"),
     measure: str = "eucl",
     allow_self: bool = False,
     track_grad: bool = False,
 ) -> T.Tensor:
-    """Builds a distance matrix between two masked/padded tensors.
+    """Build a distance matrix between two masked/padded tensors.
 
     - Will create the self distance matrix if only one tensor and mask is provided
     - The distance matrix will be padded
     - Uses the tensors as a->senders (dim 1) vs b->receivers (dim 2)
         - Symettrical if doing self distance (tensor_b is none)
 
-    args:
-        tensor_a: The first tensor to use (batch x n_nodes x n_features)
-        mask_a: Shows which nodes in tensor_a are real (batch x n_nodes)
-    kwargs:
-        tensor_b: The second tensor to use (batch x n_nodes x n_features)
-        mask_b: Shows which nodes in tensor_b are real (batch x n_nodes)
-        pad_val: The value to use for distances between fake and real (fake) nodes
-        measure: If the euclidean or the dot procuct is used to define the nodes
-        allow_self: Only applicable for self distances. Allows self connections.
-        track_grad: If the gradients are tracked during this step (memory heavy!)
-    returns:
-        distance matrix: between tensor_a and tensor_a(b)
-        matrix_mask: location of connections between real nodes
+    Parameters
+    ----------
+        tensor_a:
+            The first tensor to use (batch x n_nodes x n_features)
+        mask_a:
+            Shows which nodes in tensor_a are real (batch x n_nodes)
+        tensor_b:
+            The second tensor to use (batch x n_nodes x n_features)
+        mask_b:
+            Shows which nodes in tensor_b are real (batch x n_nodes)
+        pad_val:
+            The value to use for distances between fake and real (fake) nodes
+        measure:
+            If the euclidean or the dot procuct is used to define the nodes
+        allow_self:
+            Only applicable for self distances. Allows self connections.
+        track_grad:
+            If the gradients are tracked during this step (memory heavy!)
+    Return
+    ------
+        distance_matrix:
+            between tensor_a and tensor_a(b)
+        matrix_mask:
+            location of connections between real nodes
     """
 
     # Save current gradient settings then change to argument
@@ -106,9 +124,8 @@ def masked_dist_matrix(
 
     # Check if this is a self distance matrix
     is_self_dist = tensor_b is None
-    if is_self_dist:
-        tensor_b = tensor_a
-        mask_b = mask_a
+    tensor_b = tensor_b or tensor_a
+    mask_b = mask_b or mask_a
 
     # Calculate the matrix mask of real nodes to real nodes
     matrix_mask = mask_a.unsqueeze(-1) * mask_b.unsqueeze(-2)
@@ -138,22 +155,22 @@ def masked_dist_matrix(
 
 
 def masked_fc_adjmat(
-    mask_a: T.BoolTensor, mask_b: T.BoolTensor = None, allow_self: bool = False
+    mask_a: T.BoolTensor, mask_b: T.BoolTensor | None = None, allow_self: bool = False
 ) -> T.Tensor:
-    """Build a masked adjacency matrix matrix between two masked/padded
-    tensors.
+    """Build a masked adjacency matrix matrix between two masked/padded tensors.
 
     - Will create the self adjmat if only one tensor and mask is provided
     - Uses the tensors as a->senders (dim 1) vs b->receivers (dim 2)
         - Symettrical if doing self distance (tensor_b is none)
 
-    args:
-        mask_a: Which nodes in tensor_a are real (batch x n_nodes)
-    kwargs:
-        mask_b: Which nodes in tensor_b are real (batch x n_nodes)
-        allow_self: Only applicable for self distances. Allows self connections.
-    returns:
-        adjmat connecting all real nodes in tensor_a and tensor_a(b)
+    Args
+    ----
+        mask_a:
+            Which nodes in tensor_a are real (batch x n_nodes)
+        mask_b:
+            Which nodes in tensor_b are real (batch x n_nodes)
+        allow_self:
+            Only applicable for self distances. Allows self connections.
     """
 
     # No gradients should be used in this step
@@ -176,15 +193,20 @@ def masked_fc_adjmat(
 def knn(
     distmat: T.Tensor, k_val: int, k_restr_dim: str = "recv", top_k: bool = False
 ) -> T.BoolTensor:
-    """Creates edges based on an infinite padded distance matrix.
+    """Create edges based on an infinite padded distance matrix.
 
-    args:
-        distmat: A batched infinite padded distance matrix with no self loops
-        k_val: The value of K for the clustering
-        k_restr_dim: The dimension over which to restrict (send or recv)
-        top_k: If the top k distances should be used for clustering instead
-    returns:
-        adjmat: A new adjmat using knn over one of the dimensions in the dist mat
+    Args
+    ----
+    distmat:
+        A batched infinite padded distance matrix with no self loops
+    k_val:
+        The value of K for the clustering
+    k_restr_dim:
+        The dimension over which to restrict (send or recv)
+    top_k:
+        If the top k distances should be used for clustering instead
+    adjmat:
+        A new adjmat using knn over one of the dimensions in the dist mat
     """
 
     # Configuration checking

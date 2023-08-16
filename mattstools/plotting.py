@@ -73,6 +73,12 @@ def plot_profiles(
 
     assert len(x_list) == len(y_list)
 
+    # Make sure the kwargs are lists too
+    if not isinstance(hist_kwargs, list):
+        hist_kwargs = len(x_list) * [hist_kwargs]
+    if not isinstance(err_kwargs, list):
+        err_kwargs = len(x_list) * [err_kwargs]
+
     # Initialise the figure
     fig, ax = plt.subplots(1, 1, figsize=figsize)
 
@@ -152,7 +158,7 @@ def plot_corr_heatmaps(
     xlabel: str,
     ylabel: str,
     path: Optional[Path] = None,
-    weights: np.ndarray = None,
+    weights: np.ndarray | None = None,
     do_log: bool = True,
     equal_aspect: bool = True,
     cmap: str = "coolwarm",
@@ -166,24 +172,40 @@ def plot_corr_heatmaps(
 ) -> None:
     """Plot and save a 2D heatmap, usually for correlation plots.
 
-    args:
-        path: Location of the output file
-        x_vals: The values to put along the x-axis, usually truth
-        y_vals: The values to put along the y-axis, usually reco
-        bins: The bins to use, must be [xbins, ybins]
-        xlabel: Label for the x-axis
-        ylabel: Label for the y-axis
-    kwargs:
-        weights: The weight value for each x, y pair
-        do_log: If the z axis should be the logarithm
-        equal_aspect: Force the sizes of the axes' units to match
-        cmap: The name of the cmap to use for z values
-        incl_line: If a y=x line should be included to show ideal correlation
-        incl_cbar: Add the colour bar to the axis
-        figsize: The size of the output figure
-        title: Title for the plot
-        do_pearson: Add the pearson correlation coeficient to the plot
-        do_pdf: If the output should also contain a pdf version
+    Parameters
+    ----------
+    path : str
+        Location of the output file.
+    x_vals : array_like
+        The values to put along the x-axis, usually truth.
+    y_vals : array_like
+        The values to put along the y-axis, usually reco.
+    bins : array_like
+        The bins to use, must be [xbins, ybins].
+    xlabel : str
+        Label for the x-axis.
+    ylabel : str
+        Label for the y-axis.
+    weights : array_like, optional
+        The weight value for each x, y pair.
+    do_log : bool, optional
+        If the z axis should be the logarithm.
+    equal_aspect : bool, optional
+        Force the sizes of the axes' units to match.
+    cmap : str, optional
+        The name of the cmap to use for z values.
+    incl_line : bool, optional
+        If a y=x line should be included to show ideal correlation.
+    incl_cbar : bool, optional
+        Add the colour bar to the axis.
+    figsize : tuple, optional
+        The size of the output figure.
+    title : str, optional
+        Title for the plot.
+    do_pearson : bool, optional
+        Add the pearson correlation coeficient to the plot.
+    do_pdf : bool, optional
+        If the output should also contain a pdf version.
     """
 
     # Define the bins for the data
@@ -256,9 +278,9 @@ def add_hist(
     bins: np.ndarray,
     do_norm: bool = False,
     label: str = "",
-    scale_factor: float = None,
-    hist_kwargs: dict = None,
-    err_kwargs: dict = None,
+    scale_factor: float | None = None,
+    hist_kwargs: dict | None = None,
+    err_kwargs: dict | None = None,
     do_err: bool = True,
 ) -> None:
     """Plot a histogram on a given axes object.
@@ -325,7 +347,14 @@ def add_hist(
         ax.stairs(hist + hist_err, bins, baseline=hist - hist_err, **e_kwargs)
 
 
-def quantile_bins(data, bins=50, low=0.001, high=0.999, axis=None) -> np.ndarray:
+def quantile_bins(
+    data: np.ndarray,
+    bins: int = 50,
+    low: float = 0.001,
+    high: float = 0.999,
+    axis: int | None = None,
+) -> np.ndarray:
+    """Return bin edges between quantile values of a dataset."""
     return np.linspace(*np.quantile(data, [low, high], axis=axis), bins)
 
 
@@ -342,10 +371,55 @@ def plot_multi_correlations(
     hist_kwargs: list | None = None,
     err_kwargs: list | None = None,
     legend_kwargs: dict | None = None,
-    path: Path | str = None,
+    path: Path | str | None = None,
     return_img: bool = False,
     return_fig: bool = False,
-) -> Union[plt.Figure, None]:
+) -> plt.Figure | None:
+    """Plot multiple correlations in a matrix format.
+
+    Parameters
+    ----------
+    data_list : list | np.ndarray
+        List of data arrays to be plotted.
+    data_labels : list
+        List of labels for the data.
+    col_labels : list
+        List of column labels for the data.
+    n_bins : int, optional
+        Number of bins for the histogram, by default 50. Superseeded by bins
+    bins : list | None, optional
+        List of bin edges, by default None.
+    fig_scale : float, optional
+        Scaling factor for the figure size, by default 1.
+    n_kde_points : int, optional
+        Number of points for the KDE plot, by default 50.
+    do_err : bool, optional
+        If True, add error bars to the histogram, by default True.
+    do_norm : bool, optional
+        If True, normalize the histogram, by default True.
+    hist_kwargs : list | None, optional
+        List of dictionaries with keyword arguments for the plotting function,
+        by default None.
+    err_kwargs : list | None, optional
+        List of dictionaries with keyword arguments for the error function,
+        by default None.
+    legend_kwargs : dict | None, optional
+        Dictionary with keyword arguments for the legend function, by default None.
+    path : Path | str, optional
+        Path where to save the figure, by default None.
+    return_img : bool, optional
+        If True, return the image as a PIL.Image object instead of saving it to a file,
+        by default False.
+    return_fig : bool, optional
+        If True, return the figure and axes objects instead of saving it to a file or
+        returning an image object.
+
+    Returns
+    -------
+    plt.Figure | None
+        The figure object if `return_fig` is True. Otherwise returns None.
+    """
+
     # Make sure the kwargs are lists too
     if not isinstance(hist_kwargs, list):
         hist_kwargs = len(data_list) * [hist_kwargs]
@@ -364,10 +438,10 @@ def plot_multi_correlations(
     # Define the binning as auto or not
     all_bins = []
     for n in range(n_features):
-        if bins is None or (isinstance(bins[n], str) and bins[n] == "auto"):
+        if bins is None or bins[n] == "auto":
             all_bins.append(quantile_bins(data_list[0][:, n], bins=n_bins))
         else:
-            all_bins.append(bins[n])
+            all_bins.append(np.array(bins[n]))
 
     # Cycle through the rows and columns and set the axis labels
     for row in range(n_features):
@@ -394,7 +468,7 @@ def plot_multi_correlations(
             # For the diagonals they become histograms
             # Bins are based on the first datapoint in the list
             if row == column:
-                bins = all_bins[column]
+                b = all_bins[column]
                 for i, d in enumerate(data_list):
                     add_hist(
                         axes[row, column],
@@ -405,7 +479,7 @@ def plot_multi_correlations(
                         do_err=do_err,
                         do_norm=do_norm,
                     )
-                    axes[row, column].set_xlim(bins[0], bins[-1])
+                    axes[row, column].set_xlim(b[0], b[-1])
 
             # If we are in the lower triange  fill using a contour plot
             elif row > column:
@@ -455,6 +529,7 @@ def plot_multi_correlations(
     if return_fig:
         return fig
     plt.close(fig)
+    return
 
 
 def plot_multi_hists_2(
@@ -491,32 +566,58 @@ def plot_multi_hists_2(
     - Matching columns in each array will be superimposed on the same axis
     - If the tensor being passed is 3D it will average them and combine the uncertainty
 
-    args:
-        data_list: A list of tensors or numpy arrays, each col will be a seperate axis
-        data_labels: A list of labels for each tensor in data_list
-        col_labels: A list of labels for each column/axis
-        path: The save location of the plots (include img type)
-        scale_factors: List of scalars to be applied to each histogram
-        do_err: If the statistical errors should be included as shaded regions
-        do_norm: If the histograms are to be a density plot
-        bins: List of bins to use for each axis, can use numpy's strings
-        logy: If we should use the log in the y-axis
-        y_label: Label for the y axis of the plots
-        ylim: The y limits for all plots
-        ypad: The amount by which to pad the whitespace above the plots
-        rat_ylim: The y limits of the ratio plots
-        rat_label: The label for the ratio plot
-        scale: The size in inches for each subplot
-        do_legend: If the legend should be plotted
-        hist_kwargs: Additional keyword arguments for the line for each histogram
-        legend_kwargs: Extra keyword arguments to pass to the legend constructor
-        extra_text: Extra text to put on each axis (same length as columns)
-        incl_overflow: Have the final bin include the overflow
-        incl_underflow: Have the first bin include the underflow
-        do_ratio_to_first: Include a ratio plot to the first histogram in the list
-        as_pdf: Also save an additional image in pdf format
-        return_fig: Return the figure (DOES NOT CLOSE IT!)
-        return_img: Return a PIL image (will close the figure)
+    Parameters
+    ----------
+    data_list:
+        A list of tensors or numpy arrays, each col will be a seperate axis
+    data_labels:
+        A list of labels for each tensor in data_list
+    col_labels:
+        A list of labels for each column/axis
+    path:
+        The save location of the plots (include img type)
+    scale_factors:
+        List of scalars to be applied to each histogram
+    do_err:
+        If the statistical errors should be included as shaded regions
+    do_norm:
+        If the histograms are to be a density plot
+    bins:
+        List of bins to use for each axis, can use numpy's strings
+    logy:
+        If we should use the log in the y-axis
+    y_label:
+        Label for the y axis of the plots
+    ylim:
+        The y limits for all plots
+    ypad:
+        The amount by which to pad the whitespace above the plots
+    rat_ylim:
+        The y limits of the ratio plots
+    rat_label:
+        The label for the ratio plot
+    scale:
+        The size in inches for each subplot
+    do_legend:
+        If the legend should be plotted
+    hist_kwargs:
+        Additional keyword arguments for the line for each histogram
+    legend_kwargs:
+        Extra keyword arguments to pass to the legend constructor
+    extra_text:
+        Extra text to put on each axis (same length as columns)
+    incl_overflow:
+        Have the final bin include the overflow
+    incl_underflow:
+        Have the first bin include the underflow
+    do_ratio_to_first:
+        Include a ratio plot to the first histogram in the list
+    as_pdf:
+        Also save an additional image in pdf format
+    return_fig:
+        Return the figure (DOES NOT CLOSE IT!)
+    return_img:
+        Return a PIL image (will close the figure)
     """
 
     # Make the arguments lists for generality
@@ -661,10 +762,7 @@ def plot_multi_hists_2(
             # Include the uncertainty in the plots as a shaded region
             if do_err:
                 axes[0, ax_idx].stairs(
-                    hist + hist_err,
-                    ax_bins,
-                    baseline=hist - hist_err,
-                    **e_kwargs,
+                    hist + hist_err, ax_bins, baseline=hist - hist_err, **e_kwargs
                 )
 
             # Add a ratio plot
@@ -685,11 +783,7 @@ def plot_multi_hists_2(
                 )
 
                 # Plot the ratios
-                axes[1, ax_idx].stairs(
-                    rat_hist,
-                    ax_bins,
-                    **ratio_kwargs,
-                )
+                axes[1, ax_idx].stairs(rat_hist, ax_bins, **ratio_kwargs)
 
                 # Use a standard shaded region for the errors
                 if do_err:
@@ -775,396 +869,48 @@ def plot_multi_hists_2(
     plt.close(fig)
 
 
-def plot_multi_hists(
-    data_list: Union[list, np.ndarray],
-    type_labels: Union[list, str],
-    col_labels: Union[list, str],
-    path: Optional[Union[Path, str]] = None,
-    multi_hist: Optional[list] = None,
-    normed: bool = False,
-    bins: Union[list, str] = "auto",
-    logy: bool = False,
-    ylim: list = None,
-    rat_ylim=(0, 2),
-    rat_label=None,
-    scale: int = 5,
-    leg: bool = True,
-    leg_loc: str = "upper left",
-    incl_zeros: bool = True,
-    already_hists: bool = False,
-    hist_fills: list = None,
-    hist_colours: list = None,
-    hist_kwargs: dict = None,
-    hist_scale: float = 1,
-    incl_overflow: bool = False,
-    incl_underflow: bool = False,
-    do_step: bool = True,
-    do_ratio_to_first: bool = False,
-    as_pdf: bool = False,
-    return_fig: bool = False,
-    return_img: bool = False,
-) -> Union[plt.Figure, None]:
-    """Plot multiple histograms given a list of 2D tensors/arrays.
-
-    - Performs the histogramming here
-    - Each column the arrays will be a seperate axis
-    - Matching columns in each array will be superimposed on the same axis
-
-    args:
-        path: The save location of the plots
-        data_list: A list of tensors or numpy arrays
-        type_labels: A list of labels for each tensor in data_list
-        col_labels: A list of labels for each column/histogram
-        multi_hist: Reshape the columns and plot as a shaded histogram
-        normed: If the histograms are to be a density plot
-        bins: The bins to use for each axis, can use numpy's strings
-        logy: If we should use the log in the y-axis
-        ylim: The y limits for all plots
-        rat_ylim: The y limits of the ratio plots
-        rat_label: The label for the ratio plot
-        scale: The size in inches for each subplot
-        leg: If the legend should be plotted
-        leg_loc: The location of the legend
-        incl_zeros: If zero values should be included in the histograms or ignored
-        already_hists: If the data is already histogrammed and doesnt need to be binned
-        hist_fills: Bool for each histogram in data_list, if it should be filled
-        hist_colours: Color for each histogram in data_list
-        hist_kwargs: Additional keyword arguments for the line for each histogram
-        hist_scale: Amount to scale all histograms
-        incl_overflow: Have the final bin include the overflow
-        incl_underflow: Have the first bin include the underflow
-        do_step: If the data should be represented as a step plot
-        do_ratio_to_first: Include a ratio plot to the first histogram in the list
-        as_pdf: Also save an additional image in pdf format
-        return_fig: Return the figure (DOES NOT CLOSE IT!)
-        return_img: Return a PIL image (will close the figure)
-    """
-
-    # Make the arguments lists for generality
-    if not isinstance(data_list, list):
-        data_list = [data_list]
-    if isinstance(type_labels, str):
-        type_labels = [type_labels]
-    if isinstance(col_labels, str):
-        col_labels = [col_labels]
-    if not isinstance(bins, list):
-        bins = len(data_list[0][0]) * [bins]
-    if not isinstance(hist_colours, list):
-        hist_colours = len(data_list) * [hist_colours]
-
-    # Check the number of histograms to plot
-    n_data = len(data_list)
-    n_axis = len(data_list[0][0])
-
-    # Make sure the there are not too many subplots
-    if n_axis > 20:
-        raise RuntimeError("You are asking to create more than 20 subplots!")
-
-    # Create the figure and axes listss
-    dims = np.array([n_axis, 1])
-    size = np.array([n_axis, 1.0])
-    if do_ratio_to_first:
-        dims *= np.array([1, 2])
-        size *= np.array([1, 1.2])
-    fig, axes = plt.subplots(
-        *dims[::-1],
-        figsize=tuple(scale * size),
-        gridspec_kw={"height_ratios": [3, 1] if do_ratio_to_first else {1}},
-    )
-    if n_axis == 1 and not do_ratio_to_first:
-        axes = np.array([axes])
-    if do_ratio_to_first:
-        axes = np.transpose(axes)
-    else:
-        axes = axes.reshape(dims)
-
-    # Replace the zeros
-    if not incl_zeros:
-        for d in data_list:
-            d[d == 0] = np.nan
-
-    # Cycle through each axis
-    for i in range(n_axis):
-        b = bins[i]
-
-        # Reduce bins based on number of unique datapoints
-        # If the number of datapoints is less than 10 then we assume interger types
-        if isinstance(b, str) and not already_hists:
-            unq = np.unique(data_list[0][:, i])
-            n_unique = len(unq)
-            if 1 < n_unique < 10:
-                b = (unq[1:] + unq[:-1]) / 2  # Use midpoints
-                b = np.append(b, unq.max() + unq.max() - b[-1])  # Add final bin
-                b = np.insert(b, 0, unq.min() + unq.min() - b[0])  # Add initial bin
-
-        # Cycle through the different data arrays
-        for j in range(n_data):
-            # For a multiple histogram
-            # if multi_hist is not None and multi_hist[j] > 1:
-            #     data = np.copy(data_list[j][:, i]).reshape(-1, multi_hist[j])
-            #     if incl_overflow:
-            #         data = np.minimum(data, b[-1])
-            #     if incl_underflow:
-            #         data = np.maximum(data, b[0])
-            #     mh_hists = []
-            #     for mh in range(multi_hist[j]):
-            #         mh_hists.append(np.histogram(data[:, mh], b, density=normed)[0])
-            #     mh_means = np.mean(mh_hists, axis=0)
-            #     mh_unc = np.std(mh_hists, axis=0)
-            #     mh_means = [mh_means[0]] + mh_means.tolist()
-            #     mh_unc = [mh_unc[0]] + mh_unc.tolist()
-            #     axes[i, 0].step(
-            #         b, mh_means, label=type_labels[j], color=hist_colours[j], **kwargs
-            #     )
-            #     axes[i, 0].fill_between(
-            #         b,
-            #         np.subtract(mh_means, mh_unc),
-            #         np.add(mh_means, mh_unc),
-            #         color=hist_colours[j],
-            #         step="pre",
-            #         alpha=0.4,
-            #     )
-            #     if do_ratio_to_first:
-            #         d = [denom_hist[0]] + denom_hist.tolist()
-            #         axes[i, 1].step(
-            #             b, np.divide(mh_means, d), color=hist_colours[j], **kwargs
-            #         )
-            #         axes[i, 1].fill_between(
-            #             b,
-            #             np.divide(np.subtract(mh_means, mh_unc), d),
-            #             np.divide(np.add(mh_means, mh_unc), d),
-            #             color=hist_colours[j],
-            #             step="pre",
-            #             alpha=0.4,
-            #         )
-            #     continue
-
-            # Read the binned data from the array
-            if already_hists:
-                histo = data_list[j][:, i]
-
-            # Calculate histogram of the column and remember the bins
-            else:
-                # Get the bins for the histogram based on the first plot
-                if j == 0:
-                    b = np.histogram_bin_edges(data_list[j][:, i], bins=b)
-
-                # Apply overflow and underflow (make a copy)
-                data = np.copy(data_list[j][:, i])
-                if incl_overflow:
-                    data = np.minimum(data, b[-1])
-                if incl_underflow:
-                    data = np.maximum(data, b[0])
-
-                # Calculate the histogram
-                histo, _ = np.histogram(data, b, density=normed)
-
-            # Apply the scaling factor
-            histo = histo * hist_scale
-
-            # Save the first histogram for the ratio plots
-            if j == 0:
-                denom_hist = histo
-
-            # Get the additional keywork arguments
-            if hist_kwargs is not None:
-                kwargs = {key: val[j] for key, val in hist_kwargs.items()}
-            else:
-                kwargs = {}
-
-            # Plot the fill
-            ydata = histo.tolist()
-            ydata = [ydata[0]] + ydata
-            if hist_fills is not None and hist_fills[j]:
-                axes[i, 0].fill_between(
-                    b,
-                    ydata,
-                    label=type_labels[j],
-                    step="pre" if do_step else None,
-                    alpha=0.4,
-                    color=hist_colours[j],
-                )
-
-            # Plot the histogram as a step graph
-            elif do_step:
-                axes[i, 0].step(
-                    b, ydata, label=type_labels[j], color=hist_colours[j], **kwargs
-                )
-
-            else:
-                axes[i, 0].plot(
-                    b, ydata, label=type_labels[j], color=hist_colours[j], **kwargs
-                )
-
-            # Plot the ratio plot
-            if do_ratio_to_first:
-                ydata = (histo / denom_hist).tolist()
-                ydata = [ydata[0]] + ydata
-                axes[i, 1].step(b, ydata, color=hist_colours[j], **kwargs)
-
-        # Set the x_axis label
-        if do_ratio_to_first:
-            axes[i, 0].set_xticklabels([])
-            axes[i, 1].set_xlabel(col_labels[i])
-        else:
-            axes[i, 0].set_xlabel(col_labels[i])
-
-        # Set the limits
-        if bins is None:
-            x_low, x_high = np.quantile(b, [0.0, 0.85])
-            axes[i, 0].set_xlim(x_low, x_high)
-        else:
-            axes[i, 0].set_xlim(b[0], b[-1])
-
-        if ylim is not None:
-            setylim = ylim
-            axes[i, 0].set_ylim(*setylim)
-        else:
-            _, ylim2 = axes[i, 0].get_ylim()
-            if logy:
-                # pad up the ylim (which is in logscale) by 50%
-                ylim2 = 10 ** (np.log10(ylim2) * 1.35)
-                setylim = (1, ylim2)
-            else:
-                ylim2 = ylim2 * 1.35
-                setylim = (0, ylim2)
-            axes[i, 0].set_ylim(top=ylim2)
-
-        if do_ratio_to_first:
-            axes[i, 1].set_xlim(b[0], b[-1])
-            axes[i, 1].set_ylim(rat_ylim)
-
-        # Set the y scale to be logarithmic
-        if logy:
-            axes[i, 0].set_yscale("log")
-
-        # Set the y axis
-        if normed:
-            axes[i, 0].set_ylabel("Normalised Entries")
-        elif hist_scale != 1:
-            axes[i, 0].set_ylabel("a.u.")
-        else:
-            axes[i, 0].set_ylabel("Entries")
-        if do_ratio_to_first:
-            if rat_label is not None:
-                axes[i, 1].set_ylabel(rat_label)
-            else:
-                axes[i, 1].set_ylabel(f"Ratio to {type_labels[0]}")
-
-    # Only do legend on the first axis.
-    if leg:
-        for ax in axes[:, 0]:
-            ax.legend(loc=leg_loc)
-    # Save the image as a png
-    fig.tight_layout()
-
-    # For ratio plots minimise the h_space
-    if do_ratio_to_first:
-        fig.subplots_adjust(hspace=0.08)
-
-    if path is not None:
-        path = Path(path)
-        fig.savefig(path.with_suffix(".png"))
-        if as_pdf:
-            fig.savefig(path.with_suffix(".pdf"))
-    if return_fig:
-        return fig
-    if return_img:
-        img = PIL.Image.frombytes(
-            "RGB", fig.canvas.get_width_height(), fig.canvas.tostring_rgb()
-        )
-        plt.close(fig)
-        return img
-    plt.close(fig)
-
-
-# def plot_and_save_hists(
-#     path: str,
-#     hist_list: list,
-#     labels: list,
-#     ax_labels: list,
-#     bins: np.ndarray,
-#     do_csv: bool = False,
-#     stack: bool = False,
-#     is_mid: bool = False,
-# ) -> None:
-#     """Plot a list of hitograms on the same axis and save the results to a csv file
-#     args:
-#         path: The path to the output file, will get png and csv suffix
-#         hist_list: A list of histograms to plot
-#         labels: List of labels for each histogram
-#         ax_labels: Name of the x and y axis
-#         bins: Binning used to create the histograms
-#         do_csv: If the histograms should also be saved as csv files
-#         stack: If the histograms are stacked or overlayed
-#         is_mid: If the bins provided are already the midpoints
-#     """
-
-#     # Make the arguments lists for generality
-#     if not isinstance(hist_list, list):
-#         hist_list = [hist_list]
-
-#     # Get the midpoints of the bins
-#     mid_bins = bins if is_mid else mid_points(bins)
-#     bins = undo_mid(mid_bins) if is_mid else bins
-
-#     # Save the histograms to text
-#     if do_csv:
-#         df = pd.DataFrame(
-#             np.vstack([mid_bins] + hist_list).T, columns=["bins"] + labels
-#         )
-#         df.to_csv(path.with_suffix(".csv"), index=False)
-
-#     # Create the plot of the histograms
-#     fig, ax = plt.subplots()
-#     base = np.zeros_like(hist_list[0])
-#     for i, h in enumerate(hist_list):
-#         if stack:
-#             ax.fill_between(mid_bins, base, base + h, label=labels[i])
-#             base += h
-#         else:
-#             ax.step(bins, [0] + h.tolist(), label=labels[i])
-
-#     # Add the axis labels, set limits and save
-#     ax.set_xlabel(ax_labels[0])
-#     ax.set_ylabel(ax_labels[1])
-#     ax.set_xlim(bins[0], bins[-1])
-#     ax.set_ylim(bottom=0)
-#     ax.legend()
-#     fig.savefig(path.with_suffix(".png"))
-#     plt.close(fig)
-
-
 def parallel_plot(
     path: str,
     df: pd.DataFrame,
     cols: list,
-    rank_col: str = None,
+    rank_col: str | None = None,
     cmap: str = "viridis",
     curved: bool = True,
     curved_extend: float = 0.1,
-    groupby_methods: list = None,
+    groupby_methods: list | None = None,
     highlight_best: bool = False,
     do_sort: bool = True,
     alpha: float = 0.3,
     class_thresh=10,
 ) -> None:
-    """
-    Create a parallel coordinates plot from pandas dataframe
-    args:
-        path: Location of output plot
-        df: dataframe
-        cols: columns to use along the x axis
-    kwargs:
-        rank_col: The name of the column to use for ranking, otherwise takes last
-        cmap: Colour palette to use for ranking of lines
-        curved: Use spline interpolation along lines
-        curved_extend: Fraction extension in y axis, adjust to contain curvature
-        groupby_methods: List of aggr methods to include for each categorical column
-        highlight_best: Highlight the best row with a darker line
-        do_sort: Sort dataframe by rank column, best are drawn last -> more visible
-        alpha: Opacity of each line
-        class_thresh: Minimum unique values before ticks are treated as classes
+    """Create a parallel coordinates plot from pandas dataframe.
+
+    Parameters
+    ----------
+    path:
+        Location of output plot
+    df:
+        dataframe
+    cols:
+        columns to use along the x axis
+    rank_col:
+        The name of the column to use for ranking, otherwise takes last
+    cmap:
+        Colour palette to use for ranking of lines
+    curved:
+        Use spline interpolation along lines
+    curved_extend:
+        Fraction extension in y axis, adjust to contain curvature
+    groupby_methods:
+        List of aggr methods to include for each categorical column
+    highlight_best:
+        Highlight the best row with a darker line
+    do_sort:
+        Sort dataframe by rank column, best are drawn last -> more visible
+    alpha:
+        Opacity of each line
+    class_thresh:
+        Minimum unique values before ticks are treated as classes
     """
 
     # Make sure that the rank column is the final column in the list
@@ -1319,6 +1065,7 @@ def parallel_plot(
     plt.tight_layout()
     plt.subplots_adjust(wspace=0, right=0.95)
     plt.savefig(Path(path + "_" + rank_col).with_suffix(".png"))
+    return
 
 
 def plot_2d_hists(path, hist_list, hist_labels, ax_labels, bins):

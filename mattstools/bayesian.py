@@ -1,3 +1,5 @@
+"""Stuff for bayesian neural networks."""
+
 import math
 from typing import Union
 
@@ -7,9 +9,9 @@ import torch.nn.functional as F
 
 
 def contains_bayesian_layers(model: nn.Module) -> bool:
-    """Loops over a network's submodules and looks for BayesianLinear layers.
+    """Check if a network has at least one BayesianLinear layer.
 
-    If at least one is found then it returns with True
+    Loops over a network's submodules and looks for BayesianLinear layers.
     """
     if isinstance(model, BayesianLinear):
         return True
@@ -17,11 +19,7 @@ def contains_bayesian_layers(model: nn.Module) -> bool:
 
 
 def prior_loss(model: nn.Module) -> Union[T.Tensor, int]:
-    """Loops over a network's submodules and looks for BayesianLinear layers.
-
-    Once found it uses their current state to add to a running loss to
-    calculate the total prior loss of a network.
-    """
+    """Calculate the prior loss of a bayesian neural network."""
     kl_loss = model.prior_kl() if isinstance(model, BayesianLinear) else 0
     for m in model.children():
         kl_loss = kl_loss + prior_loss(m)
@@ -29,10 +27,7 @@ def prior_loss(model: nn.Module) -> Union[T.Tensor, int]:
 
 
 def change_deterministic(model: nn.Module, setting: bool = True) -> None:
-    """Loops over a network's submodules and looks for BayesianLinear layers.
-
-    Changes their deterministic parameter
-    """
+    """Change a bayesian neural network to be deterministic/stochastic."""
     if isinstance(model, BayesianLinear):
         model.deterministic = setting
     for m in model.children():
@@ -40,7 +35,9 @@ def change_deterministic(model: nn.Module, setting: bool = True) -> None:
 
 
 class BayesianLinear(nn.Module):
-    """A bayesian linear layer Here every single weight in the matrix is
+    """A bayesian linear layer.
+
+    Here every single weight in the matrix is
     modeled as a gaussian and sampled during each forward pass. The biases
     however are NOT noisy and are kept deterministic This layer uses the local
     parameterisation trick explained here during training:
@@ -61,12 +58,18 @@ class BayesianLinear(nn.Module):
         logsig2_init: float = -9.0,
     ):
         """
-        args:
-            in_features: The size of the input tensor
-            out_features: The size of the output tensor
-            prior_sig: The width of the prior for the weights
-            deterministic: If the network should be purely deterministic
-            logsig2_init: The starting means for logsig2, small to give network chance
+        Parameters
+        ----------
+        in_features:
+            The size of the input tensor
+        out_features:
+            The size of the output tensor
+        prior_sig:
+            The width of the prior for the weights
+        deterministic:
+            If the network should be purely deterministic
+        logsig2_init:
+            The starting means for logsig2, small to give network chance
         """
         super().__init__()
 
@@ -84,14 +87,13 @@ class BayesianLinear(nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self) -> None:
-        """Resets the learnable parameters, biases are initialised as zeros."""
+        """Reset the learnable parameters, biases are initialised as zeros."""
         self.bias.data.data.zero_()
         self.weight.data.normal_(0, 1 / math.sqrt(self.n_in))
         self.w_logsig2.data.normal_(self.logsig2_init, 0.001)
 
     def prior_kl(self) -> T.Tensor:
-        """Calculate the KL-divergence between the current weights and the
-        prior."""
+        """Calculate the KL-divergence between the current weights and the prior."""
         w_logsig2 = self.w_logsig2.clamp(-11, 11)  # For numerical stability
         return (
             0.5

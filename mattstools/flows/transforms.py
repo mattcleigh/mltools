@@ -1,5 +1,4 @@
-"""Functions and classes used to define the learnable and invertible
-transformations used."""
+"""Functions and classes used to define invertible transformations."""
 
 from copy import deepcopy
 from functools import partial
@@ -34,9 +33,12 @@ DEFAULT_MIN_DERIVATIVE = 1e-3
 
 
 def change_kwargs_for_made(old_kwargs):
-    """Converts a dictionary of keyword arguments for configuring a mattstools
-    DenseNetwork to one that can initialise a MADE network for the nflows
-    package with similar (not exactly the same) hyperparameters."""
+    """Convert a dictionary of keyword arguments.
+
+    Used for configuring kwargs made for a mattstools DenseNetwork to one that can
+    initialise a MADE network for the nflows package with similar (not exactly the same)
+    hyperparameters.
+    """
     new_kwargs = deepcopy(old_kwargs)
 
     # Certain keys must be changed
@@ -67,6 +69,7 @@ def change_kwargs_for_made(old_kwargs):
 
 
 def stacked_ctxt_flow(xz_dim: int, ctxt_dim: int, nstacks: int, transform: partial):
+    """Return a composite transform given the config."""
     return CompositeTransform([transform(xz_dim, ctxt_dim) for _ in range(nstacks)])
 
 
@@ -78,28 +81,36 @@ def stacked_norm_flow(
     invrt_func: Literal["rqs", "aff"] = "aff",
     do_lu: bool = True,
     nrm: str = "none",
-    net_kwargs: dict = None,
-    rqs_kwargs: dict = None,
+    net_kwargs: dict | None = None,
+    rqs_kwargs: dict | None = None,
 ) -> CompositeTransform:
-    """Create a stacked flow using a either autoregressive or coupling layers
-    to learn the paramters which are then applied to elementwise invertible
-    transforms, which can either be a rational quadratic spline or an affine
-    layer.
+    """Create a stacked flow using a either autoregressive or coupling layers.
+
+    Transform can be either be a rational quadratic spline or an affine layer.
 
     After each of these transforms, there can be an extra invertible
     linear layer, followed by some normalisation.
 
-    args:
-        xz_dim: The number of input X (and output Z) features
-    kwargs:
-        ctxt_dim: The dimension of the context feature vector
-        nstacks: The number of NSF+Perm layers to use in the overall transform
-        param_func: To use either autoregressive or coupling layers
-        invrt_func: To use either spline or affine transformations
-        do_lu: Use an invertible linear layer inbetween splines to encourage mixing
-        nrm: Do a scale shift normalisation inbetween splines (batch or act)
-        net_kwargs: Kwargs for the network constructor (includes ctxt dim)
-        rqs_kwargs: Keyword args for the invertible spline layers
+    Parameters
+    ----------
+    xz_dim:
+        The number of input X (and output Z) features
+    ctxt_dim:
+        The dimension of the context feature vector
+    nstacks:
+        The number of NSF+Perm layers to use in the overall transform
+    param_func:
+        To use either autoregressive or coupling layers
+    invrt_func:
+        To use either spline or affine transformations
+    do_lu:
+        Use an invertible linear layer inbetween splines to encourage mixing
+    nrm:
+        Do a scale shift normalisation inbetween splines (batch or act)
+    net_kwargs:
+        Kwargs for the network constructor (includes ctxt dim)
+    rqs_kwargs:
+        Keyword args for the invertible spline layers
     """
 
     # Dictionary default arguments (also protecting dict from chaning on save)
@@ -173,10 +184,13 @@ def stacked_norm_flow(
 
 
 def make_repeated_transforms(transform: Transform, num_layers: int):
+    """Duplicate a transform and return the stacked list."""
     return CompositeTransform([transform] * num_layers)
 
 
 class ContextSplineTransform(Transform):
+    """An invertible transform of a applied elementwise to a tensor."""
+
     def __init__(
         self,
         inpt_dim: int,
@@ -190,8 +204,7 @@ class ContextSplineTransform(Transform):
         min_bin_height: float = DEFAULT_MIN_BIN_HEIGHT,
         min_derivative: float = DEFAULT_MIN_DERIVATIVE,
     ) -> None:
-        """A class used to represent a context spline transform.
-
+        """
         Parameters
         ----------
         inpt_dim : int
@@ -234,7 +247,6 @@ class ContextSplineTransform(Transform):
 
         # To be equally spaced with identity mapping
         if init_identity:
-
             # Cycle through the final dense block and pull out the last linear layer
             for layer in self.net.output_block.block[::-1]:
                 if isinstance(layer, nn.Linear):
@@ -255,7 +267,6 @@ class ContextSplineTransform(Transform):
     def _process(
         self, inputs: T.Tensor, context: T.Tensor | None = None, inverse: bool = False
     ) -> tuple:
-
         # Pass through the context extraction network
         spline_params = self.net(context)
 
@@ -305,6 +316,5 @@ class ContextSplineTransform(Transform):
 
 
 def sum_except_batch(x: T.Tensor, num_batch_dims: int = 1) -> T.Tensor:
-    """Sums all elements of x except for the first num_batch_dims
-    dimensions."""
+    """Sum all elements of x except for the first num_batch_dims dimensions."""
     return T.sum(x, dim=list(range(num_batch_dims, x.ndim)))

@@ -17,12 +17,12 @@ def merge_masks(
     attn_bias: Union[T.Tensor, None],
     query: T.Size,
 ) -> Union[None, T.BoolTensor]:
-    """Create a full attention mask which incoporates the padding information
-    and the bias terms.
+    """Create a full attention mask which incoporates the padding information and the
+    bias terms.
 
-    New philosophy is just to define a kv_mask, and let the q_mask be
-    ones. Let the padded nodes receive what they want! Their outputs
-    dont matter and they don't add to computation anyway!!!
+    New philosophy is just to define a kv_mask, and let the q_mask be ones. Let the
+    padded nodes receive what they want! Their outputs dont matter and they don't add to
+    computation anyway!!!
     """
 
     # Create the full mask which combines the attention and padding masks
@@ -60,9 +60,7 @@ def my_scaled_dot_product_attention(
     attn_bias: Optional[T.Tensor] = None,
     dropout_p: float = 0.0,
 ) -> T.Tensor:
-    """DEPRECATED! THE PYTORCH-2.0 IMPLEMENATION IS 25% FASTER AND HAS A
-    REDUCED MEMORY OVERHEAD SO MY ATTENTION LAYERS HAVE SWITCHED OVER TO
-    THAT!!!
+    """Attention operation using standard pytorch matrix multiplications.
 
     Apply the attention using the scaled dot product between the key query
     and key tensors, then matrix multiplied by the value.
@@ -74,13 +72,25 @@ def my_scaled_dot_product_attention(
     introduces nans for padded query elements. We could used a very small number like
     -1e9 but this would need to scale with if we are using half precision.
 
-    Args:
-        query: Batched query sequence of tensors (b, h, s, f)
-        key: Batched key sequence of tensors (b, h, s, f)
-        value: Batched value sequence of tensors (b, h, s, f)
-        attn_mask: The attention mask, used to blind certain combinations of k,q pairs
-        attn_bias: Extra weights to combine with attention weights
-        drp: Dropout probability
+    Parameters
+    ----------
+    query : tensor
+        Batched query sequence of tensors (b, h, s, f).
+    key : tensor
+        Batched key sequence of tensors (b, h, s, f).
+    value : tensor
+        Batched value sequence of tensors (b, h, s, f).
+    attn_mask : tensor
+        The attention mask, used to blind certain combinations of k,q pairs.
+    attn_bias : tensor
+        Extra weights to combine with attention weights.
+    drp : float
+        Dropout probability.
+
+    Returns
+    -------
+    tensor
+        The result of the attention operation.
     """
     DeprecationWarning("Dont use this! Switch to pytorch 2.0 built in version!")
 
@@ -270,8 +280,7 @@ class MultiHeadedAttentionBlock(nn.Module):
 
 
 class TransformerEncoderLayer(nn.Module):
-    """A transformer encoder layer based on the GPT-2+Normformer style
-    arcitecture.
+    """A transformer encoder layer based on the GPT-2+Normformer style arcitecture.
 
     We choose a cross between Normformer and FoundationTransformers as they have often
     proved to be the most stable to train
@@ -326,7 +335,7 @@ class TransformerEncoderLayer(nn.Module):
         attn_bias: Optional[T.Tensor] = None,
         attn_mask: Optional[T.BoolTensor] = None,
     ) -> T.Tensor:
-        "Pass through the layer using residual connections and layer normalisation"
+        """Pass using residual connections and layer normalisation."""
         x = x + self.self_attn(
             self.norm1(x), kv_mask=mask, attn_mask=attn_mask, attn_bias=attn_bias
         )
@@ -335,8 +344,7 @@ class TransformerEncoderLayer(nn.Module):
 
 
 class TransformerDecoderLayer(nn.Module):
-    """A transformer dencoder layer based on the GPT-2+Normformer style
-    arcitecture.
+    """A transformer dencoder layer based on the GPT-2+Normformer style arcitecture.
 
     It contains:
     - self-attention-block
@@ -394,7 +402,7 @@ class TransformerDecoderLayer(nn.Module):
         attn_bias: Optional[T.Tensor] = None,
         attn_mask: Optional[T.BoolTensor] = None,
     ) -> T.Tensor:
-        "Pass through the layer using residual connections and layer normalisation"
+        """Pass using residual connections and layer normalisation."""
 
         # Apply the self attention residual update
         q_seq = q_seq + self.self_attn(
@@ -406,9 +414,7 @@ class TransformerDecoderLayer(nn.Module):
 
         # Apply the cross attention residual update
         q_seq = q_seq + self.cross_attn(
-            q=self.norm_preC1(q_seq),
-            k=self.norm_preC2(kv_seq),
-            kv_mask=kv_mask,
+            q=self.norm_preC1(q_seq), k=self.norm_preC2(kv_seq), kv_mask=kv_mask
         )
 
         # Apply the dense residual update
@@ -418,8 +424,7 @@ class TransformerDecoderLayer(nn.Module):
 
 
 class ReverseTransformerDecoderLayer(TransformerDecoderLayer):
-    """The same as a transformer decoder but the cross attention step happens
-    first."""
+    """Similar to decoder but cross attention is done before self attention."""
 
     def forward(
         self,
@@ -431,13 +436,11 @@ class ReverseTransformerDecoderLayer(TransformerDecoderLayer):
         attn_bias: Optional[T.Tensor] = None,
         attn_mask: Optional[T.BoolTensor] = None,
     ) -> T.Tensor:
-        "Pass through the layer cross attention update before the self attention"
+        """Pass through CA before SA."""
 
         # Apply the cross attention residual update
         q_seq = q_seq + self.cross_attn(
-            q=self.norm_preC1(q_seq),
-            k=self.norm_preC2(kv_seq),
-            kv_mask=kv_mask,
+            q=self.norm_preC1(q_seq), k=self.norm_preC2(kv_seq), kv_mask=kv_mask
         )
 
         # Apply the self attention residual update
@@ -504,7 +507,7 @@ class TransformerCrossAttentionLayer(nn.Module):
         kv_mask: Optional[T.BoolTensor] = None,
         ctxt: Optional[T.Tensor] = None,
     ) -> T.Tensor:
-        "Pass through the layer using residual connections and layer normalisation"
+        """Pass using residual connections and layer normalisation."""
         q_seq = q_seq + self.cross_attn(
             self.norm1(q_seq), self.norm0(kv_seq), kv_mask=kv_mask
         )
@@ -514,8 +517,7 @@ class TransformerCrossAttentionLayer(nn.Module):
 
 
 class TransformerEncoder(nn.Module):
-    """A stack of N transformer encoder layers followed by a final
-    normalisation step.
+    """A stack of N transformer encoder layers followed by a final normalisation step.
 
     Sequence -> Sequence
     """
@@ -555,8 +557,7 @@ class TransformerEncoder(nn.Module):
 
 
 class TransformerDecoder(nn.Module):
-    """A stack of N transformer dencoder layers followed by a final
-    normalisation step.
+    """A stack of N transformer dencoder layers followed by a final normalisation step.
 
     Sequence x Sequence -> Sequence
     """
@@ -596,15 +597,13 @@ class TransformerDecoder(nn.Module):
 
 
 class TransformerVectorEncoder(nn.Module):
-    """A type of transformer encoder which procudes a single vector for the
-    whole seq.
+    """A type of transformer encoder which procudes a single vector for the whole seq.
 
     Sequence -> Vector
 
     Then the sequence (and optionally edges) are passed through several MHSA layers.
-    Then a learnable class token is updated using cross attention.
-    This results in a single element sequence.
-    Contains a final normalisation layer
+    Then a learnable class token is updated using cross attention. This results in a
+    single element sequence. Contains a final normalisation layer
 
     It is non resizing, so model_dim must be used for inputs and outputs
     """
@@ -687,13 +686,13 @@ class TransformerVectorEncoder(nn.Module):
 
 
 class TransformerVectorDecoder(nn.Module):
-    """A type of transformer decoder which creates a sequence given a starting
-    vector and a desired mask.
+    """A type of transformer decoder which creates a sequence given a starting vector
+    and a desired mask.
 
     Vector -> Sequence
 
-    Randomly initialises the q-sequence using the mask shape and a gaussian
-    Uses the input vector as 1-long kv-sequence in decoder layers
+    Randomly initialises the q-sequence using the mask shape and a gaussian Uses the
+    input vector as 1-long kv-sequence in decoder layers
 
     It is non resizing, so model_dim must be used for inputs and outputs
     """
@@ -728,7 +727,6 @@ class TransformerVectorDecoder(nn.Module):
         self, vec: T.Tensor, mask: T.BoolTensor, ctxt: Optional[T.Tensor] = None
     ) -> T.Tensor:
         """Pass the input through all layers sequentially."""
-
         # Initialise the q-sequence randomly (adhere to mask)
         q_seq = T.randn(
             (*mask.shape, self.model_dim), device=vec.device, dtype=vec.dtype
@@ -748,11 +746,11 @@ class FullTransformerVectorEncoder(nn.Module):
 
     Sequence -> Vector
 
-    1)  Embeds the squence into a higher dimensional space based on model_dim
-        using a dense network.
-    2)  If there are edge features these are projected into space = n_heads
-            This is a very optional step which most will want to ignore but it is what
-            ParT used! https://arxiv.org/abs/2202.03772
+    1)  Embeds the squence into a higher dimensional space based on model_dim     using
+    a dense network. 2)  If there are edge features these are projected into space =
+    n_heads         This is a very optional step which most will want to ignore but it
+    is what ParT used!
+    https://arxiv.org/abs/2202.03772
     3)  Then it passes these through a TVE to get a single vector output
     4)  Finally is passes the vector through an embedding network
     """
@@ -826,7 +824,6 @@ class FullTransformerVectorEncoder(nn.Module):
         return_seq: bool = False,
     ) -> Union[T.Tensor, tuple]:
         """Pass the input through all layers sequentially."""
-
         # Embed the sequence
         seq = self.node_embd(seq, ctxt)
 
@@ -860,10 +857,9 @@ class FullTransformerVectorDecoder(nn.Module):
 
     Vector -> Sequence
 
-    1)  Embeds the input vector into a higher dimensional space based on model_dim
-        using a dense network.
-    2)  Passes this through a TVD to get a sequence output
-    3)  Passes the sequence through an embedding dense network with vector as context
+    1)  Embeds the input vector into a higher dimensional space based on model_dim using
+    a dense network. 2)  Passes this through a TVD to get a sequence output 3) Passes
+    the sequence through an embedding dense network with vector as context
     """
 
     def __init__(
@@ -975,10 +971,7 @@ class FullTransformerEncoder(nn.Module):
 
         # Initialise the context embedding network (optional)
         if self.ctxt_dim:
-            self.ctxt_emdb = DenseNetwork(
-                inpt_dim=self.ctxt_dim,
-                **ctxt_embd_config,
-            )
+            self.ctxt_emdb = DenseNetwork(inpt_dim=self.ctxt_dim, **ctxt_embd_config)
             self.ctxt_out = self.ctxt_emdb.outp_dim
         else:
             self.ctxt_out = 0
@@ -1030,9 +1023,8 @@ class FullTransformerEncoder(nn.Module):
 
 
 class PerceiverEncoder(nn.Module):
-    """A type of perceiver encoder which includes two learnable cross attention
-    layers to get to and back from the smaller sequence which contains self
-    attention.
+    """A type of perceiver encoder which includes two learnable cross attention layers
+    to get to and back from the smaller sequence which contains self attention.
 
     Sequence -> Smaller Squence -> Squence
 
@@ -1085,10 +1077,7 @@ class PerceiverEncoder(nn.Module):
         # Intermediate dense network for the original sequence
         self.layer_norm = nn.LayerNorm(model_dim)
         self.inter_dense = DenseNetwork(
-            model_dim,
-            model_dim,
-            ctxt_dim=ctxt_dim,
-            **dense_config,
+            model_dim, model_dim, ctxt_dim=ctxt_dim, **dense_config
         )
 
     def forward(
@@ -1098,7 +1087,6 @@ class PerceiverEncoder(nn.Module):
         ctxt: Optional[T.Tensor] = None,
     ) -> Union[T.Tensor, tuple]:
         """Pass the input through all layers sequentially."""
-
         # Make sure the learnable tokens are expanded to batch size
         # Use shape not len as it is ONNX safe!
         leanable_tokens = self.leanable_tokens.expand(
@@ -1171,10 +1159,7 @@ class FullPerceiverEncoder(nn.Module):
 
         # Initialise the context embedding network (optional)
         if self.ctxt_dim:
-            self.ctxt_emdb = DenseNetwork(
-                inpt_dim=self.ctxt_dim,
-                **ctxt_embd_config,
-            )
+            self.ctxt_emdb = DenseNetwork(inpt_dim=self.ctxt_dim, **ctxt_embd_config)
             self.ctxt_out = self.ctxt_emdb.outp_dim
         else:
             self.ctxt_out = 0
@@ -1213,9 +1198,8 @@ class FullPerceiverEncoder(nn.Module):
 
 
 class CrossAttentionEncoder(nn.Module):
-    """A type of encoder which includes uses cross attention to move to and
-    from the original sequence. Self attention is used in the learned sequence
-    steps.
+    """A type of encoder which includes uses cross attention to move to and from the
+    original sequence. Self attention is used in the learned sequence steps.
 
     Sequence -> Squence
 
@@ -1272,7 +1256,6 @@ class CrossAttentionEncoder(nn.Module):
         ctxt: Optional[T.Tensor] = None,
     ) -> Union[T.Tensor, tuple]:
         """Pass the input through all layers sequentially."""
-
         # Make sure the class token is expanded to batch size
         # Use shape not len as it is ONNX safe!
         class_token = self.class_token.expand(seq.shape[0], 1, self.model_dim)
@@ -1286,8 +1269,7 @@ class CrossAttentionEncoder(nn.Module):
 
 
 class FullCrossAttentionEncoder(nn.Module):
-    """A cross attention encoder with added input and output embedding
-    networks.
+    """A cross attention encoder with added input and output embedding networks.
 
     Sequence -> Sequence
     """
@@ -1336,10 +1318,7 @@ class FullCrossAttentionEncoder(nn.Module):
 
         # Initialise the context embedding network (optional)
         if self.ctxt_dim:
-            self.ctxt_emdb = DenseNetwork(
-                inpt_dim=self.ctxt_dim,
-                **ctxt_embd_config,
-            )
+            self.ctxt_emdb = DenseNetwork(inpt_dim=self.ctxt_dim, **ctxt_embd_config)
             self.ctxt_out = self.ctxt_emdb.outp_dim
         else:
             self.ctxt_out = 0
@@ -1392,11 +1371,11 @@ class FullTransformerDecoder(nn.Module):
         outp_dim: int,
         edge_dim: int = 0,
         ctxt_dim: int = 0,
-        td_config: Optional[Mapping] = None,
-        node_embd_config: Optional[Mapping] = None,
-        outp_embd_config: Optional[Mapping] = None,
-        edge_embd_config: Optional[Mapping] = None,
-        ctxt_embd_config: Optional[Mapping] = None,
+        td_config: Mapping | None = None,
+        node_embd_config: Mapping | None = None,
+        outp_embd_config: Mapping | None = None,
+        edge_embd_config: Mapping | None = None,
+        ctxt_embd_config: Mapping | None = None,
     ) -> None:
         """
         Args:
@@ -1422,10 +1401,7 @@ class FullTransformerDecoder(nn.Module):
 
         # Initialise the context embedding network (optional)
         if self.ctxt_dim:
-            self.ctxt_emdb = DenseNetwork(
-                inpt_dim=self.ctxt_dim,
-                **ctxt_embd_config,
-            )
+            self.ctxt_emdb = DenseNetwork(inpt_dim=self.ctxt_dim, **ctxt_embd_config)
             self.ctxt_out = self.ctxt_emdb.outp_dim
         else:
             self.ctxt_out = 0
@@ -1487,8 +1463,8 @@ class FullTransformerDecoder(nn.Module):
 
 
 class CrossAttentionLiteEncoder(nn.Module):
-    """A type of encoder which includes uses cross attention to pool into a
-    global token which is then distributed back to the point cloud.
+    """A type of encoder which includes uses cross attention to pool into a global token
+    which is then distributed back to the point cloud.
 
     This is a lite model as we dont include an MLP update for the global token.
 
@@ -1545,7 +1521,6 @@ class CrossAttentionLiteEncoder(nn.Module):
         ctxt: Optional[T.Tensor] = None,
     ) -> Union[T.Tensor, tuple]:
         """Pass the input through all layers sequentially."""
-
         # Make sure the class token is expanded to batch size
         # Use shape not len as it is ONNX safe!
         class_token = self.class_token.expand(seq.shape[0], 1, self.model_dim)

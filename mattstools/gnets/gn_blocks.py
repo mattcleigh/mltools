@@ -48,8 +48,8 @@ class EdgeBlock(nn.Module):
         use_net: bool = True,
         pool_type: str = "attn",
         rsdl_type: str = "add",
-        feat_kwargs: DotMap = None,
-        attn_kwargs: DotMap = None,
+        feat_kwargs: DotMap | None = None,
+        attn_kwargs: DotMap | None = None,
     ) -> None:
         """
         args:
@@ -163,7 +163,7 @@ class EdgeBlock(nn.Module):
         return smart_cat(pooled_mssgs, -1)
 
     def forward(
-        self, graph: GraphBatch, ctxt: T.Tensor = None
+        self, graph: GraphBatch, ctxt: T.Tensor | None = None
     ) -> Tuple[T.Tensor, T.Tensor]:
         """
         args:
@@ -273,8 +273,8 @@ class NodeBlock(nn.Module):
         use_net: bool = True,
         pool_type: str = "attn",
         rsdl_type: str = "add",
-        feat_kwargs: DotMap = None,
-        attn_kwargs: DotMap = None,
+        feat_kwargs: DotMap | None = None,
+        attn_kwargs: DotMap | None = None,
     ) -> None:
         """
         args:
@@ -366,7 +366,7 @@ class NodeBlock(nn.Module):
         return feat_inpt_dim, feat_outp_dim, ctxt_inpt_dim
 
     def forward(
-        self, graph: GraphBatch, pooled_edges: T.Tensor, ctxt: T.Tensor = None
+        self, graph: GraphBatch, pooled_edges: T.Tensor, ctxt: T.Tensor | None = None
     ) -> Tuple[T.Tensor, T.Tensor]:
         """
         args:
@@ -475,7 +475,7 @@ class GlobBlock(nn.Module):
         do_ln: bool = True,
         use_net: bool = True,
         rsdl_type: str = "add",
-        feat_kwargs: DotMap = None,
+        feat_kwargs: DotMap | None = None,
     ) -> None:
         """
         args:
@@ -541,7 +541,7 @@ class GlobBlock(nn.Module):
         return feat_inpt_dim, feat_outp_dim
 
     def forward(
-        self, graph: GraphBatch, pooled_nodes: T.Tensor, ctxt: T.Tensor = None
+        self, graph: GraphBatch, pooled_nodes: T.Tensor, ctxt: T.Tensor | None = None
     ) -> Tuple[T.Tensor, T.Tensor]:
         """
         args:
@@ -590,8 +590,10 @@ class GlobBlock(nn.Module):
 
 
 class GNBlock(nn.Module):
-    """A message passing Graph Network Block Updates the edges, nodes and
-    globals in turn and returns a new graph batch."""
+    """A message passing Graph Network Block.
+
+    Updates the edges, nodes and globals in turn and returns a new graph batch.
+    """
 
     def __init__(
         self,
@@ -657,9 +659,8 @@ class GNBlock(nn.Module):
             self.glob_block.feat_outp_dim if do_globs else 0,
         ]
 
-    def forward(self, graph: GraphBatch, ctxt: T.Tensor = None) -> GraphBatch:
-        """Return an updated graph with the same structure, but new
-        features."""
+    def forward(self, graph: GraphBatch, ctxt: T.Tensor | None = None) -> GraphBatch:
+        """Return an updated graph with the same structure, but new features."""
         graph.edges, pooled_edges = self.edge_block(graph, ctxt)
         graph.nodes, pooled_nodes = self.node_block(graph, pooled_edges, ctxt)
         del pooled_edges  # Saves alot of memory if we delete right away
@@ -672,7 +673,7 @@ class GNBlock(nn.Module):
         return graph
 
     def __repr__(self):
-        """A way to print the block config on one line for quick review."""
+        """Print the block config on one line for quick review."""
         string = str(self.inpt_dim)
         string += "->" + repr(self.edge_block)
         string += "->" + repr(self.node_block)
