@@ -3,6 +3,7 @@ projects."""
 
 import math
 from typing import Union
+from warnings import warn
 
 import torch as T
 import torch.nn as nn
@@ -38,6 +39,7 @@ class MLPBlock(nn.Module):
         do_res: bool = False,
         do_bayesian: bool = False,
         init_zeros: bool = False,
+        use_bias: bool = True,
     ) -> None:
         """Init method for MLPBlock.
 
@@ -64,6 +66,8 @@ class MLPBlock(nn.Module):
         init_zeros : bool, optional,
             If the final layer weights and bias values are set to zero
             Does not apply to bayesian layers
+        use_bias : bool, optional,
+            If the layers use the bias term
         """
         super().__init__()
 
@@ -85,7 +89,7 @@ class MLPBlock(nn.Module):
             self.block.append(
                 BayesianLinear(lyr_in, outp_dim)
                 if do_bayesian
-                else nn.Linear(lyr_in, outp_dim)
+                else nn.Linear(lyr_in, outp_dim, bias=use_bias)
             )
 
             # Initialise the final layer with zeros
@@ -184,6 +188,7 @@ class DenseNetwork(nn.Module):
         act_h : str, optional
             The name of the activation function to apply in the hidden blocks,
             by default "lrlu"
+        act_o : str, optional
         act_o : str, optional
             The name of the activation function to apply to the outputs,
             by default "none"
@@ -759,9 +764,9 @@ def cosine_encoding(
 
     # Check the the bounds are obeyed
     if T.any(x > max_value):
-        print("Warning! Passing values to cosine_encoding encoding that exceed max!")
+        warn("Warning! Passing values to cosine_encoding encoding that exceed max!")
     if T.any(x < min_value):
-        print("Warning! Passing values to cosine_encoding encoding below min!")
+        warn("Warning! Passing values to cosine_encoding encoding below min!")
 
     # Calculate the various frequencies
     if frequency_scaling == "exponential":
@@ -777,8 +782,9 @@ def cosine_encoding(
 class CosineEncodingLayer(nn.Module):
     def __init__(
         self,
-        inpt_dim,
-        encoding_dim,
+        *,
+        inpt_dim: int,
+        encoding_dim: int,
         scheme: str = "exponential",
         min_value: float | list | T.Tensor = 0.0,
         max_value: float | list | T.Tensor = 1.0,
@@ -824,12 +830,21 @@ class CosineEncodingLayer(nn.Module):
 
         # Check to see if the inputs are within the bounds
         if T.any(x > self.max_value):
-            print("Warning! Passing values to CosineEncodingLayer encoding above max!")
+            warn("Warning! Passing values to CosineEncodingLayer encoding above max!")
         if T.any(x < self.min_value):
-            print("Warning! Passing values to CosineEncodingLayer encoding below min!")
+            warn("Warning! Passing values to CosineEncodingLayer encoding below min!")
 
     def forward(self, x: T.Tensor):
         self._check_bounds(x)
+
+        # Check if an unsqueeze is necc
+        if x.shape[-1] != self.inpt_dim:
+            if self.inpt_dim == 1:
+                x = x.unsqueeze(-1)
+            else:
+                raise ValueError(
+                    f"Incompatible shapes for encoding: {x.shape[-1]}, {self.inpt_dim}"
+                )
 
         # Scale the inputs between 0 and pi
         x = (x + self.min_value) * math.pi / (self.max_value + self.min_value)
