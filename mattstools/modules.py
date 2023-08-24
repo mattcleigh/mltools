@@ -751,6 +751,7 @@ class CosineEncodingLayer(nn.Module):
 
     def __init__(
         self,
+        *,
         inpt_dim: int,
         encoding_dim: int,
         scheme: str = "exponential",
@@ -819,9 +820,9 @@ class CosineEncodingLayer(nn.Module):
         """Throw a warning if the input to the layer will yeild degenerate outputs."""
 
         # Check to see if the inputs are within the bounds
-        if T.any(x > self.max_value):
+        if T.any(x > (self.max_value + 1e-8)):
             print("Warning! Passing values to CosineEncodingLayer encoding above max!")
-        if T.any(x < self.min_value):
+        if T.any(x < (self.min_value - 1e-8)):
             print("Warning! Passing values to CosineEncodingLayer encoding below min!")
 
     def forward(self, x: T.Tensor) -> T.Tensor:
