@@ -793,10 +793,23 @@ class FullTransformerVectorEncoder(nn.Module):
         self.outp_dim = outp_dim
         self.ctxt_dim = ctxt_dim
         self.edge_dim = edge_dim
-        tve_config = tve_config or {}
-        node_embd_config = node_embd_config or {}
-        outp_embd_config = outp_embd_config or {}
-        edge_embd_config = edge_embd_config or {}
+        tve_config = deepcopy(tve_config) or {}
+        node_embd_config = deepcopy(node_embd_config) or {}
+        outp_embd_config = deepcopy(outp_embd_config) or {}
+        edge_embd_config = deepcopy(edge_embd_config) or {}
+
+        # By default we would like the dense networks in this model to double the width
+        if "model_dim" in tve_config.keys():
+            model_dim = tve_config["model_dim"]
+            hddn_dim = 2 * model_dim
+            if "hddn_dim" not in node_embd_config.keys():
+                node_embd_config["hddn_dim"] = hddn_dim
+            if "hddn_dim" not in edge_embd_config.keys():
+                edge_embd_config["hddn_dim"] = hddn_dim
+            if "hddn_dim" not in outp_embd_config.keys():
+                outp_embd_config["hddn_dim"] = hddn_dim
+            if "hddn_dim" not in tve_config["dense_config"].keys():
+                tve_config["dense_config"]["hddn_dim"] = hddn_dim
 
         # Initialise the TVE, the main part of this network
         self.tve = TransformerVectorEncoder(**tve_config, ctxt_dim=ctxt_dim)
@@ -842,7 +855,7 @@ class FullTransformerVectorEncoder(nn.Module):
         if self.edge_dim:
             attn_bias = self.edge_embd(attn_bias, ctxt)
 
-        # Pass throught the tve
+        # Pass through the tve
         output = self.tve(
             seq,
             mask,

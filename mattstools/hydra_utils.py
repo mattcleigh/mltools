@@ -23,6 +23,7 @@ def reload_original_config(
     file_name: str = "full_config.yaml",
     set_ckpt_path: bool = True,
     ckpt_flag: str = "*last*",
+    set_wandb_resume: bool = True,
 ) -> OmegaConf:
     """Replace the cfg with the one stored at the checkpoint location.
 
@@ -32,7 +33,7 @@ def reload_original_config(
     # Load the original config found in the the file directorys
     orig_cfg = OmegaConf.load(Path(path, file_name))
 
-    # Get the latest updated checkpoint with the specified flag
+    # Get the latest updated checkpoint with the prefix last or best
     if set_ckpt_path:
         orig_cfg.ckpt_path = str(
             sorted(
@@ -40,10 +41,11 @@ def reload_original_config(
             )[-1]
         )
 
-    # Set the wandb logger to attempt to resume the job
-    if hasattr(orig_cfg, "loggers"):
-        if hasattr(orig_cfg.loggers, "wandb"):
-            orig_cfg.loggers.wandb.resume = True
+    # Set the wandb logger ID to allow resuming the same WandB job
+    if set_wandb_resume:
+        if hasattr(orig_cfg, "loggers"):
+            if hasattr(orig_cfg.loggers, "wandb"):
+                orig_cfg.loggers.wandb.resume = True
 
     return orig_cfg
 

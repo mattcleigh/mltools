@@ -829,6 +829,15 @@ class CosineEncodingLayer(nn.Module):
         """Encode the final dimension of x with sines and cosines."""
         self._check_bounds(x)
 
+        # Check if an unsqueeze is necc
+        if x.shape[-1] != self.inpt_dim:
+            if self.inpt_dim == 1:
+                x = x.unsqueeze(-1)
+            else:
+                raise ValueError(
+                    f"Incompatible shapes for encoding: {x.shape[-1]}, {self.inpt_dim}"
+                )
+
         # Scale the inputs between 0 and pi
         x = (x + self.min_value) * math.pi / (self.max_value + self.min_value)
 

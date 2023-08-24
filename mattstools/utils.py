@@ -5,7 +5,7 @@ import json
 import math
 import operator
 from functools import reduce
-from itertools import islice
+from itertools import chain, count, islice
 from pathlib import Path
 from typing import Any, Generator, Iterable, Mapping, Union
 
@@ -30,6 +30,8 @@ def standard_job_array(
     time_hrs: int,
     mem_gb: int,
     opt_dict: Mapping,
+    vrap_per_gpu: int = 0,
+    gpu_type: str = "",
     use_dashes: bool = True,
     extra_slurm: str = "",
 ) -> None:
@@ -52,7 +54,13 @@ def standard_job_array(
     f.write(f"#SBATCH --job-name={job_name}\n")
     f.write(f"#SBATCH --output={log_dir}/%A_%a.out\n")
     if n_gpus:
-        f.write(f"#SBATCH --gpus={n_gpus}\n")
+        s = "#SBATCH --gres=gpu"
+        if gpu_type:
+            s += f":{gpu_type}"
+        s += f":{n_gpus}"
+        if vrap_per_gpu:
+            s += f",VramPerGpu:{vrap_per_gpu}G"
+        f.write(f"{s}\n")
         f.write("#SBATCH --partition=shared-gpu,private-dpnc-gpu\n")
     else:
         f.write("#SBATCH --partition=shared-cpu,private-dpnc-cpu\n")
@@ -272,3 +280,22 @@ def batched(iterable: Iterable, n: int) -> Generator:
     it = iter(iterable)
     while batch := tuple(islice(it, n)):
         yield batch
+
+
+def evenly_spaced(*iterables) -> list:
+    """Return an evenly spaced list from a raggest nest.
+
+    Taken from: https://stackoverflow.com/a/19293603.
+
+    >>> evenly_spaced(range(10), list('abc'))
+    [0, 1, 'a', 2, 3, 4, 'b', 5, 6, 7, 'c', 8, 9]
+    """
+    return [
+        item[1]
+        for item in sorted(
+            chain.from_iterable(
+                zip(count(start=1.0 / (len(seq) + 1), step=1.0 / (len(seq) + 1)), seq)
+                for seq in iterables
+            )
+        )
+    ]
