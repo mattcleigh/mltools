@@ -1,13 +1,8 @@
 """Custom loss functions and methods to calculate them."""
 
-from typing import Tuple, Union
 
 import torch as T
 import torch.nn as nn
-
-# from geomloss import SamplesLoss
-
-# from jetnet.losses import EMDLoss
 
 
 class VAELoss(nn.Module):
@@ -24,15 +19,16 @@ class VAELoss(nn.Module):
         return kld_to_norm(means, log_stds)
 
 
-def champfer_loss(mask_a, pc_a, mask_b, pc_b):
-    """Returns the champfer loss between two point clouds with different
-    cardinality and masking."""
+def champfer_loss(
+    mask_a: T.Tensor, pc_a: T.Tensor, mask_b: T.Tensor, pc_b: T.Tensor
+) -> T.Tensor:
+    """Return the champfer loss between two masked point clouds."""
 
     # Calculate the distance matrix (squared) between the outputs and targets
     matrix_mask = mask_a.bool().unsqueeze(-1) & mask_b.bool().unsqueeze(-2)
     dist_matrix = T.cdist(pc_a, pc_b)
 
-    # Ensure the distances between fake nodes take the padding value
+    # Ensure the distances between fake nodes take some padding value
     dist_matrix = dist_matrix.masked_fill(~matrix_mask, 1e8)
 
     # Get the sum of the minimum along each axis, square, and scale by the weights
@@ -78,26 +74,9 @@ def kld_with_OE(
     raise RuntimeError(f"Unrecognized reduction arguments: {reduce}")
 
 
-class GeomWrapper(nn.Module):
-    """This is a wrapper class for the geomloss package which by default
-    renables all gradients after a forward pass, thereby causing the gradient
-    memory to explode during evaluation."""
-
-    def __init__(self, loss_fn) -> None:
-        super().__init__()
-        self.loss_fn = loss_fn
-
-    def forward(self, *args, **kwargs) -> T.Tensor:
-        """Return the loss."""
-        current_grad_state = T.is_grad_enabled()
-        loss = self.loss_fn(*args, **kwargs)
-        T.set_grad_enabled(current_grad_state)
-        return loss
-
-
 class MyBCEWithLogit(nn.Module):
-    """A wrapper for the calculating BCE using logits in pytorch that makes the
-    syntax consistant with pytorch's CrossEntropy loss.
+    """A wrapper for the calculating BCE using logits in pytorch that makes the syntax
+    consistant with pytorch's CrossEntropy loss.
 
     - Automatically squeezes out the batch dimension to ensure same shape
     - Automatically changes targets to floats
@@ -115,6 +94,79 @@ class MyBCEWithLogit(nn.Module):
         """Return the loss."""
         return self.loss_fn(outputs.squeeze(dim=-1), (targets != 0).float())
 
+
+class ChampferLoss(nn.Module):
+    """Champfer loss function for batched and weighted pointclouds."""
+
+    def forward(
+        self,
+        o_weights: T.Tensor,
+        outputs: T.Tensor,
+        t_weights: T.Tensor,
+        targets: T.Tensor,
+    ) -> T.Tensor:
+        """Calculate champfer loss."""
+        return champfer_loss(o_weights, outputs, t_weights, targets)
+
+
+def masked_dist_loss(
+    loss_fn: nn.Module,
+    pc_a: T.Tensor,
+    pc_a_mask: T.BoolTensor,
+    pc_b: T.Tensor,
+    pc_b_mask: T.BoolTensor,
+    reduce: str = "none",
+) -> T.Tensor:
+    """Calculate the distribution loss between two masked pointclouds.
+
+    - This is done by using the masks as weights (compatible with the geomloss package)
+    - The loss function should be permutation invariant
+
+    Parameters
+    ----------
+    loss_fn : function
+        The loss function to apply, must have a forward method.
+    pc_a : array_like
+        The first point cloud.
+    pc_a_mask : array_like
+        The mask of the first point cloud.
+    pc_b : array_like
+        The second point cloud.
+    pc_b_mask : array_like
+        The mask of the second point cloud.
+    reduce : bool, optional
+        If the loss should be reduced along the batch dimension.
+    """
+
+    # Calculate the weights by normalising the mask for each sample
+    a_weights = pc_a_mask.float()
+    b_weights = pc_b_mask.float()
+
+    # Calculate the loss using these weights
+    loss = loss_fn(a_weights, pc_a, b_weights, pc_b)
+
+    if reduce == "mean":
+        return loss.mean()
+    if reduce == "none":
+        return loss
+    raise ValueError("Unknown reduce option for masked_dist_loss")
+
+
+# class GeomWrapper(nn.Module):
+#     """This is a wrapper class for the geomloss package which by default
+#     renables all gradients after a forward pass, thereby causing the gradient
+#     memory to explode during evaluation."""
+
+#     def __init__(self, loss_fn) -> None:
+#         super().__init__()
+#         self.loss_fn = loss_fn
+
+#     def forward(self, *args, **kwargs) -> T.Tensor:
+#         """Return the loss."""
+#         current_grad_state = T.is_grad_enabled()
+#         loss = self.loss_fn(*args, **kwargs)
+#         T.set_grad_enabled(current_grad_state)
+#         return loss
 
 # class ModifiedSinkhorn(nn.Module):
 #     def __init__(self) -> None:
@@ -141,71 +193,14 @@ class MyBCEWithLogit(nn.Module):
 #         )
 #         return loss
 
+# class EnergyMovers(nn.Module):
+# def __init__(self, **kwargs) -> None:
+# super().__init__()
+# self.loss_fn = EMDLoss(**kwargs)
 
-class EnergyMovers(nn.Module):
-    def __init__(self, **kwargs) -> None:
-        super().__init__()
-        # self.loss_fn = EMDLoss(**kwargs)
-
-    def forward(
-        self, a_weights, pc_a, b_weights, pc_b
-    ) -> Union[T.Tensor, Tuple[T.Tensor, T.Tensor]]:
-        pc_a = T.masked_fill(pc_a, (a_weights == 0).unsqueeze(-1), 0)
-        pc_b = T.masked_fill(pc_b, (b_weights == 0).unsqueeze(-1), 0)
-        return self.loss_fn(pc_a, pc_b)
-
-
-class ChampferLoss(nn.Module):
-    """The champfer loss function for use on batched and weighted
-    pointclouds."""
-
-    def forward(self, o_weights, outputs, t_weights, targets):
-        """Constructor method for ChampferLoss
-        args:
-            o_weights: The output point cloud weights
-            outputs: The output point cloud features
-            t_weights: The target point cloud weights
-            targets: The target point cloud features
-        returns:
-            loss per sample (no batch reduction)
-        """
-
-        # Calculate the distance matrix (squared) between the outputs and targets
-        return champfer_loss(o_weights, outputs, t_weights, targets)
-
-
-def masked_dist_loss(
-    loss_fn: nn.Module,
-    pc_a: T.Tensor,
-    pc_a_mask: T.BoolTensor,
-    pc_b: T.Tensor,
-    pc_b_mask: T.BoolTensor,
-    reduce: str = "none",
-) -> T.Tensor:
-    """Calculates the distribution loss between two masked pointclouds.
-
-    - This is done by using the masks as weights (compatible with the geomloss package)
-    - The loss function should be permutation invariant
-
-    args:
-        loss_fn: The loss function to apply, must have a forward method
-        pc_a: The first point cloud
-        pc_a_mask: The mask of the first point cloud
-        pc_b: The second point cloud
-        pc_b_mask: The mask of the second point cloud
-    kwargs:
-        reduce: If the loss should be reduced along the batch dimension
-    """
-
-    # Calculate the weights by normalising the mask for each sample
-    a_weights = pc_a_mask.float()
-    b_weights = pc_b_mask.float()
-
-    # Calculate the loss using these weights
-    loss = loss_fn(a_weights, pc_a, b_weights, pc_b)
-
-    if reduce == "mean":
-        return loss.mean()
-    if reduce == "none":
-        return loss
-    raise ValueError("Unknown reduce option for masked_dist_loss")
+# def forward(
+#     self, a_weights, pc_a, b_weights, pc_b
+# ) -> Union[T.Tensor, Tuple[T.Tensor, T.Tensor]]:
+#     pc_a = T.masked_fill(pc_a, (a_weights == 0).unsqueeze(-1), 0)
+#     pc_b = T.masked_fill(pc_b, (b_weights == 0).unsqueeze(-1), 0)
+#     return self.loss_fn(pc_a, pc_b)

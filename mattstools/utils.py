@@ -34,7 +34,8 @@ def standard_job_array(
     gpu_type: str = "",
     use_dashes: bool = True,
     extra_slurm: str = "",
-):
+) -> None:
+    """Create a standard gridjob array using the expected settings for the UNIGE HPC."""
     # Calculate the total number of jobs to perform
     n_jobs = 1
     for key, vals in opt_dict.items():
@@ -112,12 +113,16 @@ def str2bool(mystring: str) -> bool:
 
 
 def merge_dict(source: dict, update: dict) -> dict:
-    """Merges two deep dictionaries recursively.
+    """Merge two deep dictionaries recursively.
 
-    - Apply to small dictionaries please!
-    args:
-        source: The source dict, will be copied (not modified)
-        update: Will be used to overwrite and append values to the source
+    Slow with deep dictionaries.
+
+    Args
+    ----
+    source:
+        The source dict, will be copied (not modified)
+    update:
+        Will be used to overwrite and append values to the source
     """
     # Make a copy of the source dictionary
     merged = source.copy()
@@ -151,17 +156,12 @@ def merge_dict(source: dict, update: dict) -> dict:
 
 
 def print_dict(dic: dict, indent: int = 1) -> None:
-    """Recursively print a dictionary using json.
-
-    args:
-        dic: The dictionary
-        indent: The spacing/indent to do for nested dicts
-    """
+    """Recursively print a dictionary using json."""
     print(json.dumps(dic, indent=indent))
 
 
 def get_from_dict(data_dict: dict, key_list: list, default=None) -> Any:
-    """Returns a value from a nested dictionary using list of keys."""
+    """Return a value from a nested dictionary using list of keys."""
     try:
         return reduce(operator.getitem, key_list, data_dict)
     except KeyError:
@@ -169,17 +169,17 @@ def get_from_dict(data_dict: dict, key_list: list, default=None) -> Any:
 
 
 def set_in_dict(data_dict: dict, key_list: list, value: Any):
-    """Sets a value in a nested dictionary using a list of keys."""
+    """Set a value in a nested dictionary using a list of keys."""
     get_from_dict(data_dict, key_list[:-1])[key_list[-1]] = value
 
 
 def key_prefix(pref: str, dic: dict) -> dict:
-    """Adds a prefix to each key in a dictionary."""
+    """Add a prefix to each key in a dictionary."""
     return {f"{pref}{key}": val for key, val in dic.items()}
 
 
 def key_change(dic: dict, old_key: str, new_key: str, new_value=None) -> None:
-    """Changes the key used in a dictionary inplace only if it exists."""
+    """Change the key used in a dictionary inplace only if it exists."""
 
     # If the original key is not present, nothing changes
     if old_key not in dic:
@@ -196,7 +196,7 @@ def key_change(dic: dict, old_key: str, new_key: str, new_value=None) -> None:
 
 
 def remove_keys_starting_with(dic: dict, match: str) -> dict:
-    """Removes all keys from the dictionary if they start with.
+    """Remove all keys from the dictionary if they start with.
 
     - Returns a copy of the dictionary
     """
@@ -204,13 +204,12 @@ def remove_keys_starting_with(dic: dict, match: str) -> dict:
 
 
 def signed_angle_diff(angle1: Any, angle2: Any) -> Any:
-    """Calculate diff between two angles reduced to the interval of [-pi,
-    pi]"""
+    """Calculate diff between two angles reduced to the interval of [-pi, pi]"""
     return (angle1 - angle2 + math.pi) % (2 * math.pi) - math.pi
 
 
 def load_yaml_files(files: Union[list, tuple, str]) -> tuple:
-    """Loads a list of files using yaml and returns a tuple of dictionaries."""
+    """Load a list of files using yaml and returns a tuple of dictionaries."""
 
     # If the input is not a list then it returns a dict
     if isinstance(files, (str, Path)):
@@ -230,7 +229,7 @@ def load_yaml_files(files: Union[list, tuple, str]) -> tuple:
 def save_yaml_files(
     path: str, file_names: Union[str, list, tuple], dicts: Union[dict, list, tuple]
 ) -> None:
-    """Saves a collection of yaml files in a folder.
+    """Save a collection of yaml files in a folder.
 
     - Makes the folder if it does not exist
     """
@@ -271,54 +270,11 @@ def get_scaler(name: str):
     raise ValueError(f"No sklearn scaler with name: {name}")
 
 
-def args_into_conf(
-    argp: object, conf: dict, inpt_name: str, dest_keychains: Union[list, str] = None
-) -> None:
-    """Takes an input string and collects the attribute with that name from an
-    object, then it places that value within a dictionary at certain locations
-    defined by a list of destination keys chained together.
-
-    This function is specifically designed for placing commandline arguments collected
-    via argparse into to certain locations within a configuration dictionary
-
-    There are some notable behaviours:
-    - The dictionary is updated INPLACE!
-    - If the input is not found on the obj or it is None, then the dict is not updated
-    - If the keychain is a list the value is placed in multiple locations in the dict
-    - If the keychain is None, then the input is placed in the first layer of the conf
-      using its name as the key
-
-    args:
-        argp: The object from which to retrive the attribute using input_name
-        conf: The dictionary to be updated with this new value
-        input_name: The name of the value to retrive from the argument object
-        dest_keychains: A string or list of strings for desinations in the dict
-        (The keychain should show breaks in keys using '/')
-    """
-
-    # Exit if the input is not in the argp or if its value is None
-    if not hasattr(argp, inpt_name) or getattr(argp, inpt_name) is None:
-        return
-
-    # Get the value from the argparse
-    val = getattr(argp, inpt_name)
-
-    # Do a simple replacement if the dest keychains is None
-    if dest_keychains is None:
-        conf[inpt_name] = val
-        return
-
-    # For a complex keychain we use a list for consistancy
-    if isinstance(dest_keychains, str):
-        dest_keychains = [dest_keychains]
-
-    # Cycle through all of the destinations and place in the dictionary
-    for dest in dest_keychains:
-        set_in_dict(conf, dest.split("/"), val)
-
-
 def batched(iterable: Iterable, n: int) -> Generator:
-    "Batch data into tuples of length n. The last batch may be shorter."
+    """Batch data into tuples of length n.
+
+    The last batch may be shorter.
+    """
     # batched('ABCDEFG', 3) --> ABC DEF G
     assert n >= 1
     it = iter(iterable)
@@ -327,8 +283,9 @@ def batched(iterable: Iterable, n: int) -> Generator:
 
 
 def evenly_spaced(*iterables) -> list:
-    """Returns an evenly spaced list from a raggest nest Taken from:
-    https://stackoverflow.com/a/19293603.
+    """Return an evenly spaced list from a raggest nest.
+
+    Taken from: https://stackoverflow.com/a/19293603.
 
     >>> evenly_spaced(range(10), list('abc'))
     [0, 1, 'a', 2, 3, 4, 'b', 5, 6, 7, 'c', 8, 9]

@@ -1,5 +1,4 @@
-"""A collection of misculaneous functions usefull for the lighting/hydra
-template."""
+"""A collection of misculaneous functions usefull for the lighting/hydra template."""
 
 import logging
 import os
@@ -26,9 +25,9 @@ def reload_original_config(
     ckpt_flag: str = "*last*",
     set_wandb_resume: bool = True,
 ) -> OmegaConf:
-    """Returns the full Omegaconf of a run create at a particular path.
+    """Replace the cfg with the one stored at the checkpoint location.
 
-    Can also set the ckpt_path and setup WandB for resuming
+    Will also set the chkpt_dir to the latest version of the last or best checkpoint
     """
 
     # Load the original config found in the the file directorys
@@ -64,13 +63,18 @@ def print_config(
     ),
     resolve: bool = True,
 ) -> None:
-    """Prints content of DictConfig using Rich library and its tree structure.
+    """Print the content of cfg using Rich library and its tree structure.
 
-    Args:
-        cfg: Configuration composed by Hydra.
-        print_order: Determines in what order config components are printed.
-        resolve: Whether to resolve reference fields of DictConfig.
-        save_to_file: Whether to export config to the hydra output folder.
+    Parameters
+    ----------
+        cfg:
+            Configuration composed by Hydra.
+        print_order:
+            Determines in what order config components are printed.
+        resolve:
+            Whether to resolve reference fields of DictConfig.
+        save_to_file:
+            Whether to export config to the hydra output folder.
     """
 
     style = "dim"
@@ -106,14 +110,14 @@ def print_config(
 
 
 def save_config(cfg: OmegaConf) -> None:
-    """Saves the config to the output directory.
+    """Save the config to the output directory.
 
     This is necc ontop of hydra's default conf.yaml as it will resolve the entries
     allowing one to resume jobs identically with elements such as ${now:%H-%M-%S}.
 
-    Furthermore, hydra does not allow resuming a previous job from the same dir.
-    The work around is reload_original_config but that will fail as hydra overwites
-    the default config.yaml file on startup, so this backup is needed for resuming.
+    Furthermore, hydra does not allow resuming a previous job from the same dir. The
+    work around is reload_original_config but that will fail as hydra overwites the
+    default config.yaml file on startup, so this backup is needed for resuming.
     """
 
     # In order to be able to resume the wandb logger session, save the run id
@@ -130,8 +134,10 @@ def save_config(cfg: OmegaConf) -> None:
 def log_hyperparameters(
     cfg: DictConfig, model: LightningModule, trainer: Trainer
 ) -> None:
-    """Passes the config dict to the trainer's logger, also calculates #
-    params."""
+    """Pass the config dict to the trainer's logger.
+
+    Also calculates and logs the number of parameters
+    """
 
     # Convert the config object to a hyperparameter dict
     hparams = OmegaConf.to_container(cfg, resolve=True)
@@ -149,7 +155,7 @@ def log_hyperparameters(
 
 
 def instantiate_collection(cfg_coll: DictConfig) -> List[Any]:
-    """Uses hydra to instantiate a collection of classes and return a list."""
+    """Use hydra to instantiate a collection of classes and return a list."""
     objs = []
 
     if not cfg_coll:

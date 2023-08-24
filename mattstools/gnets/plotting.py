@@ -1,5 +1,4 @@
-"""A collection of plotting scripts specifically for graph objects and
-networks."""
+"""A collection of plotting scripts specifically for graph objects and networks."""
 
 from pathlib import Path
 
@@ -190,18 +189,3 @@ def plot_scatter(
 #     if return_fig:
 #         return fig
 #     plt.close(fig)
-
-
-def main() -> None:
-    shape = (4, 32, 3)
-    plot_scatter(
-        path=Path("here"),
-        real_nodes=np.random.rand(*shape),
-        real_mask=np.random.rand(*shape[:-1]) > 0.5,
-        gen_nodes=np.random.rand(*shape),
-        gen_mask=np.random.rand(*shape[:-1]) > 0.5,
-    )
-
-
-if __name__ == "__main__":
-    main()

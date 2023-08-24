@@ -1,10 +1,11 @@
-"""Custom layers, blocks, and network components for working on graphs. These
-modules are designed to be combined and chained together.
+"""Custom layers, blocks, and network components for working on graphs. These modules
+are designed to be combined and chained together.
 
 - Each module contains the attributes inpt_dim and outp_dim which allows them to be chained
 """
 
 import math
+from copy import deepcopy
 from typing import Union
 
 import torch as T
@@ -19,8 +20,7 @@ from ..utils import merge_dict
 
 
 class EmbeddingLayer(nn.Module):
-    """A layer for embedding the nodes into different space using an dense
-    network.
+    """A layer for embedding the nodes into different space using an dense network.
 
     - Does not change the edges, globals, adjmat or mask
     - Each node operation is independant, no interaction
@@ -28,7 +28,7 @@ class EmbeddingLayer(nn.Module):
     """
 
     def __init__(
-        self, inpt_dim: list, ctxt_dim: int = 0, net_kwargs: dict = None
+        self, inpt_dim: list, ctxt_dim: int = 0, net_kwargs: dict | None = None
     ) -> None:
         """
         args:
@@ -54,7 +54,7 @@ class EmbeddingLayer(nn.Module):
         # The output dimension comes from input with new node features
         self.outp_dim = [inpt_dim[0], self.dense_net.outp_dim, inpt_dim[2]]
 
-    def forward(self, graph: GraphBatch, ctxt: T.Tensor = None) -> GraphBatch:
+    def forward(self, graph: GraphBatch, ctxt: T.Tensor | None = None) -> GraphBatch:
         """Forward pass for EmbeddingLayer."""
         graph.nodes = pass_with_mask(
             graph.nodes,
@@ -69,8 +69,8 @@ class EmbeddingLayer(nn.Module):
 
 
 class EdgeBuilder(nn.Module):
-    """Replaces a graph's adjacency matrix and the sometimes the edge feature
-    matrix using a variety of different methods.
+    """Replaces a graph's adjacency matrix and the sometimes the edge feature matrix
+    using a variety of different methods.
 
     The adjacency matrix is created using the distances between nodes
     - A subset of the node features are used as coordinates to calculate distances
@@ -211,8 +211,10 @@ class EdgeBuilder(nn.Module):
 
 
 class GraphNeuralNetwork(nn.Module):
-    """A stack of GNBlocks with optional Edge-Building layers in between graph
-    to graph."""
+    """A stack of GNBlocks with optional Edge-Building layers in between.
+
+    Graph -> Graph.
+    """
 
     def __init__(
         self,
@@ -221,8 +223,8 @@ class GraphNeuralNetwork(nn.Module):
         num_blocks: int = 1,
         ebl_every: int = 0,
         start_with_ebl: bool = False,
-        ebl_kwargs: Union[dict, list] = None,
-        gnb_kwargs: Union[dict, list] = None,
+        ebl_kwargs: Union[dict, list] | None = None,
+        gnb_kwargs: Union[dict, list] | None = None,
     ) -> None:
         """
         args:
@@ -319,7 +321,7 @@ class GraphVectorGenerator(nn.Module):
         inpt_dim: int,
         ctxt_dim: int = 0,
         node_init_dim: int = 4,
-        gnn_kwargs: dict = None,
+        gnn_kwargs: dict | None = None,
     ) -> None:
         """
         args:
@@ -344,7 +346,8 @@ class GraphVectorGenerator(nn.Module):
         # Create the graph network, takes initial vec and ctxt as conditioning
         self.gnn = GraphNeuralNetwork(
             inpt_dim=[0, self.node_init_dim, 0],
-            ctxt_dim=inpt_dim + ctxt_dim**gnn_kwargs,
+            ctxt_dim=inpt_dim + ctxt_dim,
+            **gnn_kwargs,
         )
 
         # Set the final output dimension of this module
@@ -353,7 +356,7 @@ class GraphVectorGenerator(nn.Module):
     def _create_init_graph(
         self, inputs: T.Tensor, target_mask: T.BoolTensor, ctxt: T.Tensor
     ) -> GraphBatch:
-        """Returns the initial random graph."""
+        """Return the initial random graph."""
 
         # Get the sizes and kwargs for the graph batch
         b_size = len(inputs)
@@ -380,8 +383,8 @@ class GraphVectorGenerator(nn.Module):
         return inputs
 
     def forward(
-        self, inputs: T.Tensor, target_mask: T.BoolTensor, ctxt: T.Tensor = None
-    ) -> tuple:
+        self, inputs: T.Tensor, target_mask: T.BoolTensor, ctxt: T.Tensor | None = None
+    ) -> GraphBatch:
         """Given some tensors, create the output graph object
         args:
             inputs: The input batch of tensors
@@ -399,13 +402,12 @@ class GraphVectorGenerator(nn.Module):
 
 
 class FullGraphVectorGenerator(nn.Module):
-    """A GVG with added input and output embedding networks (for the nodes)
-    Vector to Graph.
+    """A GVG with added input and output embedding networks (for the nodes) Vector to
+    Graph.
 
-    1)  Embeds the input vector into a higher dimensional space based on
-    model_dim     using a dense network. 2)  Passes this through a GVG
-    to get a graph output 3)  Passes the sequence through an embedding
-    dense network with vector as context
+    1)  Embeds the input vector into a higher dimensional space based on model_dim using
+    a dense network. 2)  Passes this through a GVG to get a graph output 3) Passes the
+    sequence through an embedding dense network with vector as context
     """
 
     def __init__(
@@ -413,9 +415,9 @@ class FullGraphVectorGenerator(nn.Module):
         inpt_dim: int,
         outp_dim: int,
         ctxt_dim: int = 0,
-        gvg_kwargs: dict = None,
-        vect_embd_kwargs: dict = None,
-        outp_embd_kwargs: dict = None,
+        gvg_kwargs: dict | None = None,
+        vect_embd_kwargs: dict | None = None,
+        outp_embd_kwargs: dict | None = None,
     ) -> None:
         """
         args:
@@ -455,7 +457,7 @@ class FullGraphVectorGenerator(nn.Module):
         )
 
     def forward(
-        self, vec: T.Tensor, mask: T.BoolTensor, ctxt: T.Tensor = None
+        self, vec: T.Tensor, mask: T.BoolTensor, ctxt: T.Tensor | None = None
     ) -> tuple:
         """Pass the input through all layers sequentially."""
         vec = self.vec_embd(vec, ctxt=ctxt)
@@ -465,16 +467,18 @@ class FullGraphVectorGenerator(nn.Module):
 
 
 class FullGraphVectorEncoder(nn.Module):
-    """A graph network encoder which produces a vector representation passed
-    through a dense network graph -> vector."""
+    """A graph network encoder which produces a vector representation.
+
+    Graph -> Vector.
+    """
 
     def __init__(
         self,
         inpt_dim: list,
         outp_dim: int,
         ctxt_dim: int = 0,
-        gnn_kwargs: dict = None,
-        dns_kwargs: dict = None,
+        gnn_kwargs: dict | None = None,
+        dns_kwargs: dict | None = None,
     ) -> None:
         """
         args:
@@ -488,8 +492,8 @@ class FullGraphVectorEncoder(nn.Module):
         super().__init__()
 
         # Dict default kwargs, copy makes it safe when we change output
-        gnn_kwargs = gnn_kwargs.copy() or {}
-        dns_kwargs = dns_kwargs.copy() or {}
+        gnn_kwargs = deepcopy(gnn_kwargs) or {}
+        dns_kwargs = deepcopy(dns_kwargs) or {}
 
         # Save the class attributes
         self.inpt_dim = inpt_dim
@@ -506,7 +510,10 @@ class FullGraphVectorEncoder(nn.Module):
         )
 
     def forward(
-        self, inputs: GraphBatch, ctxt: T.Tensor = None, return_nodes: bool = False
+        self,
+        inputs: GraphBatch,
+        ctxt: T.Tensor | None = None,
+        return_nodes: bool = False,
     ) -> T.Tensor:
         """Encode a graph batch."""
         inputs = self.gnn(inputs, ctxt=ctxt)
@@ -514,189 +521,3 @@ class FullGraphVectorEncoder(nn.Module):
         if return_nodes:
             return vec, inputs.nodes
         return vec
-
-
-# class Graph2Vec(nn.Module):
-#     """OUTDATED! SHOULD DO IT MANUALLY! KEPT FOR LEGACY PURPOSES!
-
-#     Converts a graph type object to a vector
-
-#     Can simply take the current global or combine it with a
-#     pooling operation over the nodes
-
-#     Does not support attention as the GlobBlock part of the GNBlock is already
-#     a pooling over the nodes
-
-#     The graph conditionals are returned as a seperate tensor to be most flexible
-#     """
-
-#     def __init__(self, inpt_dim: list, node_use: str = "ignr") -> None:
-#         """
-#         args:
-#             inpt_dim: The dimensions of the input graph [e,n,g,c]
-#         kwargs:
-#             node_use: A string to indicate the type of pooling over the nodes
-#         """
-#         super().__init__()
-
-#         # Configuration checks
-#         if node_use not in ["ignr", "mean", "max", "sum"]:
-#             raise ValueError(f"Unknown pooling method for G2V layer: {node_use}")
-#         if node_use != "ignr" and inpt_dim[2] > 0:
-#             warnings.warn(
-#                 "Using a custom pooling method on a graph with global variables!\n"
-#                 + "Final level global variables already are a pooling of the nodes!\n"
-#                 + "Consider using the ignr method for the G2V block"
-#             )
-
-#         # Store the input, output dimensions to query them later
-#         self.inpt_dim = inpt_dim
-#         self.outp_dim = (
-#             (0 if node_use == "ignr" else inpt_dim[1]) + inpt_dim[2],
-#             inpt_dim[3],
-#         )
-#         self.node_use = node_use
-
-#         # Check that some output does exist
-#         if self.outp_dim == 0:
-#             raise ValueError(
-#                 "Configuration results in a G2V layer with a 0 dimension output!"
-#             )
-
-#     def forward(self, graph: GraphBatch) -> Tuple[T.Tensor, T.Tensor]:
-#         """Forward pass for Graph2Vec"""
-
-#         # Ignore the nodes or apply the pooling
-#         if self.node_use == "ignr":
-#             return graph.globs, graph.cndts
-#         else:
-#             return (
-#                 smart_cat(
-#                     [
-#                         masked_pool(self.node_use, graph.nodes, graph.mask),
-#                         graph.globs,
-#                     ]
-#                 ),
-#                 graph.cndts,
-#             )
-
-#     def __repr__(self):
-#         return f"Graph2Vec({self.node_use})"
-
-# class GraphIncorpBlock(nn.Module):
-#     """OUTDATED! SLOW AND USELESS!
-#     Incorporates an additional group of nodes into an existing graph structure
-
-#     Given a graph with n real nodes out of N padded ones the block will create
-#     m new nodes from n to n+m < N
-
-#     The forward pass requries graph and a new_mask, showing where to put the new nodes:
-#     - The existing mask should be True from [0:n] and False from [n:N]
-#     - The new_mask is based on a sliding window, so should be True only in [n:n+m]
-
-#     New nodes are created by:
-#     - Using either passed initial values or generating new ones randomly
-#     - Broadcasting the initial values and the new_mask to get the positions
-
-#     A new adjacency matrix is created by:
-#     - Ensuring that edges can only point from old to new nodes
-
-#     We then pass through a single GN block
-#     - Locking the old nodes in place, so only the new ones pulled into graph
-#     """
-
-#     def __init__(self, inpt_dim: list, gnb_kwargs: dict, n_connects: int = 8) -> None:
-#         """
-#         args:
-#             inpt_dim: The dimensions of the input graph [e,n,g,c]
-#             gnb_kwargs: The dictionary of kwargs for the gn-block for pulling in nodes
-#         kwargs:
-#             n_connects: The number of old nodes each new node can receive info from
-#         """
-#         super().__init__()
-
-#         # Save the dimensions
-#         self.inpt_dim = inpt_dim.copy()  # Copy prevents overwritting
-#         self.inpt_dim[0] = 0  # No edge features! Block creates new edges anyway
-#         self.outp_dim = inpt_dim  # Does not resize the graph network
-#         self.n_connects = n_connects
-
-#         # Create the layers to be used in the update block
-#         self.gnb = GNBlock(self.inpt_dim, **gnb_kwargs)
-
-#         # Test that the node outputs from the gnb is the same as the inputs
-#         if self.gnb.outp_dim != self.inpt_dim:
-#             raise ValueError(
-#                 "GNBlock in incorporation layer must not change graph dimensions!"
-#             )
-
-#     def forward(
-#         self, graph: GraphBatch, new_mask: T.Tensor, node_inits: T.Tensor = None
-#     ) -> GraphBatch:
-#         """Forward pass for GraphNetwork.
-
-#         args:
-#             graph: The batched graph object which will gain new nodes.
-#             new_mask: A node mask showing where the new nodes will be inserted.
-#         kwargs:
-#             node_inits: Initial node features [n_nodes, node_dim].
-#                         If None then the node are randomly generated with gaussian.
-#         """
-
-#         # Ensure there is no overlap between the existing mask and the new one
-#         if T.logical_and(graph.mask, new_mask).any():
-#             raise ValueError("Detected overlapping masks in the GraphIncorpBlock!")
-
-#         # Create node seeds from a normal distribution if None are provided
-#         if node_inits is None:
-#             node_inits = T.randn_like(graph.nodes[0])
-
-#         # Save the old edges, adjmat, and mask for after the udpate
-#         old_edges = graph.edges
-#         old_adjmat = graph.adjmat
-#         old_mask = graph.mask
-
-#         # Combine the seeds with the mask to broadcast to the sliding window
-#         new_nodes = node_inits.unsqueeze(0) * new_mask.unsqueeze(-1)
-#         graph.mask = graph.mask + new_mask
-#         graph.nodes = graph.nodes + new_nodes
-
-#         # Initialise new empty edges (compressed)
-#         graph.edges = T.zeros((0, 0), dtype=T.float32, device=graph.device)
-
-#         # Build a new adjmat only allowing connections from existing to new
-#         dist_mat = masked_dist_matrix(graph.nodes, graph.mask, new_nodes, new_mask)[0]
-#         graph.adjmat = knn(dist_mat, self.n_connects, "recv")
-
-#         # Pass through a gn-block but prevent existing graph nodes from being udpated
-#         graph = self.gnb(graph, locked_nodes=old_mask)
-
-#         # The new adjmat with all connections
-#         all_adjmat = graph.adjmat + old_adjmat  # Should not overlap!
-
-#         # Combine all of the edges
-#         # This is more complex due the compressed nature of the edge matrix
-#         all_edges = T.zeros(
-#             (all_adjmat.sum(), old_edges.shape[-1]),
-#             dtype=T.float,
-#             device=old_edges.device,
-#         )
-
-#         # Only copy if there are persistant edge features
-#         if old_edges.shape[-1]:
-
-#             # Insert the old edges into this compressed representation
-#             pad = old_adjmat[all_adjmat]  # 0's indicate missing
-#             srvd = all_adjmat[old_adjmat]  # 0's indicate deletions
-#             all_edges[pad] = old_edges[srvd]
-
-#             # Insert the new edges into this compressed representation
-#             pad = graph.adjmat[all_adjmat]
-#             srvd = all_adjmat[graph.adjmat]
-#             all_edges[pad] = graph.edges[srvd]
-
-#         # Finally replace the adjmat and the edges in the graph object
-#         graph.edges = all_edges
-#         graph.adjmat = all_adjmat
-
-#         return graph

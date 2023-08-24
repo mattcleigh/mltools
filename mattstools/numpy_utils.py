@@ -1,3 +1,5 @@
+"""A collection utility functions for numpy arrays."""
+
 from typing import Optional
 
 import numpy as np
@@ -48,6 +50,37 @@ def onehot_encode(
     dtype: np.dtype = np.float32,
     count_unique: bool = False,
 ) -> np.ndarray:
+    """One-hot encodes a numpy array.
+
+    Parameters
+    ----------
+    a : np.ndarray
+        The input array to be one-hot encoded.
+    max_idx : None | int, optional
+        The maximum index to consider for encoding.
+        If None, the maximum value in the input array is used. Default is None.
+    dtype : np.dtype, optional
+        The desired data type for the output array. Default is np.float32.
+    count_unique : bool, optional
+        If True, only unique values in the input array are considered for encoding.
+        Default is False.
+
+    Returns
+    -------
+    np.ndarray
+        The one-hot encoded array.
+
+    Notes
+    -----
+    The function first checks if unique values need to be considered for encoding.
+    If so, it finds the unique values and their inverse mapping.
+    It then determines the number of columns for the output array based on
+    the maximum index. An output array of zeros is created with the appropriate size
+    and data type. The function then sets the appropriate indices in the output
+    array to 1 based on the input array. Finally, it reshapes the output array
+    to match the shape of the input array with an additional dimension for the
+    one-hot encoding.
+    """
     if count_unique:
         unique, inverse = np.unique(a, return_inverse=True)
         a = inverse
@@ -76,7 +109,7 @@ def interweave(arr_1: np.ndarray, arr_2: np.ndarray) -> np.ndarray:
 
 
 def sum_other_axes(array: np.ndarray, axis: int) -> np.ndarray:
-    """Applies numpy sum to all axes except one in an array."""
+    """Apply numpy sum to all axes except one in an array."""
     axes_for_sum = [i for i in range(len(array.shape))]
     axes_for_sum.pop(axis)
     return array.sum(axis=tuple(axes_for_sum))
@@ -96,26 +129,24 @@ def undo_mid(array: np.ndarray) -> np.ndarray:
 
 
 def chunk_given_size(a: np.ndarray, size: int, axis: int = 0) -> np.ndarray:
-    """Split an array into chunks along an axis, the final chunk will be
-    smaller."""
+    """Split an array into chunks along an axis, the final chunk will be smaller."""
     return np.split(a, np.arange(size, a.shape[axis], size), axis=axis)
 
 
 def mask_list(arrays: list, mask: np.ndarray) -> list:
-    """Applies a mask to a list of arrays."""
+    """Apply a mask to a list of arrays."""
     return [a[mask] for a in arrays]
 
 
 def log_clip(
     data: np.ndarray, clip_min: Optional[float] = 1e-6, clip_max: Optional[float] = None
 ) -> np.ndarray:
-    """Applies a clip and then the log function, typically to prevent neg
-    infs."""
+    """Apply a clip and then the log function, typically to prevent neg infs."""
     return np.log(np.clip(data, clip_min, clip_max))
 
 
 def min_loc(data: np.ndarray) -> tuple:
-    """Returns the idx for the minimum of a multidimensional array."""
+    """Return the idx for the minimum of a multidimensional array."""
     return np.unravel_index(data.argmin(), data.shape)
 
 
@@ -129,22 +160,23 @@ def undo_log_squash(data: np.ndarray) -> np.ndarray:
     return np.sign(data) * (np.exp(np.abs(data)) - 1)
 
 
-def empty_0dim_like(arr: np.ndarray) -> np.ndarray:
-    """Returns an empty array with similar size as the input but with its final
-    dimension size reduced to 0."""
+def empty_0dim_like(inpt: np.ndarray) -> np.ndarray:
+    """Return an empty tensor with same size as input but with final dim = 0."""
 
     # Get all but the final dimension
-    all_but_last = arr.shape[:-1]
+    all_but_last = inpt.shape[:-1]
 
     # Ensure that this is a tuple/list so it can agree with return syntax
     if isinstance(all_but_last, int):
         all_but_last = [all_but_last]
 
-    return np.empty((*all_but_last, 0), dtype=arr.dtype)
+    return np.empty((*all_but_last, 0))
 
 
 def group_by(a: np.ndarray) -> np.ndarray:
-    """A groupby method which runs over a numpy array, binning by the first
-    column and making many seperate arrays as results."""
+    """Run a groupby method which over a numpy array.
+
+    Bins by the first column, making many seperate arrays as results.
+    """
     a = a[a[:, 0].argsort()]
     return np.split(a[:, 1:], np.unique(a[:, 0], return_index=True)[1][1:])

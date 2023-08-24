@@ -19,8 +19,8 @@ class EdgeBlockLite(nn.Module):
         outp_dim: list,
         ctxt_dim: int = 0,
         n_heads: int = 1,
-        feat_kwargs: dict = None,
-        attn_kwargs: dict = None,
+        feat_kwargs: dict | None = None,
+        attn_kwargs: dict | None = None,
     ) -> None:
         """
         args:
@@ -65,7 +65,7 @@ class EdgeBlockLite(nn.Module):
         # The pre-post layernormalisation layer
         self.pre_ln = nn.LayerNorm(edge_inpt_dim)
 
-    def forward(self, graph: GraphBatch, ctxt: T.Tensor = None) -> T.Tensor:
+    def forward(self, graph: GraphBatch, ctxt: T.Tensor | None = None) -> T.Tensor:
         """
         args:
             graph: The batched graph object
@@ -123,8 +123,8 @@ class NodeBlockLite(nn.Module):
         outp_dim: list,
         ctxt_dim: int = 0,
         n_heads: int = 1,
-        feat_kwargs: dict = None,
-        attn_kwargs: dict = None,
+        feat_kwargs: dict | None = None,
+        attn_kwargs: dict | None = None,
     ) -> None:
         """
         args:
@@ -170,7 +170,7 @@ class NodeBlockLite(nn.Module):
         self.pre_ln = nn.LayerNorm(node_inpt_dim)
 
     def forward(
-        self, graph: GraphBatch, pooled_edges: T.Tensor, ctxt: T.Tensor = None
+        self, graph: GraphBatch, pooled_edges: T.Tensor, ctxt: T.Tensor | None = None
     ) -> T.Tensor:
         """
         args:
@@ -223,7 +223,7 @@ class GlobBlockLite(nn.Module):
         inpt_dim: list,
         outp_dim: list,
         ctxt_dim: int = 0,
-        feat_kwargs: dict = None,
+        feat_kwargs: dict | None = None,
     ) -> None:
         """
         args:
@@ -253,7 +253,7 @@ class GlobBlockLite(nn.Module):
         self.pre_ln = nn.LayerNorm(glob_inpt_dim)
 
     def forward(
-        self, graph: GraphBatch, pooled_nodes: T.Tensor, ctxt: T.Tensor = None
+        self, graph: GraphBatch, pooled_nodes: T.Tensor, ctxt: T.Tensor | None = None
     ) -> T.Tensor:
         """
         args:
@@ -288,9 +288,9 @@ class GNBlockLite(nn.Module):
         inpt_dim: list,
         outp_dim: list,
         ctxt_dim: int = 0,
-        edge_block_kwargs: dict = None,
-        node_block_kwargs: dict = None,
-        glob_block_kwargs: dict = None,
+        edge_block_kwargs: dict | None = None,
+        node_block_kwargs: dict | None = None,
+        glob_block_kwargs: dict | None = None,
     ) -> None:
         """
         args:
@@ -324,9 +324,8 @@ class GNBlockLite(nn.Module):
             inpt_dim, outp_dim, ctxt_dim, **glob_block_kwargs
         )
 
-    def forward(self, graph: GraphBatch, ctxt: T.Tensor = None) -> GraphBatch:
-        """Return an updated graph with the same structure, but new
-        features."""
+    def forward(self, graph: GraphBatch, ctxt: T.Tensor | None = None) -> GraphBatch:
+        """Return an updated graph with the same structure, but new features."""
         graph.edges, pooled_edges = self.edge_block(graph, ctxt)
         graph.nodes, pooled_nodes = self.node_block(graph, pooled_edges, ctxt)
         del pooled_edges  # Saves alot of memory if we delete right away
@@ -334,7 +333,7 @@ class GNBlockLite(nn.Module):
         return graph
 
     def __repr__(self):
-        """A way to print the block config on one line for quick review."""
+        """Print the block config on one line for quick review."""
         string = str(self.inpt_dim)
         string += f"->EdgeNet[{self.edge_block.feat_net.one_line_string()}]"
         if self.edge_block.same_size:
@@ -359,9 +358,9 @@ class GNBStack(nn.Module):
         model_dim: list,
         num_blocks: int,
         ctxt_dim: int = 0,
-        edge_block_kwargs: dict = None,
-        node_block_kwargs: dict = None,
-        glob_block_kwargs: dict = None,
+        edge_block_kwargs: dict | None = None,
+        node_block_kwargs: dict | None = None,
+        glob_block_kwargs: dict | None = None,
     ) -> None:
         """
         args:
@@ -392,7 +391,7 @@ class GNBStack(nn.Module):
             ]
         )
 
-    def forward(self, graph: GraphBatch, ctxt: T.Tensor = None) -> T.Tensor:
+    def forward(self, graph: GraphBatch, ctxt: T.Tensor | None = None) -> T.Tensor:
         """Pass the input through all layers sequentially."""
         graph._clone()
         for blocks in self.blocks:

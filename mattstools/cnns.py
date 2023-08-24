@@ -1,3 +1,6 @@
+"""Code for everything convolutional."""
+
+
 import logging
 from typing import Mapping, Optional
 
@@ -6,7 +9,7 @@ import torch as T
 import torch.nn as nn
 from torch.nn.functional import group_norm, scaled_dot_product_attention
 
-from .modules import DenseNetwork, sine_cosine_encoding
+from .modules import DenseNetwork
 from .torch_utils import append_dims, get_act
 
 log = logging.getLogger(__name__)
@@ -52,56 +55,17 @@ def avg_pool_nd(dims, *args, **kwargs):
     raise ValueError(f"unsupported dimensions: {dims}")
 
 
-def positionally_encode_patches(inpt_shape: T.Tensor, encoding_dim: int) -> T.Tensor:
-    """Applies positional encoding to a tensor of image patches.
-
-    Parameters
-    ----------
-    inpt_shape : T.Tensor
-        The spacial dimensions of the input image
-    encoding_dim : int
-        The dimension of the positional encoding to be applied.
-
-    Returns
-    -------
-    T.Tensor
-        A tensor of shape (B, C, H, W), where each patch has been
-        encoded with a vector of length encoding_dim.
-
-    Notes
-    -----
-    The positional encoding is based on sine and cosine functions
-    of different frequencies along the x and y axes. The encoding_dim
-    must be divisible by 2. The first half of the encoding vector
-    corresponds to the x axis, and the second half to the y axis.
-    """
-
-    # Get the values for the positional encodings from the shape of the tensor
-    x_vals = T.linspace(0, 1, inpt_shape[-1])
-    y_vals = T.linspace(0, 1, inpt_shape[-2])
-
-    # Combine the encodings together into a single shape
-    encodings = T.zeros((*inpt_shape, encoding_dim))
-
-    # Get seperate sine/cosine vectors for each dimension
-    dir_dim = encoding_dim // 2
-    encodings[..., :dir_dim] = sine_cosine_encoding(
-        x_vals, outp_dim=dir_dim, frequency_scaling="linear"
-    ).unsqueeze(-2)
-    encodings[..., dir_dim:] = sine_cosine_encoding(
-        y_vals, outp_dim=dir_dim, frequency_scaling="linear"
-    ).unsqueeze(-3)
-
-    # Rotate the dimensions to be B, C, H, W
-    return encodings.transpose(-1, -3)
-
-
 class ConditionedModule(nn.Module):
+    """Base class for models that need context when processing data."""
+
     pass
 
 
 class ConditionedSequential(nn.Sequential):
+    """Sequential model that can provide context to each layers if required."""
+
     def forward(self, inpt, ctxt):
+        """Pass through all submodules."""
         for module in self:
             if isinstance(module, ConditionedModule):
                 inpt = module(inpt, ctxt)
@@ -113,13 +77,7 @@ class ConditionedSequential(nn.Sequential):
 class AdaGN(ConditionedModule):
     """A module that implements an adaptive group normalization layer."""
 
-    def __init__(
-        self,
-        ctxt_dim: int,
-        c_out: int,
-        nrm_groups: int,
-        eps=1e-5,
-    ) -> None:
+    def __init__(self, ctxt_dim: int, c_out: int, nrm_groups: int, eps=1e-5) -> None:
         """
         Parameters
         ----------
@@ -141,6 +99,7 @@ class AdaGN(ConditionedModule):
         self.layer = zero_module(nn.Linear(ctxt_dim, c_out * 2))
 
     def forward(self, inpt: T.Tensor, ctxt: T.Tensor) -> T.Tensor:
+        """Apply conditioning to inputs."""
         scale, shift = self.layer(ctxt).chunk(2, dim=-1)
         scale = append_dims(scale, inpt.ndim) + 1  # + 1 to not kill on init
         shift = append_dims(shift, inpt.ndim)
@@ -168,7 +127,7 @@ class ResNetBlock(ConditionedModule):
         self,
         inpt_channels: int,
         ctxt_dim: int = 0,
-        outp_channels: int = None,
+        outp_channels: int | None = None,
         kernel_size: int = 3,
         dims: int = 2,
         act: str = "lrlu",
@@ -227,7 +186,8 @@ class ResNetBlock(ConditionedModule):
         else:
             self.skip_connection = conv_nd(dims, inpt_channels, outp_channels, 1)
 
-    def forward(self, inpt: T.Tensor, ctxt: T.Tensor = None) -> T.Tensor:
+    def forward(self, inpt: T.Tensor, ctxt: T.Tensor | None = None) -> T.Tensor:
+        """Pass through the layers with the residual connection."""
         return self.layers(inpt, ctxt) + self.skip_connection(inpt)
 
     def __str__(self) -> str:
@@ -240,16 +200,16 @@ class ResNetBlock(ConditionedModule):
 
 
 class MultiHeadedAttentionBlock(ConditionedModule):
-    """A multi-headed self attention block that allows spatial positions to
-    attend to each other.
+    """A multi-headed self attention block that allows spatial positions to attend to
+    each other.
 
-    This layer essentailly flattens the image's spacial dimensions, making it a
-    sequence where the length equals the original resolution. The dimension of each
-    element of the sequence is the number of each channels.
+    This layer essentailly flattens the image's spacial dimensions, making it a sequence
+    where the length equals the original resolution. The dimension of each element of
+    the sequence is the number of each channels.
 
     Then the message passing occurs, which is permutation invariant, using the exact
-    same operations as a standard transformer except we use 1x1 convolutions instead
-    of linear projections (same maths, but optimised performance)
+    same operations as a standard transformer except we use 1x1 convolutions instead of
+    linear projections (same maths, but optimised performance)
     """
 
     def __init__(
@@ -288,7 +248,7 @@ class MultiHeadedAttentionBlock(ConditionedModule):
             conv_nd(len(inpt_shape), inpt_channels, inpt_channels, 1)
         )
 
-    def forward(self, inpt: T.Tensor, ctxt: T.Tensor = None) -> T.Tensor:
+    def forward(self, inpt: T.Tensor, ctxt: T.Tensor | None = None) -> T.Tensor:
         """Apply the model the message passing, context tensor is not used."""
         b, c, *spatial = inpt.shape
 
@@ -315,8 +275,8 @@ class MultiHeadedAttentionBlock(ConditionedModule):
 
 
 class DoublingConvNet(nn.Module):
-    """A very simple convolutional neural network which halves the spacial
-    dimension with each block while doubling the number of channels.
+    """A very simple convolutional neural network which halves the spacial dimension
+    with each block while doubling the number of channels.
 
     Attention operations occur after a certain number of downsampling steps
 
@@ -337,9 +297,9 @@ class DoublingConvNet(nn.Module):
         attn_below: int = 8,
         start_channels: int = 32,
         max_channels: int = 256,
-        resnet_config: dict = None,
-        attn_config: dict = None,
-        dense_config: dict = None,
+        resnet_config: dict | None = None,
+        attn_config: dict | None = None,
+        dense_config: dict | None = None,
     ) -> None:
         super().__init__()
 
@@ -422,7 +382,7 @@ class DoublingConvNet(nn.Module):
             **dense_config,
         )
 
-    def forward(self, inpt: T.Tensor, ctxt: T.Tensor = None):
+    def forward(self, inpt: T.Tensor, ctxt: T.Tensor | None = None):
         """Forward pass of the network."""
 
         # Pass through the first convolution layer to embed the channel dimension
@@ -441,14 +401,14 @@ class DoublingConvNet(nn.Module):
 
 
 class UNet(nn.Module):
-    """A image to image mapping network which halves the spacial dimension with
-    each block while doubling the number of channels, before building back up
-    to the original resolution.
+    """A image to image mapping network which halves the spacial dimension with each
+    block while doubling the number of channels, before building back up to the original
+    resolution.
 
     Attention operations occur after a certain number of downsampling steps
 
-    Downsampling is performed using 2x2 average pooling
-    Upsampling is performed using nearest neighbour
+    Downsampling is performed using 2x2 average pooling Upsampling is performed using
+    nearest neighbour
     """
 
     def __init__(
@@ -522,22 +482,17 @@ class UNet(nn.Module):
 
         # If there is a context input, have a network to embed it
         if ctxt_dim:
-            self.context_embedder = DenseNetwork(
-                inpt_dim=ctxt_dim,
-                **ctxt_embed_config,
-            )
+            self.context_embedder = DenseNetwork(inpt_dim=ctxt_dim, **ctxt_embed_config)
             emb_ctxt_size = self.context_embedder.outp_dim
         else:
             emb_ctxt_size = 0
 
         # The first and last conv layer sets up the starting channel size
         self.first_block = nn.Sequential(
-            conv_nd(dims, inpt_channels, start_channels, 1),
-            nn.SiLU(),
+            conv_nd(dims, inpt_channels, start_channels, 1), nn.SiLU()
         )
         self.last_block = nn.Sequential(
-            nn.SiLU(),
-            conv_nd(dims, start_channels, outp_channels, 1),
+            nn.SiLU(), conv_nd(dims, start_channels, outp_channels, 1)
         )
         if zero_out:
             self.last_block = zero_module(self.last_block)
@@ -640,7 +595,7 @@ class UNet(nn.Module):
 
         self.decoder_blocks = nn.ModuleList(decoder_blocks)
 
-    def forward(self, inpt: T.Tensor, ctxt: T.Tensor = None):
+    def forward(self, inpt: T.Tensor, ctxt: T.Tensor | None = None):
         """Forward pass of the network."""
 
         # Some context tensors come from labels and must match the same type as inpt

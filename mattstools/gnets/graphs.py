@@ -1,5 +1,4 @@
-"""Defines the graph object type and other operations specific to handing
-them."""
+"""Defines the graph object type and other operations specific to handing them."""
 from __future__ import annotations
 
 from typing import Iterable, _type_repr
@@ -97,8 +96,8 @@ class Graph:
 class GraphBatch(Graph):
     """A batch of graph objects.
 
-    Batching the nodes, globs, adjmat and mask are simple as they just
-    receive an extra batch dimension.
+    Batching the nodes, globs, adjmat and mask are simple as they just receive an extra
+    batch dimension.
 
     Batching the edges however requires more steps as the edges are in compressed form
     This means that only the nonzero edges in the graph are stored such that
@@ -111,8 +110,7 @@ class GraphBatch(Graph):
         return self.nodes.dtype
 
     def __getitem__(self, idx: int) -> Graph:
-        """Retrieve a particular graph from within the graph batch using an
-        index."""
+        """Retrieve a particular graph from within the graph batch using an index."""
 
         # Work out the indexes of the edge tensor which is compressed
         start = self.adjmat[:idx].sum()
@@ -127,8 +125,7 @@ class GraphBatch(Graph):
         )
 
     def dim(self) -> tuple[int, list]:
-        """Return the dimensions of the graph object starting with the batch
-        length."""
+        """Return the dimensions of the graph object starting with the batch length."""
         return (
             len(self),
             [self.edges.shape[-1], self.nodes.shape[-1], self.globs.shape[-1]],
@@ -146,9 +143,10 @@ class GraphBatch(Graph):
         return result
 
     def batch_select(self, b_mask: T.BoolTensor) -> GraphBatch:
-        """Returns a batched graph object made from the subset of another
-        batched graph This function needs to exist to account for the edges
-        which have no batch dimension.
+        """Return a batched graph object made from the subset of another.
+
+        This function needs to exist to account for the edges which have no batch
+        dimension.
 
         Operation returns a new graph batch
         """
@@ -164,8 +162,8 @@ class GraphBatch(Graph):
         )
 
     def batch_replace(self, graph_2: GraphBatch, b_mask: T.BoolTensor) -> None:
-        """Replace samples with those from graph_2 following a mask Number of
-        graphs in graph_2 must be smaller!
+        """Replace samples with those from graph_2 following a mask Number of graphs in
+        graph_2 must be smaller!
 
         Operation modifies the current graph batch
         """
@@ -194,16 +192,10 @@ class GraphBatch(Graph):
 
 
 def gcoll(batch: Iterable) -> GraphBatch | tuple:
-    """A custom collation function which allows us to batch together multiple
-    graphs.
+    """Batch together multiple graphs.
 
-    - Wraps the pytorch default collation function to allow for all the memory tricks
-    - Looks at the first element of the batch for instructions on what to do
-
-    args:
-        batch: An iterable list/tuple containing graphs or other iterables of graphs
-    returns:
-        Batched graph object
+    Wraps the pytorch default collation function to allow for all the memory tricks.
+    Looks at the first element of the batch for instructions on what to do.
     """
 
     # Get the first element object type
@@ -232,17 +224,19 @@ def blank_graph_batch(
 ) -> GraphBatch:
     """Create an empty graph of a certain shape.
 
-    - All attributes are zeros
-    - All masks/adjmats are false
+    All attributes are zeros.
+    All masks/adjmats are false.
 
-    args:
-        dim: The dimensions of the desired graph [e,n,g]
-        max_nodes: The max number of nodes to allow for
-        b_size: The batch dimension
-    kwargs:
-        dev: The device on which to store the graph
-    returns:
-        Empty graph object
+    Parameters
+    ----------
+    dim:
+        The dimensions of the desired graph [e,n,g]
+    max_nodes:
+        The max number of nodes to allow for
+    b_size:
+        The batch dimension
+    dev:
+        The device on which to store the graph
     """
     dev = sel_device(dev)
     edges = T.zeros((0, dim[0]), device=dev)
