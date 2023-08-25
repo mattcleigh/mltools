@@ -6,9 +6,10 @@ import math
 import torch as T
 import torch.nn as nn
 from pyparsing import Mapping
+from torchdiffeq import odeint
 from tqdm import trange
 
-from .torch_utils import append_dims
+from .torch_utils import GradsOff, append_dims
 
 
 @T.no_grad()
@@ -49,8 +50,72 @@ def multistep_consistency_sampling(
     return x
 
 
+@T.no_grad()
+def log_likelihood(
+    model: nn.Module,
+    x: T.Tensor,
+    sigmas: T.Tensor,
+    extra_args: dict | None = None,
+    atol: float = 1e-3,
+    rtol: float = 5e-2,
+    solver: str = "dopri5",
+    mask: T.Tensor | int | float = 1.0,
+) -> tuple:
+    """Calculate the liklihood of a batch of data given a diffusion model."""
+
+    # Default dict arguments
+    extra_args = extra_args or {}
+
+    # Some starting variables
+    fevals = 0
+    sigma_shape = x.new_ones([x.shape[0]])
+
+    # Define the funciton for calculating the gradient and trace at each step
+    def ode_fn(sigma: float, x: tuple) -> tuple:
+        nonlocal fevals
+        with T.enable_grad():
+            # The solver input is actually a tuple of tensors, the first is the data
+            x = x[0].detach().requires_grad_()
+
+            # Like when solving get the denoised output and use to define gradient
+            with GradsOff(model):
+                denoised = model(x, sigma * sigma_shape, **extra_args)
+            d = to_d(x, sigma, denoised) * mask
+
+            # Increment the number of function evaluations used in the solver
+            fevals += 1
+
+            # Get the trace estimate using the Skilling-Hutchinson method
+            eps = T.randint_like(x, 2) * 2 - 1
+            grad = T.autograd.grad(d, x, eps)[0] * eps
+            d_ll = grad.flatten(1).sum(1)
+
+        # Return both the gradient for the ode and the trace for the log-liklihood
+        return d.detach(), d_ll
+
+    # The input to ode_fn is the data and the starting liklihood (0)
+    x_min = x, x.new_zeros([x.shape[0]])
+
+    # Run the solver using the above equation
+    sol = odeint(
+        ode_fn,
+        x_min,
+        sigmas,
+        atol=atol,
+        rtol=rtol,
+        method=solver,
+    )
+
+    # Pull out the final estimate and the total log lik from the solution
+    latent, delta_ll = sol[0][-1], sol[1][-1]
+    ll_prior = T.distributions.Normal(0, sigmas[-1]).log_prob(latent) * mask
+    ll_prior = ll_prior.flatten(1).sum(1)
+
+    return ll_prior + delta_ll, {"fevals": fevals}
+
+
 def logsumexp(x: T.Tensor, do_max: bool = True) -> T.Tensor:
-    """Apply the log sum exp trux for numerical precision.
+    """Apply the log sum exp trick for numerical precision.
 
     https://gregorygundersen.com/blog/2020/02/09/log-sum-exp/
     """
@@ -144,25 +209,31 @@ def one_step_heun(model, x, sigma_start, sigma_end, extra_args):
 
 
 def get_sigmas_karras(
-    t_max: float, t_min: float, n_steps: int = 100, rho: float = 7
+    sigma_min: float,
+    sigma_max: float,
+    n_steps: int = 100,
+    rho: float = 7,
 ) -> T.Tensor:
     """Construct sigmas for the Karras et al schedule.
 
     Parameters
     ----------
-    t_max:
-        The maximum/starting time
-    t_min:
+    sigma_min:
         The minimum/final time
+    sigma_max:
+        The maximum/starting time
     n_steps:
         The number of time steps
     p:
         The degree of curvature, p=1 equal step size, recommened 7 for diffusion
+    ramp_min:
+        The min of the support for this function
+    ramp_max:
+        The max of the support for this function
     """
     ramp = T.linspace(0, 1, n_steps)
-    inv_rho = 1 / rho
-    max_inv_rho = t_max**inv_rho
-    min_inv_rho = t_min**inv_rho
+    max_inv_rho = sigma_max ** (1 / rho)
+    min_inv_rho = sigma_min ** (1 / rho)
     return (max_inv_rho + ramp * (min_inv_rho - max_inv_rho)) ** rho
 
 
@@ -174,7 +245,7 @@ def sample_heun(
     do_heun_step: bool = True,
     keep_all: bool = False,
     extra_args: Mapping | None = None,
-    disable: bool | None = None,
+    disable: bool | None = True,
 ) -> None:
     """Deterministic sampler using Heun's second order method.
 
@@ -250,7 +321,7 @@ def sample_stochastic_heun(
     s_tmax: float = 50.0,
     s_noise: float = 1.003,
     extra_args: Mapping | None = None,
-    disable: bool | None = None,
+    disable: bool | None = True,
 ) -> None:
     """Stochastic sampler using Heun's second order method.
 

@@ -473,7 +473,7 @@ def plot_multi_correlations(
                     add_hist(
                         axes[row, column],
                         d[:, row],
-                        bins=bins,
+                        bins=b,
                         hist_kwargs=hist_kwargs[i],
                         err_kwargs=err_kwargs[i],
                         do_err=do_err,
@@ -643,7 +643,7 @@ def plot_multi_hists_2(
     # Cycle through the datalist and ensure that they are 2D, as each column is an axis
     for data_idx in range(len(data_list)):
         if data_list[data_idx].ndim < 2:
-            data_list[data_idx] = data_list[data_idx].unsqueeze(-1)
+            data_list[data_idx] = np.expand_dims(data_list[data_idx], -1)
 
     # Check the number of histograms to plot
     n_data = len(data_list)

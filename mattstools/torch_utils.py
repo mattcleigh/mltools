@@ -123,6 +123,8 @@ def get_act(name: str) -> nn.Module:
         return nn.Softmax()
     if name == "sigmoid":
         return nn.Sigmoid()
+    if name == "identity" or name == "none":
+        return nn.Identity()
     raise ValueError("No activation function with name: ", name)
 
 
