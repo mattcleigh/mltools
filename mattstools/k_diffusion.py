@@ -142,6 +142,7 @@ def one_step_heun(model, x, sigma_start, sigma_end, extra_args):
 
     return x
 
+
 def get_sigmas_karras(
     sigma_min: float,
     sigma_max: float,
