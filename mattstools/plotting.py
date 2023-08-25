@@ -473,7 +473,7 @@ def plot_multi_correlations(
                     add_hist(
                         axes[row, column],
                         d[:, row],
-                        bins=bins,
+                        bins=b,
                         hist_kwargs=hist_kwargs[i],
                         err_kwargs=err_kwargs[i],
                         do_err=do_err,

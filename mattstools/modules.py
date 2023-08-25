@@ -164,7 +164,9 @@ class DenseNetwork(nn.Module):
         do_res: bool = False,
         ctxt_in_inpt: bool = True,
         ctxt_in_hddn: bool = False,
+        ctxt_in_out: bool = False,
         do_bayesian: bool = False,
+        hddn_init_zeros: bool = False,
         output_init_zeros: bool = False,
         use_bias: bool = True,
     ) -> None:
@@ -204,9 +206,13 @@ class DenseNetwork(nn.Module):
         ctxt_in_inpt : bool, optional
             Include the ctxt tensor in the input block, by default True
         ctxt_in_hddn : bool, optional
-            Include the ctxt tensor in the hidden blocks, by default False
+            Include the ctxt tensor in the hddn blocks, by default False
+        ctxt_in_out : bool, optional
+            Include the ctxt tensor in the output blocks, by default False
         do_bayesian : bool, optional
             Create the network with bayesian linear layers, by default False
+        hddn_init_zeros : bool, optional
+            Initialise the final hidden layer weights as zeros. Good for resnet.
         output_init_zeros : bool, optional
             Initialise the output layer weights as zeros
         use_bias: bool, optional
@@ -216,13 +222,13 @@ class DenseNetwork(nn.Module):
         ------
         ValueError
             If the network was given a context input but both ctxt_in_inpt and
-            ctxt_in_hddn were False
+            ctxt_in_all were False
         """
         super().__init__()
 
         # Check that the context is used somewhere
         if ctxt_dim:
-            if not ctxt_in_hddn and not ctxt_in_inpt:
+            if not ctxt_in_inpt and not ctxt_in_hddn and not ctxt_in_out:
                 raise ValueError("Network has context inputs but nowhere to use them!")
 
         # We store the input, hddn (list), output, and ctxt dims to query them later
@@ -268,6 +274,7 @@ class DenseNetwork(nn.Module):
                         do_res=do_res,
                         do_bayesian=do_bayesian,
                         use_bias=use_bias,
+                        init_zeros=hddn_init_zeros,
                     )
                 )
 
@@ -276,6 +283,7 @@ class DenseNetwork(nn.Module):
             self.output_block = MLPBlock(
                 inpt_dim=self.hddn_dim[-1],
                 outp_dim=self.outp_dim,
+                ctxt_dim=self.ctxt_dim if ctxt_in_out else 0,
                 act=act_o,
                 do_bayesian=do_bayesian,
                 init_zeros=output_init_zeros,
@@ -741,8 +749,8 @@ class IterativeNormLayer(nn.Module):
         d = inpt - self.means
         self.n += m
         self.means += (d / self.n).mean(dim=(0, *self.extra_dims), keepdim=True) * m
-        delta2 = inpt - self.means
-        self.m2 += (d * delta2).mean(dim=(0, *self.extra_dims), keepdim=True) * m
+        d2 = inpt - self.means
+        self.m2 += (d * d2).mean(dim=(0, *self.extra_dims), keepdim=True) * m
         self.vars = self.m2 / self.n
 
 
@@ -753,7 +761,7 @@ class CosineEncodingLayer(nn.Module):
         self,
         inpt_dim: int,
         encoding_dim: int,
-        scheme: str = "exponential",
+        scheme: str = "exp",
         min_value: float | list | T.Tensor = 0.0,
         max_value: float | list | T.Tensor = 1.0,
         do_sin: bool = False,
@@ -807,7 +815,9 @@ class CosineEncodingLayer(nn.Module):
         # Create the frequencies to use
         freq_dim = encoding_dim // 2 if do_sin else encoding_dim
         freqs = T.arange(freq_dim).float().unsqueeze(-1)
-        if scheme == "exponential":
+        if scheme in ["exp", "exponential"]:
+            freqs = T.exp(freqs)
+        elif scheme == "pow":
             freqs = 2**freqs
         elif scheme == "linear":
             freqs = freqs + 1
@@ -819,9 +829,9 @@ class CosineEncodingLayer(nn.Module):
         """Throw a warning if the input to the layer will yeild degenerate outputs."""
 
         # Check to see if the inputs are within the bounds
-        if T.any(x > self.max_value):
+        if T.any(x > (self.max_value + 1e-4)):
             print("Warning! Passing values to CosineEncodingLayer encoding above max!")
-        if T.any(x < self.min_value):
+        if T.any(x < (self.min_value - 1e-4)):
             print("Warning! Passing values to CosineEncodingLayer encoding below min!")
 
     def forward(self, x: T.Tensor) -> T.Tensor:
@@ -829,7 +839,7 @@ class CosineEncodingLayer(nn.Module):
         self._check_bounds(x)
 
         # Scale the inputs between 0 and pi
-        x = (x + self.min_value) * math.pi / (self.max_value + self.min_value)
+        x = (x - self.min_value) * math.pi / (self.max_value - self.min_value)
 
         # Apply with the frequencies which broadcasts all inputs
         x = (x.unsqueeze(-2) * self.freqs).flatten(start_dim=-2)

@@ -30,10 +30,11 @@ def standard_job_array(
     time_hrs: int,
     mem_gb: int,
     opt_dict: Mapping,
+    vrap_per_gpu: int = 0,
+    gpu_type: str = "",
     use_dashes: bool = True,
     extra_slurm: str = "",
-) -> None:
-    """Create a standard gridjob array using the expected settings for the UNIGE HPC."""
+):
     # Calculate the total number of jobs to perform
     n_jobs = 1
     for key, vals in opt_dict.items():
@@ -52,7 +53,13 @@ def standard_job_array(
     f.write(f"#SBATCH --job-name={job_name}\n")
     f.write(f"#SBATCH --output={log_dir}/%A_%a.out\n")
     if n_gpus:
-        f.write(f"#SBATCH --gpus={n_gpus}\n")
+        s = "#SBATCH --gres=gpu"
+        if gpu_type:
+            s += f":{gpu_type}"
+        s += f":{n_gpus}"
+        if vrap_per_gpu:
+            s += f",VramPerGpu:{vrap_per_gpu}G"
+        f.write(f"{s}\n")
         f.write("#SBATCH --partition=shared-gpu,private-dpnc-gpu\n")
     else:
         f.write("#SBATCH --partition=shared-cpu,private-dpnc-cpu\n")
