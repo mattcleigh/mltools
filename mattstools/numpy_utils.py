@@ -170,7 +170,7 @@ def empty_0dim_like(inpt: np.ndarray) -> np.ndarray:
     if isinstance(all_but_last, int):
         all_but_last = [all_but_last]
 
-    return np.empty((*all_but_last, 0))
+    return np.empty((*all_but_last, 0), dtype=inpt.dtype)
 
 
 def group_by(a: np.ndarray) -> np.ndarray:
