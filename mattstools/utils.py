@@ -5,7 +5,7 @@ import json
 import math
 import operator
 from functools import reduce
-from itertools import islice
+from itertools import chain, count, islice
 from pathlib import Path
 from typing import Any, Generator, Iterable, Mapping, Union
 
@@ -34,7 +34,9 @@ def standard_job_array(
     gpu_type: str = "",
     use_dashes: bool = True,
     extra_slurm: str = "",
-):
+) -> None:
+    """Save a slurm submission file for running on the baobab cluster."""
+
     # Calculate the total number of jobs to perform
     n_jobs = 1
     for key, vals in opt_dict.items():
@@ -279,3 +281,22 @@ def batched(iterable: Iterable, n: int) -> Generator:
     it = iter(iterable)
     while batch := tuple(islice(it, n)):
         yield batch
+
+
+def evenly_spaced(*iterables) -> list:
+    """Return an evenly spaced list from a raggest nest.
+
+    Taken from: https://stackoverflow.com/a/19293603.
+
+    >>> evenly_spaced(range(10), list('abc'))
+    [0, 1, 'a', 2, 3, 4, 'b', 5, 6, 7, 'c', 8, 9]
+    """
+    return [
+        item[1]
+        for item in sorted(
+            chain.from_iterable(
+                zip(count(start=1.0 / (len(seq) + 1), step=1.0 / (len(seq) + 1)), seq)
+                for seq in iterables
+            )
+        )
+    ]
