@@ -980,6 +980,7 @@ class FullTransformerEncoder(nn.Module):
         node_embd_config = deepcopy(node_embd_config) or {}
         outp_embd_config = deepcopy(outp_embd_config) or {}
         edge_embd_config = deepcopy(edge_embd_config) or {}
+        ctxt_embd_config = deepcopy(ctxt_embd_config) or {}
 
         # By default we would like the dense networks in this model to double the width
         if "model_dim" in te_config.keys():
