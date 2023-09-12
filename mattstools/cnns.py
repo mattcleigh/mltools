@@ -191,11 +191,13 @@ class ResNetBlock(ConditionedModule):
         return self.layers(inpt, ctxt) + self.skip_connection(inpt)
 
     def __str__(self) -> str:
-        return (
-            f"ResNetBlock({self.inpt_channels}, {self.outp_channels}, {self.ctxt_dim})"
-        )
+        string = f"ResNetBlock({self.inpt_channels}, {self.outp_channels}"
+        if self.ctxt_dim:
+            string += f", ctxt={self.ctxt_dim}"
+        string += ")"
+        return string
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return str(self)
 
 
