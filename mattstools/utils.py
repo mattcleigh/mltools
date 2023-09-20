@@ -203,6 +203,12 @@ def remove_keys_starting_with(dic: dict, match: str) -> dict:
     return {key: val for key, val in dic.items() if key[: len(match)] != match}
 
 
+def insert_if_not_present(dictionary: dict, key: str, value: Any) -> None:
+    """Add an entry to a dictionary if it isnt already present."""
+    if key not in dictionary:
+        dictionary[key] = value
+
+
 def signed_angle_diff(angle1: Any, angle2: Any) -> Any:
     """Calculate diff between two angles reduced to the interval of [-pi, pi]"""
     return (angle1 - angle2 + math.pi) % (2 * math.pi) - math.pi
