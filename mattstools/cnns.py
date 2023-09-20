@@ -7,7 +7,7 @@ from typing import Mapping, Optional
 import numpy as np
 import torch as T
 import torch.nn as nn
-from torch.nn.functional import group_norm, scaled_dot_product_attention
+from torch.nn.functional import group_norm, scaled_dot_product_attention, interpolate
 
 from .modules import DenseNetwork
 from .torch_utils import append_dims, get_act
@@ -96,7 +96,7 @@ class AdaGN(ConditionedModule):
         self.c_out = c_out
         self.num_groups = nrm_groups
         self.eps = eps
-        self.layer = zero_module(nn.Linear(ctxt_dim, c_out * 2))
+        self.layer = nn.Linear(ctxt_dim, c_out * 2)
 
     def forward(self, inpt: T.Tensor, ctxt: T.Tensor) -> T.Tensor:
         """Apply conditioning to inputs."""
@@ -419,6 +419,7 @@ class UNet(nn.Module):
         inpt_channels: int,
         outp_channels: int,
         ctxt_dim: int = 0,
+        ctxt_img_channels: int = 0,
         min_size: int = 8,
         max_depth: int = 8,
         n_blocks_per_layer: int = 1,
@@ -429,6 +430,7 @@ class UNet(nn.Module):
         resnet_config: Optional[Mapping] = None,
         attn_config: Optional[Mapping] = None,
         ctxt_embed_config: Optional[Mapping] = None,
+        use_ctxt_embedder: bool = True,
     ) -> None:
         """
         Parameters
@@ -441,6 +443,8 @@ class UNet(nn.Module):
             The number of channels in the output image.
         ctxt_dim : int, optional
             The dimension of the context input. Default is 0.
+        ctxt_img_channels : int, optional
+            The number of channels from the context image. Default is 0.
         min_size : int, optional
             The minimum size of the spacial dimensions. Default is 8.
         max_depth : int, optional
@@ -462,6 +466,8 @@ class UNet(nn.Module):
             Configuration for attention blocks. Default is None.
         ctxt_embed_config : Optional[Mapping], optional
             Configuration for context embedding network. Default is None.
+        use_ctxt_embedder: bool
+            Use a network to embed the context
         """
         super().__init__()
 
@@ -475,6 +481,7 @@ class UNet(nn.Module):
         self.inpt_channels = inpt_channels
         self.outp_channels = outp_channels
         self.ctxt_dim = ctxt_dim
+        self.ctxt_img_channels = ctxt_img_channels
 
         # The downsampling layer and upscaling layers (not learnable)
         dims = len(inpt_size)
@@ -482,16 +489,21 @@ class UNet(nn.Module):
         self.down_sample = avg_pool_nd(dims, kernel_size=stride, stride=stride)
         self.up_sample = nn.Upsample(scale_factor=2)
 
-        # If there is a context input, have a network to embed it
+        # If there is a context input, maybe you want a network to embed it
         if ctxt_dim:
-            self.context_embedder = DenseNetwork(inpt_dim=ctxt_dim, **ctxt_embed_config)
-            emb_ctxt_size = self.context_embedder.outp_dim
+            if use_ctxt_embedder:
+                self.context_embedder = DenseNetwork(inpt_dim=ctxt_dim, **ctxt_embed_config)
+                emb_ctxt_size = self.context_embedder.outp_dim
+            else:
+                self.context_embedder = nn.Identity()
+                emb_ctxt_size = ctxt_dim
         else:
             emb_ctxt_size = 0
 
         # The first and last conv layer sets up the starting channel size
         self.first_block = nn.Sequential(
-            conv_nd(dims, inpt_channels, start_channels, 1), nn.SiLU()
+            conv_nd(dims, inpt_channels + ctxt_img_channels, start_channels, 1),
+            nn.SiLU()
         )
         self.last_block = nn.Sequential(
             nn.SiLU(), conv_nd(dims, start_channels, outp_channels, 1)
@@ -503,7 +515,7 @@ class UNet(nn.Module):
         inp_size = [np.array(inpt_size)]
         out_size = [np.array(inpt_size) // 2]
         inp_c = [start_channels]
-        out_c = [start_channels * 2]
+        out_c = [min(start_channels * 2, max_channels)]
 
         # The encoder blocks are ResNet->(attn)->Downsample
         encoder_blocks = []
@@ -597,7 +609,11 @@ class UNet(nn.Module):
 
         self.decoder_blocks = nn.ModuleList(decoder_blocks)
 
-    def forward(self, inpt: T.Tensor, ctxt: T.Tensor | None = None):
+    def forward(self,
+            inpt: T.Tensor,
+            ctxt: T.Tensor | None = None,
+            ctxt_img: T.Tensor | None = None
+        ) -> T.Tensor:
         """Forward pass of the network."""
 
         # Some context tensors come from labels and must match the same type as inpt
@@ -609,7 +625,14 @@ class UNet(nn.Module):
             log.warning("Input image does not match the training sample!")
 
         # Embed the context tensor
-        ctxt = self.context_embedder(ctxt)
+        if self.ctxt_dim:
+            ctxt = self.context_embedder(ctxt)
+
+        # Combine the input with the context image
+        if self.ctxt_img_channels:
+            if ctxt_img.shape != inpt.shape:
+                ctxt_img = interpolate(ctxt_img, inpt.shape[-2:])
+            inpt = T.cat([inpt, ctxt_img], 1)
 
         # Pass through the first convolution layer to embed the channel dimension
         inpt = self.first_block(inpt)
