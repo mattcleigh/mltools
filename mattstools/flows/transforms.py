@@ -32,7 +32,7 @@ DEFAULT_MIN_BIN_HEIGHT = 1e-3
 DEFAULT_MIN_DERIVATIVE = 1e-3
 
 
-def change_kwargs_for_made(old_kwargs):
+def change_kwargs_for_made(old_kwargs: Mapping) -> tuple:
     """Convert a dictionary of keyword arguments.
 
     Used for configuring kwargs made for a mattstools DenseNetwork to one that can
@@ -71,6 +71,14 @@ def change_kwargs_for_made(old_kwargs):
 def stacked_ctxt_flow(xz_dim: int, ctxt_dim: int, nstacks: int, transform: partial):
     """Return a composite transform given the config."""
     return CompositeTransform([transform(xz_dim, ctxt_dim) for _ in range(nstacks)])
+
+
+def firsthalf_secondhalf_even_odd(xz_dim: int, idx: int) -> T.Tensor:
+    """Return the mask for a coupling flow based on idx of the block."""
+    if idx % 4 < 2:
+        return T.abs(T.round(T.arange(xz_dim) / (xz_dim - 1)).int() - idx % 2)
+    else:
+        return (T.arange(xz_dim) % 2 == idx % 2).int()
 
 
 def stacked_norm_flow(
@@ -127,7 +135,7 @@ def stacked_norm_flow(
     # For coupling layers we need to define a custom network maker function
     elif param_func == "cplng":
 
-        def net_mkr(inpt, outp):
+        def net_mkr(inpt, outp) -> DenseNetwork:
             return DenseNetwork(inpt, outp, **net_kwargs)
 
     # Start the list of transforms out as an empty list
@@ -155,8 +163,8 @@ def stacked_norm_flow(
 
         # For coupling layers
         elif param_func == "cplng":
-            # Alternate between masking first half and second half (rounded up)
-            mask = T.abs(T.round(T.arange(xz_dim) / (xz_dim - 1)).int() - i % 2)
+            # Alternate the masking
+            mask = firsthalf_secondhalf_even_odd(xz_dim, i)
 
             if invrt_func == "aff":
                 trans_list.append(AffineCouplingTransform(mask, net_mkr))
