@@ -55,14 +55,14 @@ def standard_job_array(
     f.write(f"#SBATCH --job-name={job_name}\n")
     f.write(f"#SBATCH --output={log_dir}/%A_%a.out\n")
     if n_gpus:
-        s = "#SBATCH --gres=gpu"
+        f.write("#SBATCH --partition=shared-gpu,private-dpnc-gpu\n")
+        s = "#SBATCH --gpus="
         if gpu_type:
-            s += f":{gpu_type}"
-        s += f":{n_gpus}"
+            s += f"{gpu_type}:"
+        s += f"{n_gpus}"
         if vrap_per_gpu:
             s += f",VramPerGpu:{vrap_per_gpu}G"
         f.write(f"{s}\n")
-        f.write("#SBATCH --partition=shared-gpu,private-dpnc-gpu\n")
     else:
         f.write("#SBATCH --partition=shared-cpu,private-dpnc-cpu\n")
 

@@ -543,7 +543,7 @@ def plot_multi_hists_2(
     bins: Union[list, str, partial] = "auto",
     logy: bool = False,
     y_label: Optional[str] = None,
-    ylim: Optional[list] = None,
+    ylims: list | tuple | None = None,
     ypad: float = 1.5,
     rat_ylim: tuple = (0, 2),
     rat_label: Optional[str] = None,
@@ -556,6 +556,7 @@ def plot_multi_hists_2(
     incl_overflow: bool = True,
     incl_underflow: bool = True,
     do_ratio_to_first: bool = False,
+    axis_callbacks: list[Callable] | None = None,
     return_fig: bool = False,
     return_img: bool = False,
 ) -> Union[plt.Figure, None]:
@@ -588,8 +589,8 @@ def plot_multi_hists_2(
         If we should use the log in the y-axis
     y_label:
         Label for the y axis of the plots
-    ylim:
-        The y limits for all plots
+    ylims:
+        The y limits for all plots, should be a tuple per plot
     ypad:
         The amount by which to pad the whitespace above the plots
     rat_ylim:
@@ -639,6 +640,10 @@ def plot_multi_hists_2(
         extra_text = len(col_labels) * [extra_text]
     if not isinstance(legend_kwargs, list):
         legend_kwargs = len(col_labels) * [legend_kwargs]
+    if not isinstance(ylims, list):
+        ylims = len(col_labels) * [ylims]
+    if not isinstance(axis_callbacks, list):
+        axis_callbacks = len(col_labels) * [axis_callbacks]
 
     # Cycle through the datalist and ensure that they are 2D, as each column is an axis
     for data_idx in range(len(data_list)):
@@ -810,8 +815,8 @@ def plot_multi_hists_2(
         # Y axis
         if logy:
             axes[0, ax_idx].set_yscale("log")
-        if ylim is not None:
-            axes[0, ax_idx].set_ylim(*ylim)
+        if ylims[ax_idx] is not None:
+            axes[0, ax_idx].set_ylim(*ylims[ax_idx])
         else:
             _, ylim2 = axes[0, ax_idx].get_ylim()
             if logy:
@@ -847,6 +852,10 @@ def plot_multi_hists_2(
         if do_legend:
             lk = legend_kwargs[ax_idx] or {}
             axes[0, ax_idx].legend(**lk)
+
+        # Any final callbacks to execute on the axis
+        if axis_callbacks[ax_idx] is not None:
+            axis_callbacks[ax_idx](fig, axes[0, ax_idx])
 
     # Final figure layout
     fig.tight_layout()
