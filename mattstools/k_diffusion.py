@@ -306,7 +306,9 @@ def sample_heun(
         if keep_all:
             all_stages.append(x)
 
-    return x, all_stages
+    if keep_all:
+        return x, all_stages
+    return x
 
 
 @T.no_grad()
@@ -407,4 +409,6 @@ def sample_stochastic_heun(
         if keep_all:
             all_stages.append(x)
 
-    return x, all_stages
+    if keep_all:
+        return x, all_stages
+    return x
