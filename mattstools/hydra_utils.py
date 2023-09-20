@@ -42,7 +42,7 @@ def reload_original_config(
         )
 
     if set_wandb_resume:
-        log.info(f"Attempting to set the same WandB ID to continue logging run")
+        log.info("Attempting to set the same WandB ID to continue logging run")
         if hasattr(orig_cfg, "loggers"):
             if hasattr(orig_cfg.loggers, "wandb"):
                 orig_cfg.loggers.wandb.resume = True

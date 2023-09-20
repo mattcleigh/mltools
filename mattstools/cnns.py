@@ -7,7 +7,7 @@ from typing import Mapping, Optional
 import numpy as np
 import torch as T
 import torch.nn as nn
-from torch.nn.functional import group_norm, scaled_dot_product_attention, interpolate
+from torch.nn.functional import group_norm, interpolate, scaled_dot_product_attention
 
 from .modules import DenseNetwork
 from .torch_utils import append_dims, get_act
@@ -492,7 +492,9 @@ class UNet(nn.Module):
         # If there is a context input, maybe you want a network to embed it
         if ctxt_dim:
             if use_ctxt_embedder:
-                self.context_embedder = DenseNetwork(inpt_dim=ctxt_dim, **ctxt_embed_config)
+                self.context_embedder = DenseNetwork(
+                    inpt_dim=ctxt_dim, **ctxt_embed_config
+                )
                 emb_ctxt_size = self.context_embedder.outp_dim
             else:
                 self.context_embedder = nn.Identity()
@@ -503,7 +505,7 @@ class UNet(nn.Module):
         # The first and last conv layer sets up the starting channel size
         self.first_block = nn.Sequential(
             conv_nd(dims, inpt_channels + ctxt_img_channels, start_channels, 1),
-            nn.SiLU()
+            nn.SiLU(),
         )
         self.last_block = nn.Sequential(
             nn.SiLU(), conv_nd(dims, start_channels, outp_channels, 1)
@@ -609,11 +611,12 @@ class UNet(nn.Module):
 
         self.decoder_blocks = nn.ModuleList(decoder_blocks)
 
-    def forward(self,
-            inpt: T.Tensor,
-            ctxt: T.Tensor | None = None,
-            ctxt_img: T.Tensor | None = None
-        ) -> T.Tensor:
+    def forward(
+        self,
+        inpt: T.Tensor,
+        ctxt: T.Tensor | None = None,
+        ctxt_img: T.Tensor | None = None,
+    ) -> T.Tensor:
         """Forward pass of the network."""
 
         # Some context tensors come from labels and must match the same type as inpt
