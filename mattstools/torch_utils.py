@@ -402,21 +402,21 @@ def ctxt_from_mask(context: Union[list, T.Tensor], mask: T.BoolTensor) -> T.Tens
         A mask which determines the size and sampling of the context
     """
 
-    # Get the expanded veiw sizes (Use shape[0] not len as it is ONNX safe!)
+    # Get the expanded view sizes (Use shape[0] not len as it is ONNX safe!)
     b_size = mask.shape[0]
     new_dims = (len(mask.shape) - 1) * [1]
-    veiw_size = (b_size, *new_dims, -1)  # Must be: (b, 1, ..., 1, features)
+    view_size = (b_size, *new_dims, -1)  # Must be: (b, 1, ..., 1, features)
     ex_size = (*mask.shape, -1)
 
     # If there is only one context tensor
     if not isinstance(context, list):
-        return context.view(veiw_size).expand(ex_size)[mask]
+        return context.view(view_size).expand(ex_size)[mask]
 
     # For multiple context tensors
     all_context = []
     for ctxt in context:
         if ctxt is not None:
-            all_context.append(ctxt.view(veiw_size).expand(ex_size)[mask])
+            all_context.append(ctxt.view(view_size).expand(ex_size)[mask])
     return smart_cat(all_context)
 
 

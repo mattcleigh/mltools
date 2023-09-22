@@ -30,10 +30,10 @@ def reload_original_config(
     Will also set the chkpt_dir to the latest version of the last or best checkpoint
     """
 
-    # Load the original config found in the the file directorys
+    log.info(f"Looking for previous job config in {path}")
     orig_cfg = OmegaConf.load(Path(path, file_name))
 
-    # Get the latest updated checkpoint with the prefix last or best
+    log.info(f"Looking for checkpoints in folder matching {ckpt_flag}")
     if set_ckpt_path:
         orig_cfg.ckpt_path = str(
             sorted(
@@ -41,8 +41,8 @@ def reload_original_config(
             )[-1]
         )
 
-    # Set the wandb logger ID to allow resuming the same WandB job
     if set_wandb_resume:
+        log.info("Attempting to set the same WandB ID to continue logging run")
         if hasattr(orig_cfg, "loggers"):
             if hasattr(orig_cfg.loggers, "wandb"):
                 orig_cfg.loggers.wandb.resume = True

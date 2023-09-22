@@ -209,25 +209,31 @@ def one_step_heun(model, x, sigma_start, sigma_end, extra_args):
 
 
 def get_sigmas_karras(
-    t_max: float, t_min: float, n_steps: int = 100, rho: float = 7
+    sigma_min: float,
+    sigma_max: float,
+    n_steps: int = 100,
+    rho: float = 7,
 ) -> T.Tensor:
     """Construct sigmas for the Karras et al schedule.
 
     Parameters
     ----------
-    t_max:
-        The maximum/starting time
-    t_min:
+    sigma_min:
         The minimum/final time
+    sigma_max:
+        The maximum/starting time
     n_steps:
         The number of time steps
     p:
         The degree of curvature, p=1 equal step size, recommened 7 for diffusion
+    ramp_min:
+        The min of the support for this function
+    ramp_max:
+        The max of the support for this function
     """
     ramp = T.linspace(0, 1, n_steps)
-    inv_rho = 1 / rho
-    max_inv_rho = t_max**inv_rho
-    min_inv_rho = t_min**inv_rho
+    max_inv_rho = sigma_max ** (1 / rho)
+    min_inv_rho = sigma_min ** (1 / rho)
     return (max_inv_rho + ramp * (min_inv_rho - max_inv_rho)) ** rho
 
 
@@ -239,7 +245,7 @@ def sample_heun(
     do_heun_step: bool = True,
     keep_all: bool = False,
     extra_args: Mapping | None = None,
-    disable: bool | None = None,
+    disable: bool | None = True,
 ) -> None:
     """Deterministic sampler using Heun's second order method.
 
@@ -300,7 +306,9 @@ def sample_heun(
         if keep_all:
             all_stages.append(x)
 
-    return x, all_stages
+    if keep_all:
+        return x, all_stages
+    return x
 
 
 @T.no_grad()
@@ -315,7 +323,7 @@ def sample_stochastic_heun(
     s_tmax: float = 50.0,
     s_noise: float = 1.003,
     extra_args: Mapping | None = None,
-    disable: bool | None = None,
+    disable: bool | None = True,
 ) -> None:
     """Stochastic sampler using Heun's second order method.
 
@@ -401,4 +409,6 @@ def sample_stochastic_heun(
         if keep_all:
             all_stages.append(x)
 
-    return x, all_stages
+    if keep_all:
+        return x, all_stages
+    return x
