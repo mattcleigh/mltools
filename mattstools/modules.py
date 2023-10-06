@@ -73,6 +73,7 @@ class MLPBlock(nn.Module):
         self.inpt_dim = inpt_dim
         self.outp_dim = outp_dim
         self.ctxt_dim = ctxt_dim
+        self.init_zeros = init_zeros
 
         # If this layer includes an additive residual connection
         self.do_res = do_res and (inpt_dim == outp_dim)
@@ -99,7 +100,7 @@ class MLPBlock(nn.Module):
 
             if act != "none":
                 self.block.append(get_act(act))
-            if nrm != "none" and not with_zeros:  # Dont norm after just using zeros
+            if nrm != "none":  # and not with_zeros:  # Dont norm after just using zeros
                 self.block.append(get_nrm(nrm, outp_dim))
             if drp > 0:
                 self.block.append(nn.Dropout(drp))
@@ -133,8 +134,11 @@ class MLPBlock(nn.Module):
         string = str(self.inpt_dim)
         if self.ctxt_dim:
             string += f"({self.ctxt_dim})"
-        string += "->"
-        string += "->".join([str(b).split("(", 1)[0] for b in self.block])
+        for b in self.block:
+            string += "->"
+            string += str(b).split("(", 1)[0]
+            if self.init_zeros and isinstance(b, nn.Linear):
+                string += "0"
         string += "->" + str(self.outp_dim)
         if self.do_res:
             string += "(add)"
