@@ -98,10 +98,13 @@ class MLPBlock(nn.Module):
                 if use_bias:
                     self.block[-1].bias.data.fill_(0)
 
+            # Add the activation layer
             if act != "none":
                 self.block.append(get_act(act))
             if nrm != "none":  # and not with_zeros:  # Dont norm after just using zeros
                 self.block.append(get_nrm(nrm, outp_dim))
+
+            # Add the dropout layer
             if drp > 0:
                 self.block.append(nn.Dropout(drp))
 
@@ -171,6 +174,7 @@ class DenseNetwork(nn.Module):
         ctxt_in_hddn: bool = False,
         ctxt_in_out: bool = False,
         do_bayesian: bool = False,
+        inpt_init_zeros: bool = False,
         hddn_init_zeros: bool = False,
         output_init_zeros: bool = False,
         use_bias: bool = True,
