@@ -539,7 +539,10 @@ class UNet(nn.Module):
             if max(inp_size[-1]) <= attn_below:
                 lvl_layers.append(
                     MultiHeadedAttentionBlock(
-                        inpt_channels=out_c[-1], inpt_shape=inp_size[-1], **attn_config
+                        inpt_channels=out_c[-1],
+                        inpt_shape=inp_size[-1],
+                        ctxt_dim=emb_ctxt_size,
+                        **attn_config,
                     )
                 )
 
@@ -569,7 +572,10 @@ class UNet(nn.Module):
                     **resnet_config,
                 ),
                 MultiHeadedAttentionBlock(
-                    inpt_channels=out_c[-1], inpt_shape=out_size[-1], **attn_config
+                    inpt_channels=out_c[-1],
+                    inpt_shape=out_size[-1],
+                    ctxt_dim=emb_ctxt_size,
+                    **attn_config,
                 ),
                 ResNetBlock(
                     inpt_channels=out_c[-1],
@@ -602,6 +608,7 @@ class UNet(nn.Module):
                     MultiHeadedAttentionBlock(
                         inpt_channels=inp_c[depth],
                         inpt_shape=inp_size[depth],
+                        ctxt_dim=emb_ctxt_size,
                         **attn_config,
                     )
                 )
