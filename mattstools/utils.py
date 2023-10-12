@@ -205,6 +205,12 @@ def remove_keys_starting_with(dic: dict, match: str) -> dict:
     return {key: val for key, val in dic.items() if key[: len(match)] != match}
 
 
+def insert_if_not_present(dictionary: dict, key: str, value: Any) -> None:
+    """Add an entry to a dictionary if it isnt already present."""
+    if key not in dictionary:
+        dictionary[key] = value
+
+
 def signed_angle_diff(angle1: Any, angle2: Any) -> Any:
     """Calculate diff between two angles reduced to the interval of [-pi, pi]"""
     return (angle1 - angle2 + math.pi) % (2 * math.pi) - math.pi
@@ -301,3 +307,32 @@ def evenly_spaced(*iterables) -> list:
             )
         )
     ]
+
+
+def distribute(sequence):
+    """Enumerate the sequence evenly over the interval (0, 1).
+
+    >>> list(distribute('abc'))
+    [(0.25, 'a'), (0.5, 'b'), (0.75, 'c')]
+    """
+    m = len(sequence) + 1
+    for i, x in enumerate(sequence, 1):
+        yield i / m, x
+
+
+def intersperse(*sequences):
+    """Evenly intersperse the sequences.
+
+    Based on https://stackoverflow.com/a/19293603/4518341
+
+    >>> list(intersperse(range(10), 'abc'))
+    [0, 1, 'a', 2, 3, 4, 'b', 5, 6, 7, 'c', 8, 9]
+    >>> list(intersperse('XY', range(10), 'abc'))
+    [0, 1, 'a', 2, 'X', 3, 4, 'b', 5, 6, 'Y', 7, 'c', 8, 9]
+    >>> ''.join(intersperse('hlwl', 'eood', 'l r!'))
+    'hello world!'
+    """
+    distributions = map(distribute, sequences)
+    get0 = operator.itemgetter(0)
+    for _, x in sorted(chain(*distributions), key=get0):
+        yield x

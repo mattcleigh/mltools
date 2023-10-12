@@ -9,6 +9,8 @@ import torch as T
 import torch.nn as nn
 from torch.nn.functional import scaled_dot_product_attention, softmax
 
+from mattstools.mattstools.utils import insert_if_not_present
+
 from .modules import DenseNetwork
 
 # # Set the default operation to be flass attention
@@ -696,71 +698,14 @@ class TransformerVectorEncoder(nn.Module):
         return class_token
 
 
-class TransformerVectorDecoder(nn.Module):
-    """A type of transformer decoder which creates a sequence given a starting vector
-    and a desired mask.
-
-    Vector -> Sequence
-
-    Randomly initialises the q-sequence using the mask shape and a gaussian Uses the
-    input vector as 1-long kv-sequence in decoder layers
-
-    It is non resizing, so model_dim must be used for inputs and outputs
-    """
-
-    def __init__(
-        self,
-        model_dim: int = 64,
-        num_layers: int = 2,
-        mha_config: Mapping | None = None,
-        dense_config: Mapping | None = None,
-        ctxt_dim: int = 0,
-    ) -> None:
-        """
-        Args:
-            model_dim: Feature sieze for input, output, and all intermediate layers
-            num_layers: Number of decoder layers used
-            mha_config: Keyword arguments for the mha block
-            dense_config: Keyword arguments for the dense network in each layer
-        """
-        super().__init__()
-        self.model_dim = model_dim
-        self.num_layers = num_layers
-        self.layers = nn.ModuleList(
-            [
-                TransformerDecoderLayer(model_dim, mha_config, dense_config, ctxt_dim)
-                for _ in range(num_layers)
-            ]
-        )
-        self.final_norm = nn.LayerNorm(model_dim)
-
-    def forward(
-        self, vec: T.Tensor, mask: T.BoolTensor, ctxt: T.Tensor | None = None
-    ) -> T.Tensor:
-        """Pass the input through all layers sequentially."""
-        # Initialise the q-sequence randomly (adhere to mask)
-        q_seq = T.randn(
-            (*mask.shape, self.model_dim), device=vec.device, dtype=vec.dtype
-        ) * mask.unsqueeze(-1)
-
-        # Reshape the vector from batch x features to batch x seq=1 x features
-        vec = vec.unsqueeze(1)
-
-        # Pass through the decoder
-        for layer in self.layers:
-            q_seq = layer(q_seq, vec, q_mask=mask, ctxt=ctxt)
-        return self.final_norm(q_seq)
-
-
 class FullTransformerVectorEncoder(nn.Module):
     """A TVE with added input and output dense embedding networks.
 
     Sequence -> Vector
 
-    1)  Embeds the squence into a higher dimensional space based on model_dim     using
-    a dense network. 2)  If there are edge features these are projected into space =
-    n_heads         This is a very optional step which most will want to ignore but it
-    is what ParT used!
+    1)  Embeds the squence into a higher dimensional space based on model_dim using a
+    dense network. 2)  If there are edge features these are projected into space =
+    n_heads     This is optional but it is what ParT used!
     https://arxiv.org/abs/2202.03772
     3)  Then it passes these through a TVE to get a single vector output
     4)  Finally is passes the vector through an embedding network
@@ -776,6 +721,7 @@ class FullTransformerVectorEncoder(nn.Module):
         node_embd_config: Mapping | None = None,
         outp_embd_config: Mapping | None = None,
         edge_embd_config: Mapping | None = None,
+        ctxt_embd_config: Mapping | None = None,
     ) -> None:
         """
         Args:
@@ -787,43 +733,47 @@ class FullTransformerVectorEncoder(nn.Module):
             node_embd_config: Keyword arguments for node dense embedder
             outp_embd_config: Keyword arguments for output dense embedder
             edge_embd_config: Keyword arguments for edge dense embedder
+            ctxt_embd_config: Keyword arguments for context embedder
         """
         super().__init__()
         self.inpt_dim = inpt_dim
         self.outp_dim = outp_dim
         self.ctxt_dim = ctxt_dim
         self.edge_dim = edge_dim
-        tve_config = deepcopy(tve_config) or {}
+        tve_config = deepcopy(tve_config) or {"dense_config": None}
         node_embd_config = deepcopy(node_embd_config) or {}
         outp_embd_config = deepcopy(outp_embd_config) or {}
         edge_embd_config = deepcopy(edge_embd_config) or {}
+        ctxt_embd_config = deepcopy(ctxt_embd_config) or {}
 
         # By default we would like the dense networks in this model to double the width
         if "model_dim" in tve_config.keys():
-            model_dim = tve_config["model_dim"]
-            hddn_dim = 2 * model_dim
-            if "hddn_dim" not in node_embd_config.keys():
-                node_embd_config["hddn_dim"] = hddn_dim
-            if "hddn_dim" not in edge_embd_config.keys():
-                edge_embd_config["hddn_dim"] = hddn_dim
-            if "hddn_dim" not in outp_embd_config.keys():
-                outp_embd_config["hddn_dim"] = hddn_dim
-            if "hddn_dim" not in tve_config["dense_config"].keys():
-                tve_config["dense_config"]["hddn_dim"] = hddn_dim
+            for d in [
+                node_embd_config,
+                edge_embd_config,
+                outp_embd_config,
+                ctxt_embd_config,
+                tve_config["dense_config"],
+            ]:
+                insert_if_not_present(d, "hddn_dim", 2 * tve_config["model_dim"])
+
+        # Initialise the context embedding network (optional)
+        if self.ctxt_dim:
+            self.ctxt_emdb = DenseNetwork(inpt_dim=self.ctxt_dim, **ctxt_embd_config)
+            self.ctxt_dim = self.ctxt_emdb.outp_dim
 
         # Initialise the TVE, the main part of this network
-        self.tve = TransformerVectorEncoder(**tve_config, ctxt_dim=ctxt_dim)
-        self.model_dim = self.tve.model_dim
+        self.tve = TransformerVectorEncoder(**tve_config, ctxt_dim=self.ctxt_dim)
 
         # Initialise all node (inpt) and vector (output) embedding network
         self.node_embd = DenseNetwork(
             inpt_dim=self.inpt_dim,
-            outp_dim=self.model_dim,
+            outp_dim=self.tve.model_dim,
             ctxt_dim=self.ctxt_dim,
             **node_embd_config,
         )
         self.outp_embd = DenseNetwork(
-            inpt_dim=self.model_dim,
+            inpt_dim=self.tve.model_dim,
             outp_dim=self.outp_dim,
             ctxt_dim=self.ctxt_dim,
             **outp_embd_config,
@@ -841,17 +791,22 @@ class FullTransformerVectorEncoder(nn.Module):
     def forward(
         self,
         seq: T.Tensor,
-        mask: Optional[T.BoolTensor] = None,
+        mask: T.Tensor | None = None,
         ctxt: T.Tensor | None = None,
-        attn_mask: Optional[T.BoolTensor] = None,
+        attn_mask: T.Tensor | None = None,
         attn_bias: T.Tensor | None = None,
         return_seq: bool = False,
-    ) -> Union[T.Tensor, tuple]:
+    ) -> T.Tensor | tuple:
         """Pass the input through all layers sequentially."""
+
+        # Embed the context information
+        if self.ctxt_dim:
+            ctxt = self.ctxt_emdb(ctxt)
+
         # Embed the sequence
         seq = self.node_embd(seq, ctxt)
 
-        # Embed the attention bias (edges, optional)
+        # Embed the attention bias
         if self.edge_dim:
             attn_bias = self.edge_embd(attn_bias, ctxt)
 
@@ -877,56 +832,59 @@ class FullTransformerVectorEncoder(nn.Module):
 
 
 class FullTransformerVectorDecoder(nn.Module):
-    """A TVD with added input and output embedding networks.
+    """Similar to a TVE but it taked in a vector and spits out a point cloud.
 
     Vector -> Sequence
 
-    1)  Embeds the input vector into a higher dimensional space based on model_dim using
-    a dense network. 2)  Passes this through a TVD to get a sequence output 3) Passes
-    the sequence through an embedding dense network with vector as context
+    1)  Concatenates the input vector and the context together and embeds. 2)  Uses the
+    combination as context for a TE with random nodes 3)  Final output projection back
+    to node space
     """
 
     def __init__(
         self,
         inpt_dim: int,
         outp_dim: int,
-        tvd_config: Mapping | None = None,
-        vect_embd_config: Mapping | None = None,
-        outp_embd_config: Mapping | None = None,
         ctxt_dim: int = 0,
+        te_config: Mapping | None = None,
+        outp_embd_config: Mapping | None = None,
+        inpt_embd_config: Mapping | None = None,
     ) -> None:
         """
         Args:
             inpt_dim: Dim. of the input vector
-            outp_dim: Dim. of each element of the output sequence
-            ctxt_dim: Dim. of the context vector to pass to the embedding nets
-            tvd_config: Keyword arguments to pass to the TVD constructor
-            vec_embd_config: Keyword arguments for vector dense embedder
-            out_embd_config: Keyword arguments for output node dense embedder
+            outp_dim: Dim. of of the final output point cloud
+            ctxt_dim: Dim. of the context vector
+            te_config: Keyword arguments to pass to the TVE constructor
+            node_embd_config: Keyword arguments for node dense embedder
+            inpt_embd_config: Keyword arguments for vector/context dense embedder
         """
         super().__init__()
         self.inpt_dim = inpt_dim
         self.outp_dim = outp_dim
         self.ctxt_dim = ctxt_dim
-        tvd_config = tvd_config or {}
-        vect_embd_config = vect_embd_config or {}
-        outp_embd_config = outp_embd_config or {}
+        te_config = deepcopy(te_config) or {"dense_config": None}
+        inpt_embd_config = deepcopy(inpt_embd_config) or {}
+        outp_embd_config = deepcopy(outp_embd_config) or {}
 
-        # Initialise the TVE, the main part of this network
-        self.tvd = TransformerVectorDecoder(**tvd_config)
-        self.model_dim = self.tvd.model_dim
+        # By default we would like the dense networks in this model to double the width
+        if "model_dim" in te_config.keys():
+            for d in [inpt_embd_config, outp_embd_config, te_config["dense_config"]]:
+                insert_if_not_present(d, "hddn_dim", 2 * te_config["model_dim"])
 
-        # Initialise all embedding networks
-        self.vec_embd = DenseNetwork(
-            inpt_dim=self.inpt_dim,
-            outp_dim=self.model_dim,
-            ctxt_dim=self.ctxt_dim,
-            **vect_embd_config,
+        # The input embedding layer which takes in the context
+        self.inpt_embd = DenseNetwork(
+            inpt_dim=self.inpt_dim, ctxt_dim=self.ctxt_dim, **inpt_embd_config
         )
+
+        # The transformer encoder which processes noise
+        self.te = TransformerEncoder(**te_config, ctxt_dim=self.inpt_embd.outp_dim)
+
+        # The output embedding network for the nodes
         self.outp_embd = DenseNetwork(
-            inpt_dim=self.model_dim,
+            inpt_dim=self.te.model_dim,
             outp_dim=self.outp_dim,
-            ctxt_dim=self.ctxt_dim,
+            ctxt_dim=self.inpt_embd.outp_dim,
             **outp_embd_config,
         )
 
@@ -934,11 +892,16 @@ class FullTransformerVectorDecoder(nn.Module):
         self, vec: T.Tensor, mask: T.BoolTensor, ctxt: T.Tensor | None = None
     ) -> T.Tensor:
         """Pass the input through all layers sequentially."""
-        vec = self.vec_embd(vec, ctxt=ctxt)
-        seq = self.tvd(vec, mask, ctxt=ctxt)
-        seq = self.outp_embd(seq, ctxt)
-        seq = T.masked_fill(seq, ~mask.unsqueeze(-1), 0)  # Force zero padding
-        return seq
+
+        # Embed the vector with the context
+        vec = self.inpt_embd(vec, ctxt)
+
+        # Initialise the sequence randomly
+        seq = T.randn((*mask.shape, self.te.model_dim), device=vec.device)
+
+        # Pass through the transformer encoder using the vector as context
+        seq = self.te(seq, mask=mask, ctxt=vec)
+        return self.outp_embd(seq, ctxt=vec)
 
 
 class FullTransformerEncoder(nn.Module):
@@ -976,23 +939,22 @@ class FullTransformerEncoder(nn.Module):
         self.outp_dim = outp_dim
         self.ctxt_dim = ctxt_dim
         self.edge_dim = edge_dim
-        te_config = deepcopy(te_config) or {}
+        te_config = deepcopy(te_config) or {"dense_config": None}
         node_embd_config = deepcopy(node_embd_config) or {}
         outp_embd_config = deepcopy(outp_embd_config) or {}
         edge_embd_config = deepcopy(edge_embd_config) or {}
         ctxt_embd_config = deepcopy(ctxt_embd_config) or {}
 
         # By default we would like the dense networks in this model to double the width
-        if "model_dim" in te_config.keys():
-            model_dim = te_config["model_dim"]
-            if "hddn_dim" not in node_embd_config.keys():
-                node_embd_config["hddn_dim"] = 2 * model_dim
-            if "hddn_dim" not in ctxt_embd_config.keys():
-                ctxt_embd_config["hddn_dim"] = 2 * model_dim
-            if "hddn_dim" not in outp_embd_config.keys():
-                outp_embd_config["hddn_dim"] = 2 * model_dim
-            if "hddn_dim" not in te_config["dense_config"].keys():
-                te_config["dense_config"]["hddn_dim"] = 2 * model_dim
+        model_dim = te_config["model_dim"]
+        for d in [
+            node_embd_config,
+            outp_embd_config,
+            edge_embd_config,
+            ctxt_embd_config,
+            te_config["dense_config"],
+        ]:
+            insert_if_not_present(d, "hddn_dim", 2 * model_dim)
 
         # Initialise the context embedding network (optional)
         if self.ctxt_dim:
@@ -1166,21 +1128,18 @@ class FullPerceiverEncoder(nn.Module):
         self.inpt_dim = inpt_dim
         self.outp_dim = outp_dim
         self.ctxt_dim = ctxt_dim
-        percv_config = deepcopy(percv_config) or {}
+        percv_config = deepcopy(percv_config) or {"dense_config": {}}
         node_embd_config = deepcopy(node_embd_config) or {}
         outp_embd_config = deepcopy(outp_embd_config) or {}
 
-        # By default we would like the dense networks in this model to double the width
         if "model_dim" in percv_config.keys():
-            model_dim = percv_config["model_dim"]
-            if "hddn_dim" not in node_embd_config.keys():
-                node_embd_config["hddn_dim"] = 2 * model_dim
-            if "hddn_dim" not in ctxt_embd_config.keys():
-                ctxt_embd_config["hddn_dim"] = 2 * model_dim
-            if "hddn_dim" not in outp_embd_config.keys():
-                outp_embd_config["hddn_dim"] = 2 * model_dim
-            if "hddn_dim" not in percv_config["dense_config"].keys():
-                percv_config["dense_config"]["hddn_dim"] = 2 * model_dim
+            for d in [
+                node_embd_config,
+                ctxt_embd_config,
+                outp_embd_config,
+                percv_config["dense_config"],
+            ]:
+                insert_if_not_present(d, "hddn_dim", 2 * percv_config["model_dim"])
 
         # Initialise the context embedding network (optional)
         if self.ctxt_dim:
@@ -1329,21 +1288,19 @@ class FullCrossAttentionEncoder(nn.Module):
         self.inpt_dim = inpt_dim
         self.outp_dim = outp_dim
         self.ctxt_dim = ctxt_dim
-        cae_config = deepcopy(cae_config) or {}
+        cae_config = deepcopy(cae_config) or {"dense_config": {}}
         node_embd_config = deepcopy(node_embd_config) or {}
         outp_embd_config = deepcopy(outp_embd_config) or {}
 
         # By default we would like the dense networks in this model to double the width
         if "model_dim" in cae_config.keys():
-            model_dim = cae_config["model_dim"]
-            if "hddn_dim" not in node_embd_config.keys():
-                node_embd_config["hddn_dim"] = 2 * model_dim
-            if "hddn_dim" not in ctxt_embd_config.keys():
-                ctxt_embd_config["hddn_dim"] = 2 * model_dim
-            if "hddn_dim" not in outp_embd_config.keys():
-                outp_embd_config["hddn_dim"] = 2 * model_dim
-            if "hddn_dim" not in cae_config["dense_config"].keys():
-                cae_config["dense_config"]["hddn_dim"] = 2 * model_dim
+            for d in [
+                node_embd_config,
+                ctxt_embd_config,
+                outp_embd_config,
+                cae_config["dense_config"],
+            ]:
+                insert_if_not_present(d, "hddn_dim", 2 * cae_config["model_dim"])
 
         # Initialise the context embedding network (optional)
         if self.ctxt_dim:
