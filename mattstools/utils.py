@@ -99,6 +99,7 @@ def standard_job_array(
         f.write("} \\\n")
         run_tot *= len(vals)
     f.close()
+    print(f"--saved to {job_name}.sh")
 
 
 def str2bool(mystring: str) -> bool:

@@ -101,7 +101,7 @@ class MLPBlock(nn.Module):
             # Add the activation layer
             if act != "none":
                 self.block.append(get_act(act))
-            if nrm != "none":  # and not with_zeros:  # Dont norm after just using zeros
+            if nrm != "none" and not with_zeros:  # Dont norm after just using zeros
                 self.block.append(get_nrm(nrm, outp_dim))
 
             # Add the dropout layer
