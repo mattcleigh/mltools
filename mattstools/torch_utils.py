@@ -159,7 +159,7 @@ def get_nrm(name: str, outp_dim: int) -> nn.Module:
     """Return a 1D pytorch normalisation layer given a name and a output size."""
     if name == "batch":
         return nn.BatchNorm1d(outp_dim)
-    if name == "layer":
+    if name in ["lyr", "layer"]:
         return nn.LayerNorm(outp_dim)
     if name == "none":
         return None
@@ -324,6 +324,27 @@ def train_valid_split(
         valid_indxs = np.arange(0, len(dataset), v_every)
         train_indxs = np.delete(np.arange(len(dataset)), np.s_[::v_every])
         return Subset(dataset, train_indxs), Subset(dataset, valid_indxs)
+
+
+def k_fold_split(
+    dataset: Dataset, num_folds: int, fold_idx: int
+) -> tuple[Subset, Subset, Subset]:
+    """Perform a k-fold cross."""
+    assert num_folds > 2
+    assert fold_idx < num_folds
+
+    test_fold = fold_idx
+    val_fold = (fold_idx + 1) % num_folds
+    train_folds = [i for i in range(num_folds) if i not in [fold_idx, val_fold]]
+
+    data_idxes = np.arange(dataset)
+    in_k = data_idxes % num_folds
+
+    test = Subset(dataset, data_idxes[in_k == test_fold])
+    valid = Subset(dataset, data_idxes[in_k == val_fold])
+    train = Subset(dataset, data_idxes[in_k in train_folds])
+
+    return train, valid, test
 
 
 def masked_pool(

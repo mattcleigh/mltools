@@ -12,6 +12,17 @@ from tqdm import trange
 from .torch_utils import GradsOff, append_dims
 
 
+def get_c_values(sigmas: T.Tensor) -> tuple:
+    """Calculate the Karras C values.
+
+    Needed to scale the inputs, outputs, and skip connection.
+    """
+    c_in = 1 / (1 + sigmas**2).sqrt()
+    c_out = sigmas / (1 + sigmas**2).sqrt()
+    c_skip = 1 / (1 + sigmas**2)
+    return c_in, c_out, c_skip
+
+
 @T.no_grad()
 def multistep_consistency_sampling(
     model: nn.Module,

@@ -102,6 +102,17 @@ def standard_job_array(
     print(f"--saved to {job_name}.sh")
 
 
+def resursive_search(obj: Mapping, key: Any) -> Any | None:
+    """Recursively search through a dictionary for a key and return the first."""
+    if key in obj:
+        return obj[key]
+    for k, v in obj.items():
+        if isinstance(v, Mapping):
+            item = resursive_search(v, key)
+            if item is not None:
+                return item
+
+
 def str2bool(mystring: str) -> bool:
     """Convert a string object into a boolean."""
     if isinstance(mystring, bool):
@@ -211,7 +222,7 @@ def insert_if_not_present(dictionary: dict, key: str, value: Any) -> None:
         dictionary[key] = value
 
 
-def signed_angle_diff(angle1: Any, angle2: Any) -> Any:
+def signed_angle_diff(angle1: Any, angle2: Any = 0) -> Any:
     """Calculate diff between two angles reduced to the interval of [-pi, pi]"""
     return (angle1 - angle2 + math.pi) % (2 * math.pi) - math.pi
 
