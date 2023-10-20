@@ -186,6 +186,19 @@ def set_in_dict(data_dict: dict, key_list: list, value: Any):
     get_from_dict(data_dict, key_list[:-1])[key_list[-1]] = value
 
 
+def flatlist(xs: any) -> list:
+    """Return a flat list of any iterable or single element."""
+
+    def flatten(xs):
+        for x in xs:
+            if isinstance(x, Iterable) and not isinstance(x, (str, bytes)):
+                yield from flatten(x)
+            else:
+                yield x
+
+    return list(flatten([xs]))
+
+
 def key_prefix(pref: str, dic: dict) -> dict:
     """Add a prefix to each key in a dictionary."""
     return {f"{pref}{key}": val for key, val in dic.items()}

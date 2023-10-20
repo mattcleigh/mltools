@@ -123,7 +123,7 @@ class Attention(nn.Module):
         dim: int,
         num_heads: int = 1,
         dropout: float = 0,
-        do_selfattn: bool = False,
+        do_self_attn: bool = False,
         do_rotary_enc: bool = False,
     ) -> None:
         super().__init__()
@@ -133,12 +133,12 @@ class Attention(nn.Module):
         self.dim = dim
         self.num_heads = num_heads
         self.attn_dim = dim // num_heads
-        self.do_selfattn = do_selfattn
+        self.do_self_attn = do_self_attn
         self.dropout = dropout
         self.do_rotary_enc = do_rotary_enc
 
         # Weight matrices - only 1 input for self attn
-        if do_selfattn:
+        if do_self_attn:
             self.attn_in = nn.Linear(dim, 3 * dim)
         else:
             self.attn_in = nn.ModuleList([nn.Linear(dim, dim), nn.Linear(dim, 2 * dim)])
@@ -161,7 +161,7 @@ class Attention(nn.Module):
             kv = x
 
         # Generate the q, k, v projections
-        if self.do_selfattn:
+        if self.do_self_attn:
             q, k, v = self.attn_in(x).chunk(3, -1)
         else:
             q = self.attn_in[0](x)
@@ -177,7 +177,8 @@ class Attention(nn.Module):
 
         # Perform the attention
         a_mask = merge_masks(kv_mask, attn_mask, attn_bias, q)
-        a_out = F.scaled_dot_product_attention(q, k, v, a_mask, self.dropout)
+        dropout = self.dropout if self.training else 0.0
+        a_out = F.scaled_dot_product_attention(q, k, v, a_mask, dropout)
 
         # Concatenate the all of the heads together to get shape: B,Seq,F
         shape = (q.shape[0], -1, self.dim)
@@ -189,15 +190,18 @@ class Attention(nn.Module):
 class SwiGLUNet(nn.Module):
     """Simple gated bilinear feedfoward network."""
 
-    def __init__(self, dim: int, hddn_dim: int, ctxt_dim: int = 0) -> None:
+    def __init__(
+        self, dim: int, hddn_dim: int, ctxt_dim: int = 0, dropout: float = 0.0
+    ) -> None:
         super().__init__()
         self.lin1 = nn.Linear(dim + ctxt_dim, 2 * hddn_dim)
         self.lin2 = nn.Linear(hddn_dim, dim)
+        self.drop = nn.Dropout(dropout)
 
     def forward(self, x: T.Tensor, ctxt: T.Tensor | None = None) -> T.Tensor:
         x = attach_context(x, ctxt)
         x1, x2 = self.lin1(x).chunk(2, dim=-1)
-        return self.lin2(F.silu(x1) * x2)
+        return self.lin2(self.drop(F.silu(x1) * x2))
 
 
 class TransformerLayer(nn.Module):
@@ -222,7 +226,7 @@ class TransformerLayer(nn.Module):
         self.attn = PreNormResidual(
             dim, Attention(dim, num_heads, dropout, do_self_attn, do_rotary_enc)
         )
-        self.ff = PreNormResidual(dim, SwiGLUNet(dim, ff_mult * dim, ctxt_dim))
+        self.ff = PreNormResidual(dim, SwiGLUNet(dim, ff_mult * dim, ctxt_dim, dropout))
 
         # Add flags / pointers to the pre-residual layers to allow for initialisation
         self.pre_residual_layers = [self.attn.fn.attn_out, self.ff.fn.lin2]
@@ -305,6 +309,75 @@ class TransformerEncoder(nn.Module):
 
         # Output projections
         return x
+
+
+class TransformerVectorEncoder(nn.Module):
+    """Pooling operation that uses attention."""
+
+    def __init__(
+        self,
+        *,
+        dim: int = 128,
+        ctxt_dim: int = 0,
+        num_sa_layers: int = 3,
+        num_ca_layers: int = 2,
+        max_seq_len: int = 0,
+        do_absolute_enc: bool = False,
+        init_method: str = "default",
+        layer_config: Mapping | None = None,
+    ) -> None:
+        super().__init__()
+
+        # Defaults
+        layer_config = layer_config or {}
+
+        # Attributes
+        self.dim = dim
+        self.do_absolute_enc = do_absolute_enc
+
+        # Absolute positional encoding
+        if self.do_absolute_enc:
+            if max_seq_len == 0:
+                raise ValueError("If using absolute encoding then define max length!")
+            self.abs_enc = nn.Parameter(T.zeros((1, max_seq_len, dim)))
+
+        # The learnable global token
+        self.global_token = nn.Parameter(T.randn((1, 1, dim)))
+
+        # Modules
+        self.sa_layers = nn.ModuleList(
+            [
+                TransformerLayer(dim, ctxt_dim, **layer_config)
+                for _ in range(num_sa_layers)
+            ]
+        )
+        self.ca_layers = nn.ModuleList(
+            [
+                CrossAttentionLayer(dim, ctxt_dim, **layer_config)
+                for _ in range(num_ca_layers)
+            ]
+        )
+
+        # Change the weight initialisation in the te blocks based on depth
+        for d, layer in enumerate([self.sa_layers + self.ca_layers]):
+            param_init(layer, d, init_method)
+
+    def forward(self, x: T.Tensor, **kwargs) -> T.Tensor:
+        # Add the positional encoding
+        if self.do_absolute_enc:
+            x = x + self.abs_enc[:, : x.shape[-2], :]
+
+        # Self attention
+        for layer in self.sa_layers:
+            x = layer(x, **kwargs)
+
+        # Pass through the layers with batch expanded global token
+        g = self.global_token.expand(x.shape[0], -1, self.dim)
+        for layer in self.ca_layers:
+            g = layer(g, x, **kwargs)
+
+        # Pop out the sequence dimension
+        return g.squeeze(-2)
 
 
 class CrossAttentionEncoder(nn.Module):

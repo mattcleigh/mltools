@@ -337,12 +337,12 @@ def k_fold_split(
     val_fold = (fold_idx + 1) % num_folds
     train_folds = [i for i in range(num_folds) if i not in [fold_idx, val_fold]]
 
-    data_idxes = np.arange(dataset)
+    data_idxes = np.arange(len(dataset))
     in_k = data_idxes % num_folds
 
     test = Subset(dataset, data_idxes[in_k == test_fold])
     valid = Subset(dataset, data_idxes[in_k == val_fold])
-    train = Subset(dataset, data_idxes[in_k in train_folds])
+    train = Subset(dataset, data_idxes[np.isin(in_k, train_folds)])
 
     return train, valid, test
 
