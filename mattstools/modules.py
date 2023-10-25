@@ -726,6 +726,9 @@ class IterativeNormLayer(nn.Module):
     def update(self, inpt: T.Tensor) -> None:
         """Update the running stats using a batch of data."""
 
+        # Check the current shapes of the means
+        cur_mean_shape = self.means.shape
+
         # Freeze the model if we already exceed the requested stats
         T.fill_(self.frozen, self.n >= self.max_n)
         if self.frozen:
@@ -741,6 +744,13 @@ class IterativeNormLayer(nn.Module):
             self._apply_ema_update(inpt)
         else:
             self._apply_welford_update(inpt)
+
+        # Check if the shapes changed
+        if not cur_mean_shape == self.means.shape:
+            print(f"WARNING! The stats in {self} have changed shape!")
+            print("This could be due to incorrect initialisation or maskingm")
+            print(f"Old shape: {cur_mean_shape}")
+            print(f"New shape: {self.means.shape}")
 
     @T.no_grad()
     def _apply_ema_update(self, inpt: T.Tensor) -> None:
