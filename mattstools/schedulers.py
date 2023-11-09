@@ -84,22 +84,25 @@ class CyclicWithWarmup(OneCycleLR):
         step_num = self.last_epoch % self.total_steps  # Only changed line!!!
 
         for group in self.optimizer.param_groups:
-            start_step = 0
-            for i, phase in enumerate(self._schedule_phases):
-                end_step = phase["end_step"]
-                if step_num <= end_step or i == len(self._schedule_phases) - 1:
-                    pct = (step_num - start_step) / (end_step - start_step)
-                    computed_lr = self.anneal_func(
-                        group[phase["start_lr"]], group[phase["end_lr"]], pct
-                    )
-                    if self.cycle_momentum:
-                        computed_momentum = self.anneal_func(
-                            group[phase["start_momentum"]],
-                            group[phase["end_momentum"]],
-                            pct,
+            try:
+                start_step = 0
+                for i, phase in enumerate(self._schedule_phases):
+                    end_step = phase["end_step"]
+                    if step_num <= end_step or i == len(self._schedule_phases) - 1:
+                        pct = (step_num - start_step) / (end_step - start_step)
+                        computed_lr = self.anneal_func(
+                            group[phase["start_lr"]], group[phase["end_lr"]], pct
                         )
-                    break
-                start_step = phase["end_step"]
+                        if self.cycle_momentum:
+                            computed_momentum = self.anneal_func(
+                                group[phase["start_momentum"]],
+                                group[phase["end_momentum"]],
+                                pct,
+                            )
+                        break
+                    start_step = phase["end_step"]
+            except Exception:
+                computed_lr = lrs[-1]
 
             lrs.append(computed_lr)
             if self.cycle_momentum:
