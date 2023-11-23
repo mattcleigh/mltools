@@ -532,7 +532,7 @@ def plot_multi_correlations(
     return
 
 
-def plot_multi_hists_2(
+def plot_multi_hists(
     data_list: Union[list, np.ndarray],
     data_labels: Union[list, str],
     col_labels: Union[list, str],
@@ -545,7 +545,7 @@ def plot_multi_hists_2(
     y_label: Optional[str] = None,
     ylims: list | tuple | None = None,
     ypad: float = 1.5,
-    rat_ylim: tuple = (0, 2),
+    rat_ylim: tuple | None = (0, 2),
     rat_label: Optional[str] = None,
     scale: int = 5,
     do_legend: bool = True,
@@ -723,11 +723,11 @@ def plot_multi_hists_2(
                 for dim in range(data.shape[-1]):
                     h.append(np.histogram(data[:, dim], ax_bins)[0])
 
-                # Nominal and err is based on chi2 of same value, mult measurements
+                # Nominal and err is based on chi2 of same value with mult measurements
                 hist = 1 / np.mean(1 / np.array(h), axis=0)
                 hist_err = np.sqrt(1 / np.sum(1 / np.array(h), axis=0))
 
-            # Otherwise just calculate a single histogram
+            # Otherwise just calculate a single histogram with stat err
             else:
                 hist, _ = np.histogram(data, ax_bins)
                 hist_err = np.sqrt(hist)
@@ -748,7 +748,7 @@ def plot_multi_hists_2(
                 denom_hist = hist
                 denom_err = hist_err
 
-            # Get the additional keyword arguments for the histograms and errors
+            # Get the additional keyword arguments for drawing the histograms
             if hist_kwargs[data_idx] is not None and bool(hist_kwargs[data_idx]):
                 h_kwargs = deepcopy(hist_kwargs[data_idx])
             else:
@@ -759,6 +759,7 @@ def plot_multi_hists_2(
                 hist, ax_bins, label=data_labels[data_idx], **h_kwargs
             )
 
+            # Get arguments for drawing the error plots, make the color the same
             if err_kwargs[data_idx] is not None and bool(err_kwargs[data_idx]):
                 e_kwargs = deepcopy(err_kwargs[data_idx])
             else:
@@ -783,12 +784,43 @@ def plot_multi_hists_2(
 
                 # Calculate the new ratio values with their errors
                 rat_hist = hist / denom_hist
-                rat_err = rat_hist * np.sqrt(
-                    (hist_err / hist) ** 2 + (denom_err / denom_hist) ** 2
-                )
+                rat_err = hist_err / denom_hist
+                # rat_err = rat_hist * np.sqrt(
+                #     (hist_err / hist) ** 2 + (denom_err / denom_hist) ** 2
+                # )
 
                 # Plot the ratios
                 axes[1, ax_idx].stairs(rat_hist, ax_bins, **ratio_kwargs)
+
+                # Marker up
+                if rat_ylim is not None:
+                    mid_bins = (ax_bins[1:] + ax_bins[:-1]) / 2
+                    ymin, ymax = tuple(*rat_ylim) # Convert to tuple incase list
+                    arrow_height = 0.02 * (ymax - ymin)
+
+                    # Up values
+                    mask_up = rat_hist>=ymax
+                    up_vals = mid_bins[mask_up]
+                    axes[1, ax_idx].arrow(
+                        x=up_vals,
+                        y=ymax - arrow_height - 0.01,
+                        dx=0,
+                        dy=arrow_height,
+                        color=line._edgecolor,
+                        width=arrow_height / 2,
+                    )
+
+                    # Down values
+                    mask_down = rat_hist<=ymin
+                    down_vals = mid_bins[mask_down]
+                    axes[1, ax_idx].arrow(
+                        x=down_vals,
+                        y=ymin + 0.01,
+                        dx=0,
+                        dy=arrow_height,
+                        color=line._edgecolor,
+                        width=arrow_height / 2,
+                    )
 
                 # Use a standard shaded region for the errors
                 if do_err:
@@ -843,6 +875,9 @@ def plot_multi_hists_2(
             axes[1, ax_idx].hlines(
                 1, *axes[1, ax_idx].get_xlim(), colors="k", zorder=-9999
             )
+
+            # After doing the limits for
+
 
         # Extra text
         if extra_text[ax_idx] is not None:

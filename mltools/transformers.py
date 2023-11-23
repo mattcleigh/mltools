@@ -9,8 +9,7 @@ import torch as T
 import torch.nn as nn
 from torch.nn.functional import scaled_dot_product_attention, softmax
 
-from mattstools.mattstools.utils import insert_if_not_present
-
+from .utils import insert_if_not_present
 from .modules import DenseNetwork
 
 # # Set the default operation to be flass attention

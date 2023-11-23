@@ -57,7 +57,6 @@ def avg_pool_nd(dims, *args, **kwargs):
 
 class ConditionedModule(nn.Module):
     """Base class for models that need context when processing data."""
-
     pass
 
 
@@ -233,10 +232,11 @@ class MultiHeadedAttentionBlock(ConditionedModule):
         self.inpt_shape = inpt_shape
         self.ctxt_dim = ctxt_dim
         self.num_heads = num_heads
+        self.attn_dim = inpt_channels // num_heads
         self.do_pos_encoding = do_pos_encoding
 
-        # The learnable positional encodings which are fixed
-        self.pos_enc = nn.Parameter(T.zeros(inpt_channels, *inpt_shape))
+        # The learnable positional encodings
+        self.pos_enc = nn.Parameter(T.randn(1, inpt_channels, *inpt_shape)*1e-3)
 
         # The method for normalisation is where the context is injected
         if ctxt_dim:
@@ -252,24 +252,34 @@ class MultiHeadedAttentionBlock(ConditionedModule):
 
     def forward(self, inpt: T.Tensor, ctxt: T.Tensor | None = None) -> T.Tensor:
         """Apply the model the message passing, context tensor is not used."""
+
+        # Save important shapes for permuting the attention heads
         b, c, *spatial = inpt.shape
 
-        # Pass through the layers to encode and get the qkv values
+        # Make a copy of the input, double checked that this does copy!
         qkv = inpt
+
+        # Add the positional encoding
         if self.do_pos_encoding:
-            qkv = qkv + self.pos_enc.unsqueeze(0)
+            qkv = qkv + self.pos_enc
+
+        # Normalise with perhaps context
         if self.ctxt_dim:
             qkv = self.norm(qkv, ctxt)
+        else:
+            qkv = self.norm(qkv)
+
+        # Perform the projections
         qkv = self.qkv(qkv)
 
         # Flatten out the spacial dimensions them swap to get: B, 3N, HxW, h_dim
-        qkv = qkv.view(b, self.num_heads * 3, c // self.num_heads, -1).transpose(-1, -2)
+        qkv = qkv.view(b, self.num_heads * 3, self.attn_dim, -1).transpose(-1, -2)
         q, k, v = T.chunk(qkv.contiguous(), 3, dim=1)
 
-        # Now we can use the attention operation from the transformers package
+        # Perform standard scaled dot product attentino
         a_out = scaled_dot_product_attention(q, k, v)
 
-        # Concatenate the all of the heads together to get back to: B, c, H, W
+        # Concatenate the heads together to get back to: B, c, H, W
         a_out = a_out.transpose(-1, -2).contiguous().view(b, c, *spatial)
 
         # Apply redidual update and bring back spacial dimensions
@@ -648,11 +658,11 @@ class UNet(nn.Module):
         inpt = self.first_block(inpt)
 
         # Pass through the encoder
-        dec_outs = []
+        enc_outs = []
         for level in self.encoder_blocks:
             for layer in level:
                 inpt = layer(inpt, ctxt)
-            dec_outs.append(inpt)  # Save the output to the buffer
+            enc_outs.append(inpt)  # Save the output to the buffer
             inpt = self.down_sample(inpt)  # Apply the downsampling
 
         # Pass through the middle blocks
@@ -662,7 +672,7 @@ class UNet(nn.Module):
         # Pass through the decoder blocks
         for level in self.decoder_blocks:
             inpt = self.up_sample(inpt)  # Apply the upsampling
-            inpt = T.cat([inpt, dec_outs.pop()], dim=1)  # Concat with buffer
+            inpt = T.cat([inpt, enc_outs.pop()], dim=1)  # Concat with buffer
             for layer in level:
                 inpt = layer(inpt, ctxt)
 

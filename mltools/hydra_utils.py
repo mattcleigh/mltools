@@ -11,8 +11,8 @@ import rich.syntax
 import rich.tree
 import wandb
 from omegaconf import DictConfig, OmegaConf
-from pytorch_lightning import LightningModule, Trainer
-from pytorch_lightning.utilities.rank_zero import rank_zero_only
+from lightning import LightningModule, Trainer
+from lightning.pytorch.utilities.rank_zero import rank_zero_only
 
 log = logging.getLogger(__name__)
 

@@ -7,7 +7,7 @@ from typing import Literal, Mapping
 import numpy as np
 import torch as T
 import torch.nn as nn
-from nflows.transforms import (
+from normflows.transforms import (
     ActNorm,
     AffineCouplingTransform,
     BatchNorm,
@@ -17,15 +17,15 @@ from nflows.transforms import (
     MaskedPiecewiseRationalQuadraticAutoregressiveTransform,
     PiecewiseRationalQuadraticCouplingTransform,
 )
-from nflows.transforms.base import Transform
-from nflows.transforms.splines.rational_quadratic import (
+from normflows.transforms.base import Transform
+from normflows.transforms.splines.rational_quadratic import (
     rational_quadratic_spline,
     unconstrained_rational_quadratic_spline,
 )
 
-from ..modules import DenseNetwork
-from ..torch_utils import get_act
-from ..utils import key_change
+from .modules import DenseNetwork
+from .torch_utils import get_act
+from .utils import key_change
 
 DEFAULT_MIN_BIN_WIDTH = 1e-3
 DEFAULT_MIN_BIN_HEIGHT = 1e-3
@@ -35,7 +35,7 @@ DEFAULT_MIN_DERIVATIVE = 1e-3
 def change_kwargs_for_made(old_kwargs: Mapping) -> tuple:
     """Convert a dictionary of keyword arguments.
 
-    Used for configuring kwargs made for a mattstools DenseNetwork to one that can
+    Used for configuring kwargs made for my DenseNetwork to one that can
     initialise a MADE network for the nflows package with similar (not exactly the same)
     hyperparameters.
     """
@@ -61,7 +61,7 @@ def change_kwargs_for_made(old_kwargs: Mapping) -> tuple:
     # The hidden dimension passed to MADE as an arg, not a kwarg
     if "hddn_dim" in new_kwargs:
         hddn_dim = new_kwargs.pop("hddn_dim")
-    # Otherwise use the same default value for mattstools.modules.DenseNet
+    # Otherwise use the same default value for mltools.modules.DenseNet
     else:
         hddn_dim = 32
 
@@ -128,7 +128,7 @@ def stacked_norm_flow(
     # We add the context dimension to the list of network keyword arguments
     net_kwargs["ctxt_dim"] = ctxt_dim
 
-    # For MADE netwoks change kwargs from mattstools to nflows format
+    # For MADE netwoks change kwargs from mltools to nflows format
     if param_func == "made":
         made_kwargs, hddn_dim = change_kwargs_for_made(net_kwargs)
 
@@ -321,7 +321,6 @@ class ContextSplineTransform(Transform):
 
     def inverse(self, inputs: T.Tensor, context: T.Tensor) -> T.Tensor:
         return self._process(inputs, context, inverse=True)
-
 
 def sum_except_batch(x: T.Tensor, num_batch_dims: int = 1) -> T.Tensor:
     """Sum all elements of x except for the first num_batch_dims dimensions."""

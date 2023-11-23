@@ -3,39 +3,109 @@
 import math
 from functools import partial
 from typing import Mapping
+import warnings
 
 import torch as T
 import torch.nn as nn
 import torch.nn.functional as F
 
 from .modules import DenseNetwork
-from .transformers import merge_masks
+
+def merge_masks(
+    kv_mask: T.BoolTensor | None,
+    attn_mask: T.BoolTensor | None,
+    attn_bias: T.Tensor | None,
+    query: T.Size,
+) -> None | T.BoolTensor:
+    """Create a full attention mask which using the padding information and bias.
+    """
+
+    # Create the placeholder for the full mask, None is full attention
+    merged_mask = None
+
+    # If the kv_mask mask exists, we ensure that padded tokens never send information
+    if kv_mask is not None:
+        merged_mask = kv_mask.unsqueeze(-2).expand(-1, query.shape[-2], -1)
+
+    # If attention mask exists, combine it with the existing
+    if attn_mask is not None:
+        merged_mask = attn_mask if merged_mask is None else attn_mask & merged_mask
+
+    # Unsqueeze the mask to give it a dimension for num_head broadcasting
+    if merged_mask is not None:
+        merged_mask = merged_mask.unsqueeze(1)
+
+    # If the attention bias exists, convert to a float and add to the mask
+    if attn_bias is not None:
+        if merged_mask is not None:
+            merged_mask = T.where(merged_mask, 0, -T.inf).type(query.dtype)
+            merged_mask = merged_mask + attn_bias.permute(0, 3, 1, 2)
+        else:
+            merged_mask = attn_bias.permute(0, 3, 1, 2)
+
+    return merged_mask
 
 
-def param_init(module: nn.Module, depth: int, method: str = "default") -> None:
-    """Initialise the pre residual layers of a module using a specific method."""
+def my_scaled_dot_product_attention(
+    query: T.Tensor,
+    key: T.Tensor,
+    value: T.Tensor,
+    attn_mask: T.Tensor | None = None,
+    dropout_p: float = 0.0,
+    is_causal: bool = False,
+    attn_act: callable = partial(F.softmax, dim=-1),
+    pad_val: float = -float("inf"),
+) -> T.Tensor:
+    """Compute dot product attention using the given query, key, and value tensors.
 
-    if not hasattr(module, "pre_residual_layers"):
-        return
+    Parameters
+    ----------
+    query : T.Tensor
+        The query tensor.
+    key : T.Tensor
+        The key tensor.
+    value : T.Tensor
+        The value tensor.
+    attn_mask : T.Tensor | None, optional
+        The attention mask tensor, by default None.
+    dropout_p : float, optional
+        The dropout probability, by default 0.0.
+    is_causal : bool, optional
+        Whether to use causal attention, by default False.
+    attn_act : callable, optional
+        The attention activation function, by default partial(softmax, dim=-1).
+    pad_val : float, optional
+        The padding value for the attention mask, by default -float("inf").
 
-    # Get the list of parameter tensors to modify
-    p_list = [m.weight for m in module.pre_residual_layers]
-    for m in module.pre_residual_layers:
-        if hasattr(m, "bias"):
-            p_list += [m.bias]
+    Returns
+    -------
+    T.Tensor
+        The result of the scaled dot product attention operation.
 
-    # Apply the appropriate weight initialisation
-    if method == "default":
-        return
+    Notes
+    -----
+    This function is a Pytorch equivalent operation of scaled_dot_product_attention but
+    should be ONNX compatible!
+    """
 
-    if method == "zero":
-        for p in p_list:
-            p.data.fill_(0)
+    # Get the shapes
+    L = query.shape[-2]
+    S = key.shape[-2]
 
-    if method == "beit":
-        for p in p_list:
-            p.data /= math.sqrt(4 * (depth + 1))
+    # Build the attention mask as a float
+    if is_causal:
+        attn_mask = T.ones(L, S, dtype=T.bool).tril(diagonal=0)
+    elif attn_mask is not None and attn_mask.dtype == T.bool:
+        attn_mask = attn_mask.float().masked_fill(~attn_mask, pad_val)
+    else:
+        attn_mask = 0.0
 
+    # Apply the attention operation using the mask as a bias
+    attn_weight = (query @ key.transpose(-2, -1) / math.sqrt(query.size(-1)))
+    attn_weight += attn_mask
+    attn_weight = T.dropout(attn_weight, dropout_p, train=True)
+
+    return attn_weight @ value
 
 def attach_context(x: T.Tensor, ctxt: T.Tensor | None = None) -> T.Tensor:
     """Concat a tensor with context which has the same or lower dimensions."""
@@ -59,16 +129,36 @@ def apply_rotary_pos_emb(x: T.Tensor, cos: T.Tensor, sin: T.Tensor) -> T.Tensor:
     return (x * cos) + (rotate_half(x) * sin)
 
 
-class PreNormResidual(nn.Module):
-    """Apply layernorm with residual connection."""
-
-    def __init__(self, dim: int, fn: nn.Module) -> None:
+class LayerScale(nn.Module):
+    def __init__(
+        self,
+        dim: int,
+        init_value: float = 1e-5,
+    ) -> None:
         super().__init__()
-        self.norm = nn.LayerNorm(dim)
+        self.gamma = nn.Parameter(init_value * T.ones(dim))
+
+    def forward(self, x: T.ensor) -> T.Tensor:
+        return x * self.gamma
+
+
+class PreNormScaledResidual(nn.Module):
+    """Wraps a module with pre-norm and layerscale with a residual connection."""
+
+    def __init__(
+        self, fn: nn.Module, dim: int, layerscale_init: float | None = 1e-5
+    ) -> None:
+        super().__init__()
         self.fn = fn
+        self.norm = nn.LayerNorm(dim)
+        self.ls = (
+            LayerScale(dim, layerscale_init)
+            if layerscale_init is not None
+            else nn.Identity()
+        )
 
     def forward(self, x: T.Tensor, *args, **kwargs) -> T.Tensor:
-        return self.fn(self.norm(x), *args, **kwargs) + x
+        return self.ls(self.fn(self.norm(x), *args, **kwargs)) + x
 
 
 class RotaryEmbedding(nn.Module):
@@ -156,14 +246,15 @@ class Attention(nn.Module):
         attn_mask: T.BoolTensor | None = None,
         attn_bias: T.Tensor | None = None,
     ) -> T.Tensor:
-        # If only q is provided then we automatically apply self attention
-        if kv is None:
-            kv = x
 
         # Generate the q, k, v projections
         if self.do_self_attn:
             q, k, v = self.attn_in(x).chunk(3, -1)
         else:
+            if kv is None:
+                kv = x
+                warnings.warn("Suboptimal use of self attention detected!")
+                warnings.warn("Initialise block with do_self_attn=True!")
             q = self.attn_in[0](x)
             k, v = self.attn_in[1](kv).chunk(2, -1)
 
@@ -204,8 +295,8 @@ class SwiGLUNet(nn.Module):
         return self.lin2(self.drop(F.silu(x1) * x2))
 
 
-class TransformerLayer(nn.Module):
-    """Simple and flexible layer for a transformer."""
+class EncoderBlock(nn.Module):
+    """Simple and building block for a transformer."""
 
     def __init__(
         self,
@@ -216,6 +307,7 @@ class TransformerLayer(nn.Module):
         dropout: float = 0,
         do_self_attn: bool = False,
         do_rotary_enc: bool = False,
+        layerscale_init: float | None = 1e-5,
     ) -> None:
         super().__init__()
 
@@ -223,13 +315,16 @@ class TransformerLayer(nn.Module):
         self.dim = dim
 
         # Submodules
-        self.attn = PreNormResidual(
-            dim, Attention(dim, num_heads, dropout, do_self_attn, do_rotary_enc)
+        self.attn = PreNormScaledResidual(
+            Attention(dim, num_heads, dropout, do_self_attn, do_rotary_enc),
+            dim,
+            layerscale_init,
         )
-        self.ff = PreNormResidual(dim, SwiGLUNet(dim, ff_mult * dim, ctxt_dim, dropout))
-
-        # Add flags / pointers to the pre-residual layers to allow for initialisation
-        self.pre_residual_layers = [self.attn.fn.attn_out, self.ff.fn.lin2]
+        self.ff = PreNormScaledResidual(
+            SwiGLUNet(dim, ff_mult * dim, ctxt_dim, dropout),
+            dim,
+            layerscale_init
+        )
 
     def forward(
         self,
@@ -245,20 +340,8 @@ class TransformerLayer(nn.Module):
         return x
 
 
-class CrossAttentionLayer(TransformerLayer):
-    """A transformer cross attention layer, has additional norm for kv."""
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.kv_norm = nn.LayerNorm(self.dim)
-
-    def forward(self, x: T.Tensor, kv: T.Tensor, **kwargs) -> T.Tensor:
-        kv = self.kv_norm(kv)
-        return super().forward(x, kv, **kwargs)
-
-
 class TransformerEncoder(nn.Module):
-    """Simple and constrained transformer encoder."""
+    """Simple transformer encoder."""
 
     def __init__(
         self,
@@ -267,9 +350,11 @@ class TransformerEncoder(nn.Module):
         ctxt_dim: int = 0,
         num_layers: int = 6,
         max_seq_len: int = 0,
+        do_input_linear: bool = False,
         do_absolute_enc: bool = False,
-        init_method: str = "default",
+        do_final_norm: bool = False,
         layer_config: Mapping | None = None,
+        inpt_dim: None | int = None,
     ) -> None:
         super().__init__()
 
@@ -278,40 +363,94 @@ class TransformerEncoder(nn.Module):
 
         # Attributes
         self.dim = dim
+        self.ctxt_dim = ctxt_dim
+        self.layer_config = layer_config
+        self.inpt_dim = inpt_dim if do_input_linear else dim
+        self.do_final_norm = do_final_norm
+        self.do_input_linear = do_input_linear
         self.do_absolute_enc = do_absolute_enc
+
+        # Initial linear projection (Here because of positional embedding)
+        if self.do_input_linear:
+            self.linear_embed(inpt_dim, dim)
 
         # Absolute positional encoding
         if self.do_absolute_enc:
             if max_seq_len == 0:
                 raise ValueError("If using absolute encoding then define max length!")
-            self.abs_enc = nn.Parameter(T.zeros((1, max_seq_len, dim)))
+            self.abs_enc = nn.Parameter(T.randn((1, max_seq_len, dim)) * 1e-3)
 
-        # Modules
-        self.te_layers = nn.ModuleList(
+        # Encoder layers
+        self.layers = nn.ModuleList(
             [
-                TransformerLayer(dim, ctxt_dim, do_self_attn=True, **layer_config)
+                EncoderBlock(dim, ctxt_dim, **layer_config)
                 for _ in range(num_layers)
             ]
         )
 
-        # Change the weight initialisation in the te blocks based on depth
-        for d, layer in enumerate(self.te_layers):
-            param_init(layer, d, init_method)
+        # Final normalisation layer
+        if self.do_final_norm:
+            self.final_norm = nn.LayerNorm(dim)
 
     def forward(self, x: T.Tensor, **kwargs) -> T.Tensor:
+        # Apply the initial linear embedding
+        if self.do_input_linear:
+            x = self.linear_embed(x)
+
         # Add the positional encoding
         if self.do_absolute_enc:
             x = x + self.abs_enc[:, : x.shape[-2], :]
 
         # Pass through the layers
-        for layer in self.te_layers:
+        for layer in self.layers:
             x = layer(x, **kwargs)
+
+        # The final normalisation layer
+        if self.do_final_norm:
+            x = self.final_norm(x)
 
         # Output projections
         return x
 
 
-class TransformerVectorEncoder(nn.Module):
+class CrossAttentionEncoder(TransformerEncoder):
+    """Permutation equivariant encoder with linear N computational expense."""
+
+    def __init__(self, num_tokens: int = 16, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.num_tokens = num_tokens
+
+        # The learnable global tokens and extra modules
+        self.global_tokens = nn.Parameter(T.randn((1, num_tokens, self.dim)) * 1e-3)
+        self.pool_layers = nn.ModuleList(
+            [EncoderBlock(self.dim, self.ctxt_dim, **self.layer_config)
+            for _ in range(self.num_layers)]
+        )
+
+    def forward(self, x: T.Tensor, kv_mask: T.BoolTensor, **kwargs) -> T.Tensor:
+        # Apply the initial linear embedding
+        if self.do_input_linear:
+            x = self.linear_embed(x)
+
+        # Add the positional encoding
+        if self.do_absolute_enc:
+            x = x + self.abs_enc[:, : x.shape[-2], :]
+
+        # Pass through the layers with batch expanded global tokens
+        g = self.global_tokens.expand(x.shape[0], -1, self.dim)
+        for pool_layers, dist_layers in zip(self.pool_layers, self.layers):
+            g = pool_layers(g, x, kv_mask=kv_mask, **kwargs)
+            x = dist_layers(x, g, **kwargs)
+
+        # The final normalisation layer
+        if self.do_final_norm:
+            x = self.final_norm(x)
+
+        # Output projections
+        return x
+
+
+class ClassAttentionPooling(nn.Module):
     """Pooling operation that uses attention."""
 
     def __init__(
@@ -319,11 +458,7 @@ class TransformerVectorEncoder(nn.Module):
         *,
         dim: int = 128,
         ctxt_dim: int = 0,
-        num_sa_layers: int = 3,
-        num_ca_layers: int = 2,
-        max_seq_len: int = 0,
-        do_absolute_enc: bool = False,
-        init_method: str = "default",
+        num_layers: int = 2,
         layer_config: Mapping | None = None,
     ) -> None:
         super().__init__()
@@ -333,117 +468,26 @@ class TransformerVectorEncoder(nn.Module):
 
         # Attributes
         self.dim = dim
-        self.do_absolute_enc = do_absolute_enc
-
-        # Absolute positional encoding
-        if self.do_absolute_enc:
-            if max_seq_len == 0:
-                raise ValueError("If using absolute encoding then define max length!")
-            self.abs_enc = nn.Parameter(T.zeros((1, max_seq_len, dim)))
-
-        # The learnable global token
-        self.global_token = nn.Parameter(T.randn((1, 1, dim)))
+        self.ctxt_dim = ctxt_dim
+        self.layer_config = layer_config
 
         # Modules
-        self.sa_layers = nn.ModuleList(
-            [
-                TransformerLayer(dim, ctxt_dim, **layer_config)
-                for _ in range(num_sa_layers)
-            ]
+        self.global_token = nn.Parameter(T.randn((1, 1, self.dim)) * 1e-3)
+        self.layers = nn.ModuleList(
+            [EncoderBlock(dim, ctxt_dim, **self.layer_config)
+            for _ in range(num_layers)]
         )
-        self.ca_layers = nn.ModuleList(
-            [
-                CrossAttentionLayer(dim, ctxt_dim, **layer_config)
-                for _ in range(num_ca_layers)
-            ]
-        )
-
-        # Change the weight initialisation in the te blocks based on depth
-        for d, layer in enumerate([self.sa_layers + self.ca_layers]):
-            param_init(layer, d, init_method)
 
     def forward(self, x: T.Tensor, **kwargs) -> T.Tensor:
-        # Add the positional encoding
-        if self.do_absolute_enc:
-            x = x + self.abs_enc[:, : x.shape[-2], :]
-
-        # Self attention
-        for layer in self.sa_layers:
-            x = layer(x, **kwargs)
-
-        # Pass through the layers with batch expanded global token
+        # Expand the global token so it can be broadcasted for the whole batch
         g = self.global_token.expand(x.shape[0], -1, self.dim)
-        for layer in self.ca_layers:
+
+        # Apply the iterative pooling
+        for layer in self.layers:
             g = layer(g, x, **kwargs)
 
-        # Pop out the sequence dimension
+        # Pop out the sequence dimension and return
         return g.squeeze(-2)
-
-
-class CrossAttentionEncoder(nn.Module):
-    """Permutation equivariant encoder with linear N computational expense."""
-
-    def __init__(
-        self,
-        *,
-        dim: int = 128,
-        ctxt_dim: int = 0,
-        num_layers: int = 6,
-        num_tokens: int = 16,
-        max_seq_len: int = 0,
-        do_absolute_enc: bool = False,
-        init_method: str = "default",
-        layer_config: Mapping | None = None,
-    ) -> None:
-        super().__init__()
-
-        # Defaults
-        layer_config = layer_config or {}
-
-        # Attributes
-        self.dim = dim
-        self.do_absolute_enc = do_absolute_enc
-
-        # Absolute positional encoding
-        if self.do_absolute_enc:
-            if max_seq_len == 0:
-                raise ValueError("If using absolute encoding then define max length!")
-            self.abs_enc = nn.Parameter(T.zeros((1, max_seq_len, dim)))
-
-        # The learnable global tokens
-        self.global_tokens = nn.Parameter(T.randn((1, num_tokens, dim)))
-
-        # Modules
-        self.pool_layers = nn.ModuleList(
-            [
-                CrossAttentionLayer(dim, ctxt_dim, **layer_config)
-                for _ in range(num_layers)
-            ]
-        )
-        self.dist_layers = nn.ModuleList(
-            [
-                CrossAttentionLayer(dim, ctxt_dim, **layer_config)
-                for _ in range(num_layers)
-            ]
-        )
-
-        # Change the weight initialisation in the te blocks based on depth
-        for d, layer in enumerate(self.pool_layers):
-            param_init(layer, d, init_method)
-        for d, layer in enumerate(self.dist_layers):
-            param_init(layer, d, init_method)
-
-    def forward(self, x: T.Tensor, kv_mask: T.BoolTensor, **kwargs) -> T.Tensor:
-        # Add the positional encoding
-        if self.do_absolute_enc:
-            x = x + self.abs_enc[:, : x.shape[-2], :]
-
-        # Pass through the layers with batch expanded global tokens
-        g = self.global_tokens.expand(x.shape[0], -1, self.dim)
-        for pool_layers, dist_layers in zip(self.pool_layers, self.dist_layers):
-            g = pool_layers(g, x, kv_mask=kv_mask, **kwargs)
-            x = dist_layers(x, g, **kwargs)
-        return x
 
 
 class FullEncoder(nn.Module):
@@ -456,9 +500,11 @@ class FullEncoder(nn.Module):
         outp_dim: int,
         transformer: partial,
         ctxt_dim: int = 0,
+        edge_dim: int = 0,
         node_embd_config: Mapping | None = None,
         outp_embd_config: Mapping | None = None,
         ctxt_embd_config: Mapping | None = None,
+        edge_embd_config: Mapping | None = None,
     ) -> None:
         super().__init__()
 
@@ -466,11 +512,13 @@ class FullEncoder(nn.Module):
         node_embd_config = node_embd_config or None
         outp_embd_config = outp_embd_config or None
         ctxt_embd_config = ctxt_embd_config or None
+        edge_embd_config = edge_embd_config or None
 
         # Attributes
         self.inpt_dim = inpt_dim
         self.outp_dim = outp_dim
         self.ctxt_dim = ctxt_dim
+        self.edge_dim = edge_dim
 
         # Context embedding network (optional)
         self.ctxt_out = 0
@@ -481,6 +529,7 @@ class FullEncoder(nn.Module):
         # Main transformer
         self.transformer = transformer(ctxt_dim=self.ctxt_out)
         self.dim = self.transformer.dim
+        self.num_heads = self.transformer.layers[0].num_heads
 
         # The input and output embedding network
         self.node_embd = DenseNetwork(
@@ -496,16 +545,29 @@ class FullEncoder(nn.Module):
             **outp_embd_config,
         )
 
+        # Edge embedding network (optional)
+        if self.edge_dim:
+            self.edge_emdb = DenseNetwork(
+                inpt_dim=self.edge_dim,
+                ctxt_dim=self.ctxt_out,
+                outp_dim=self.num_heads
+                **edge_embd_config
+            )
+
     def forward(
         self,
         x: T.Tensor,
-        mask: T.BoolTensor | None = None,
         ctxt: T.Tensor | None = None,
+        edge: T.Tensor | None = None,
+        mask: T.BoolTensor | None = None,
+        **kwargs,
     ) -> T.Tensor:
         """Pass the input through all layers sequentially."""
         if self.ctxt_dim:
             ctxt = self.ctxt_emdb(ctxt)
+        if self.edge_dim:
+            edge = self.edge_dim(edge, ctxt)
         x = self.node_embd(x, ctxt)
-        x = self.transformer(x, kv_mask=mask, ctxt=ctxt)
+        x = self.transformer(x, kv_mask=mask, ctxt=ctxt, attn_bias=edge, **kwargs)
         x = self.outp_embd(x, ctxt)
         return x
