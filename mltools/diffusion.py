@@ -12,7 +12,7 @@ from tqdm import trange
 from .torch_utils import GradsOff, append_dims
 
 
-def get_c_values(sigmas: T.Tensor) -> tuple:
+def c_values(sigmas: T.Tensor) -> tuple:
     """Calculate the Karras C values.
 
     Needed to scale the inputs, outputs, and skip connection.

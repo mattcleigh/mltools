@@ -438,10 +438,10 @@ class UNet(nn.Module):
         start_channels: int = 32,
         max_channels: int = 128,
         zero_out: bool = False,
-        resnet_config: Optional[Mapping] = None,
-        attn_config: Optional[Mapping] = None,
-        ctxt_embed_config: Optional[Mapping] = None,
-        use_ctxt_embedder: bool = True,
+        resnet_config: Mapping | None = None,
+        attn_config: Mapping | None = None,
+        ctxt_embed_config: Mapping | None = None,
+        use_ctxt_embedder: bool = False,
     ) -> None:
         """
         Parameters

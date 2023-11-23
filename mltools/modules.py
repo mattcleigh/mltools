@@ -511,31 +511,31 @@ class IterativeNormLayer(nn.Module):
 
     Tracks the runnning mean and variances of an input vector over the batch dimension.
     Must always be passed batched data!
-    Any additional dimension to calculate the stats must be provided as extra_dims.
+    Any additional dimension to calculate the stats must be provided as dims.
 
     For example: Providing an image with inpt_dim = channels, width, height
     Will result in an operation with independant stats per pixel, per channel
     If instead you want the mean and shift only for each channel you will have to give
-    extra_dims = (1, 2) or (-2, -1)
+    dims = (1, 2) or (-2, -1)
     This will tell the layer to average out the width and height dimensions
 
     Note! If a mask is provided in the forward pass, then this must be
     the dimension to apply over the masked inputs! For example: Graph
     nodes are usually batch x n_nodes x features so to average out the n_nodes
-    one would typically give extra_dims as (0,). But nodes
+    one would typically give dims as (0,). But nodes
     are always passed with the mask which flattens it to batch x features.
-    Batch dimension is done automatically, so we dont pass any extra_dims!!!
+    Batch dimension is done automatically, so we dont pass any dims!!!
     """
 
     def __init__(
         self,
-        inpt_dim: Union[T.Tensor, tuple, int],
+        inpt_dim: T.Tensor | tuple | int,
         means: T.Tensor | None = None,
         vars: T.Tensor | None = None,
         n: int = 0,
         max_n: int = 1_00_000,
-        extra_dims: Union[tuple, int] = (),
-        track_grad_forward: bool = False,
+        dims: Union[tuple, int] = (),
+        track_grad_forward: bool = True,
         track_grad_reverse: bool = False,
         ema_sync: float = 0.0,
     ) -> None:
@@ -553,8 +553,8 @@ class IterativeNormLayer(nn.Module):
             Number of samples used to make the mapping. Defaults to None.
         max_n : int
             Maximum number of iterations before the means and vars are frozen.
-        extra_dims : int
-            The extra dimension(s) over which to calculate the stats.
+        dims : int
+            The dimension(s) over which to calculate the stats.
             Dimensions must be expressed for non-batched data!
             Will always calculate over the batch dimension!
         track_grad_forward : bool
@@ -584,24 +584,24 @@ class IterativeNormLayer(nn.Module):
             n = T.tensor(n)
 
         # The dimensions over which to apply the normalisation, make positive!
-        if isinstance(extra_dims, int):  # Ensure it is a list
-            extra_dims = [extra_dims]
+        if isinstance(dims, int):  # Ensure it is a list
+            dims = [dims]
         else:
-            extra_dims = list(extra_dims)
-        if any([abs(e) > len(inpt_dim) for e in extra_dims]):  # Check size
-            raise ValueError("extra_dims argument lists dimensions outside input range")
-        for d in range(len(extra_dims)):
-            if extra_dims[d] < 0:  # make positive
-                extra_dims[d] = len(inpt_dim) + extra_dims[d]
-            extra_dims[d] += 1  # Add one because we are inserting a batch dimension
-        self.extra_dims = extra_dims
+            dims = list(dims)
+        if any([abs(d) > len(inpt_dim) for d in dims]):  # Check size
+            raise ValueError("dims argument lists dimensions outside input range")
+        for d in range(len(dims)):
+            if dims[d] < 0:  # make positive
+                dims[d] = len(inpt_dim) + dims[d]
+            dims[d] += 1  # Add one because we are inserting a batch dimension
+        self.dims = dims
 
         # Calculate the input and output shapes
         self.max_n = max_n
         self.inpt_dim = list(inpt_dim)
         self.stat_dim = [1] + list(inpt_dim)  # Add batch dimension
         for d in range(len(self.stat_dim)):
-            if d in self.extra_dims:
+            if d in self.dims:
                 self.stat_dim[d] = 1
 
         # Buffers are needed for saving/loading the layer
@@ -671,7 +671,7 @@ class IterativeNormLayer(nn.Module):
         """Set the stats given a population of data."""
         inpt = self._mask(inpt, mask)
         self.vars, self.means = T.var_mean(
-            inpt, dim=(0, *self.extra_dims), keepdim=True
+            inpt, dim=(0, *self.dims), keepdim=True
         )
         self.n = T.tensor(len(inpt), device=self.means.device)
         self.m2 = self.vars * self.n
@@ -683,7 +683,6 @@ class IterativeNormLayer(nn.Module):
 
         Uses the inputs to update the running stats if in training mode.
         """
-
         # Save and check the gradient tracking options
         grad_setting = T.is_grad_enabled()
         T.set_grad_enabled(self.track_grad_forward)
@@ -756,9 +755,9 @@ class IterativeNormLayer(nn.Module):
     def _apply_ema_update(self, inpt: T.Tensor) -> None:
         """Use an exponential moving average to update the means and vars."""
         self.n += len(inpt)
-        nm = inpt.mean(dim=(0, *self.extra_dims), keepdim=True)
+        nm = inpt.mean(dim=(0, *self.dims), keepdim=True)
         self.means = self.ema_sync * self.means + (1 - self.ema_sync) * nm
-        nv = (inpt - self.means).square().mean((0, *self.extra_dims), keepdim=True)
+        nv = (inpt - self.means).square().mean((0, *self.dims), keepdim=True)
         self.vars = self.ema_sync * self.vars + (1 - self.ema_sync) * nv
 
     @T.no_grad()
@@ -767,9 +766,9 @@ class IterativeNormLayer(nn.Module):
         m = len(inpt)
         d = inpt - self.means
         self.n += m
-        self.means += (d / self.n).mean(dim=(0, *self.extra_dims), keepdim=True) * m
+        self.means += (d / self.n).mean(dim=(0, *self.dims), keepdim=True) * m
         d2 = inpt - self.means
-        self.m2 += (d * d2).mean(dim=(0, *self.extra_dims), keepdim=True) * m
+        self.m2 += (d * d2).mean(dim=(0, *self.dims), keepdim=True) * m
         self.vars = self.m2 / self.n
 
 
