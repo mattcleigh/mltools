@@ -746,7 +746,7 @@ def plot_multi_hists(
             # Save the first histogram for the ratio plots
             if data_idx == 0:
                 denom_hist = hist
-                # denom_err = hist_err
+                # denom_err = hist_err # Removed for now
 
             # Get the additional keyword arguments for drawing the histograms
             if hist_kwargs[data_idx] is not None and bool(hist_kwargs[data_idx]):
