@@ -670,9 +670,7 @@ class IterativeNormLayer(nn.Module):
     ) -> None:
         """Set the stats given a population of data."""
         inpt = self._mask(inpt, mask)
-        self.vars, self.means = T.var_mean(
-            inpt, dim=(0, *self.dims), keepdim=True
-        )
+        self.vars, self.means = T.var_mean(inpt, dim=(0, *self.dims), keepdim=True)
         self.n = T.tensor(len(inpt), device=self.means.device)
         self.m2 = self.vars * self.n
         if freeze:

@@ -2,7 +2,7 @@
 
 
 import logging
-from typing import Mapping, Optional
+from typing import Mapping
 
 import numpy as np
 import torch as T
