@@ -80,6 +80,7 @@ def sum_except_batch(x: T.Tensor, num_batch_dims: int = 1) -> T.Tensor:
     """Sum all elements of x except for the first num_batch_dims dimensions."""
     return T.sum(x, dim=list(range(num_batch_dims, x.ndim)))
 
+
 class GradsOff:
     """Context manager for passing through a model without it tracking gradients."""
 

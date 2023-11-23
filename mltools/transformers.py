@@ -9,8 +9,8 @@ import torch as T
 import torch.nn as nn
 from torch.nn.functional import scaled_dot_product_attention, softmax
 
-from .utils import insert_if_not_present
 from .modules import DenseNetwork
+from .utils import insert_if_not_present
 
 # # Set the default operation to be flass attention
 # T.backends.cuda.sdp_kernel(enable_flash=True, enable_math=False, enable_mem_efficient=False)

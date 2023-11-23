@@ -35,8 +35,8 @@ DEFAULT_MIN_DERIVATIVE = 1e-3
 def change_kwargs_for_made(old_kwargs: Mapping) -> tuple:
     """Convert a dictionary of keyword arguments.
 
-    Used for configuring kwargs made for my DenseNetwork to one that can
-    initialise a MADE network for the nflows package with similar (not exactly the same)
+    Used for configuring kwargs made for my DenseNetwork to one that can initialise a
+    MADE network for the nflows package with similar (not exactly the same)
     hyperparameters.
     """
     new_kwargs = deepcopy(old_kwargs)
@@ -321,6 +321,7 @@ class ContextSplineTransform(Transform):
 
     def inverse(self, inputs: T.Tensor, context: T.Tensor) -> T.Tensor:
         return self._process(inputs, context, inverse=True)
+
 
 def sum_except_batch(x: T.Tensor, num_batch_dims: int = 1) -> T.Tensor:
     """Sum all elements of x except for the first num_batch_dims dimensions."""

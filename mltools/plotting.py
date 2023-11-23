@@ -746,7 +746,7 @@ def plot_multi_hists(
             # Save the first histogram for the ratio plots
             if data_idx == 0:
                 denom_hist = hist
-                denom_err = hist_err
+                # denom_err = hist_err
 
             # Get the additional keyword arguments for drawing the histograms
             if hist_kwargs[data_idx] is not None and bool(hist_kwargs[data_idx]):
@@ -795,11 +795,11 @@ def plot_multi_hists(
                 # Marker up
                 if rat_ylim is not None:
                     mid_bins = (ax_bins[1:] + ax_bins[:-1]) / 2
-                    ymin, ymax = tuple(*rat_ylim) # Convert to tuple incase list
+                    ymin, ymax = tuple(*rat_ylim)  # Convert to tuple incase list
                     arrow_height = 0.02 * (ymax - ymin)
 
                     # Up values
-                    mask_up = rat_hist>=ymax
+                    mask_up = rat_hist >= ymax
                     up_vals = mid_bins[mask_up]
                     axes[1, ax_idx].arrow(
                         x=up_vals,
@@ -811,7 +811,7 @@ def plot_multi_hists(
                     )
 
                     # Down values
-                    mask_down = rat_hist<=ymin
+                    mask_down = rat_hist <= ymin
                     down_vals = mid_bins[mask_down]
                     axes[1, ax_idx].arrow(
                         x=down_vals,
@@ -877,7 +877,6 @@ def plot_multi_hists(
             )
 
             # After doing the limits for
-
 
         # Extra text
         if extra_text[ax_idx] is not None:

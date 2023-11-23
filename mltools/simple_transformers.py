@@ -1,9 +1,9 @@
 """Some classes to describe transformer architectures."""
 
 import math
+import warnings
 from functools import partial
 from typing import Mapping
-import warnings
 
 import torch as T
 import torch.nn as nn
@@ -11,14 +11,14 @@ import torch.nn.functional as F
 
 from .modules import DenseNetwork
 
+
 def merge_masks(
     kv_mask: T.BoolTensor | None,
     attn_mask: T.BoolTensor | None,
     attn_bias: T.Tensor | None,
     query: T.Size,
 ) -> None | T.BoolTensor:
-    """Create a full attention mask which using the padding information and bias.
-    """
+    """Create a full attention mask which using the padding information and bias."""
 
     # Create the placeholder for the full mask, None is full attention
     merged_mask = None
@@ -101,11 +101,12 @@ def my_scaled_dot_product_attention(
         attn_mask = 0.0
 
     # Apply the attention operation using the mask as a bias
-    attn_weight = (query @ key.transpose(-2, -1) / math.sqrt(query.size(-1)))
+    attn_weight = query @ key.transpose(-2, -1) / math.sqrt(query.size(-1))
     attn_weight += attn_mask
     attn_weight = T.dropout(attn_weight, dropout_p, train=True)
 
     return attn_weight @ value
+
 
 def attach_context(x: T.Tensor, ctxt: T.Tensor | None = None) -> T.Tensor:
     """Concat a tensor with context which has the same or lower dimensions."""
@@ -130,6 +131,8 @@ def apply_rotary_pos_emb(x: T.Tensor, cos: T.Tensor, sin: T.Tensor) -> T.Tensor:
 
 
 class LayerScale(nn.Module):
+    """Applies the LayerScale operation from the Cait vision transformer."""
+
     def __init__(
         self,
         dim: int,
@@ -246,7 +249,6 @@ class Attention(nn.Module):
         attn_mask: T.BoolTensor | None = None,
         attn_bias: T.Tensor | None = None,
     ) -> T.Tensor:
-
         # Generate the q, k, v projections
         if self.do_self_attn:
             q, k, v = self.attn_in(x).chunk(3, -1)
@@ -321,9 +323,7 @@ class EncoderBlock(nn.Module):
             layerscale_init,
         )
         self.ff = PreNormScaledResidual(
-            SwiGLUNet(dim, ff_mult * dim, ctxt_dim, dropout),
-            dim,
-            layerscale_init
+            SwiGLUNet(dim, ff_mult * dim, ctxt_dim, dropout), dim, layerscale_init
         )
 
     def forward(
@@ -382,10 +382,7 @@ class TransformerEncoder(nn.Module):
 
         # Encoder layers
         self.layers = nn.ModuleList(
-            [
-                EncoderBlock(dim, ctxt_dim, **layer_config)
-                for _ in range(num_layers)
-            ]
+            [EncoderBlock(dim, ctxt_dim, **layer_config) for _ in range(num_layers)]
         )
 
         # Final normalisation layer
@@ -423,8 +420,10 @@ class CrossAttentionEncoder(TransformerEncoder):
         # The learnable global tokens and extra modules
         self.global_tokens = nn.Parameter(T.randn((1, num_tokens, self.dim)) * 1e-3)
         self.pool_layers = nn.ModuleList(
-            [EncoderBlock(self.dim, self.ctxt_dim, **self.layer_config)
-            for _ in range(self.num_layers)]
+            [
+                EncoderBlock(self.dim, self.ctxt_dim, **self.layer_config)
+                for _ in range(self.num_layers)
+            ]
         )
 
     def forward(self, x: T.Tensor, kv_mask: T.BoolTensor, **kwargs) -> T.Tensor:
@@ -474,8 +473,10 @@ class ClassAttentionPooling(nn.Module):
         # Modules
         self.global_token = nn.Parameter(T.randn((1, 1, self.dim)) * 1e-3)
         self.layers = nn.ModuleList(
-            [EncoderBlock(dim, ctxt_dim, **self.layer_config)
-            for _ in range(num_layers)]
+            [
+                EncoderBlock(dim, ctxt_dim, **self.layer_config)
+                for _ in range(num_layers)
+            ]
         )
 
     def forward(self, x: T.Tensor, **kwargs) -> T.Tensor:
@@ -550,8 +551,7 @@ class FullEncoder(nn.Module):
             self.edge_emdb = DenseNetwork(
                 inpt_dim=self.edge_dim,
                 ctxt_dim=self.ctxt_out,
-                outp_dim=self.num_heads
-                **edge_embd_config
+                outp_dim=self.num_heads**edge_embd_config,
             )
 
     def forward(

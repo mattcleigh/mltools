@@ -57,6 +57,7 @@ def avg_pool_nd(dims, *args, **kwargs):
 
 class ConditionedModule(nn.Module):
     """Base class for models that need context when processing data."""
+
     pass
 
 
@@ -236,7 +237,7 @@ class MultiHeadedAttentionBlock(ConditionedModule):
         self.do_pos_encoding = do_pos_encoding
 
         # The learnable positional encodings
-        self.pos_enc = nn.Parameter(T.randn(1, inpt_channels, *inpt_shape)*1e-3)
+        self.pos_enc = nn.Parameter(T.randn(1, inpt_channels, *inpt_shape) * 1e-3)
 
         # The method for normalisation is where the context is injected
         if ctxt_dim:
