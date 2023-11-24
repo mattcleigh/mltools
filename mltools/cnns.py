@@ -237,7 +237,8 @@ class MultiHeadedAttentionBlock(ConditionedModule):
         self.do_pos_encoding = do_pos_encoding
 
         # The learnable positional encodings
-        self.pos_enc = nn.Parameter(T.randn(1, inpt_channels, *inpt_shape) * 1e-3)
+        if self.do_pos_encoding:
+            self.pos_enc = nn.Parameter(T.randn(1, inpt_channels, *inpt_shape) * 1e-3)
 
         # The method for normalisation is where the context is injected
         if ctxt_dim:
