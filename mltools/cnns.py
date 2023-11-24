@@ -9,7 +9,7 @@ import torch as T
 import torch.nn as nn
 from torch.nn.functional import group_norm, interpolate, scaled_dot_product_attention
 
-from .modules import DenseNetwork
+from .mlp import MLP
 from .torch_utils import append_dims, get_act
 
 log = logging.getLogger(__name__)
@@ -388,7 +388,7 @@ class DoublingConvNet(nn.Module):
         self.resnet_blocks = nn.ModuleList(resnet_blocks)
 
         # Create the dense network
-        self.dense = DenseNetwork(
+        self.dense = MLP(
             inpt_dim=np.prod(out_size) * out_c,
             outp_dim=outp_dim,
             ctxt_dim=ctxt_dim,
@@ -503,9 +503,7 @@ class UNet(nn.Module):
         # If there is a context input, maybe you want a network to embed it
         if ctxt_dim:
             if use_ctxt_embedder:
-                self.context_embedder = DenseNetwork(
-                    inpt_dim=ctxt_dim, **ctxt_embed_config
-                )
+                self.context_embedder = MLP(inpt_dim=ctxt_dim, **ctxt_embed_config)
                 emb_ctxt_size = self.context_embedder.outp_dim
             else:
                 self.context_embedder = nn.Identity()

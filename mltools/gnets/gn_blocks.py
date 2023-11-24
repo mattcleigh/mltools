@@ -7,17 +7,16 @@ import torch.nn as nn
 import torch.nn.functional as F
 from dotmap import DotMap
 
-from ..modules import DenseNetwork
+from ..mlp import MLP
 from ..torch_utils import (
     aggr_via_sparse,
-    ctxt_from_mask,
     decompress,
     empty_0dim_like,
     masked_pool,
-    pass_with_mask,
     smart_cat,
 )
 from .graphs import GraphBatch
+from .utils import ctxt_from_mask, pass_with_mask
 
 
 class EdgeBlock(nn.Module):
@@ -99,7 +98,7 @@ class EdgeBlock(nn.Module):
 
         # The dense network to update messsages
         if use_net:
-            self.feat_net = DenseNetwork(
+            self.feat_net = MLP(
                 inpt_dim=self.feat_inpt_dim,
                 ctxt_dim=self.ctxt_inpt_dim,
                 **self.feat_kwargs,
@@ -107,7 +106,7 @@ class EdgeBlock(nn.Module):
 
         # The attention network for pooling
         if pool_type == "attn":
-            self.attn_net = DenseNetwork(
+            self.attn_net = MLP(
                 inpt_dim=self.feat_inpt_dim,
                 ctxt_dim=self.ctxt_inpt_dim,
                 **self.attn_kwargs,
@@ -326,7 +325,7 @@ class NodeBlock(nn.Module):
 
         # The dense network to update features
         if use_net:
-            self.feat_net = DenseNetwork(
+            self.feat_net = MLP(
                 inpt_dim=self.feat_inpt_dim,
                 ctxt_dim=self.ctxt_inpt_dim,
                 **self.feat_kwargs,
@@ -334,7 +333,7 @@ class NodeBlock(nn.Module):
 
         # The attention network for pooling
         if pool_type == "attn" and do_globs:
-            self.attn_net = DenseNetwork(
+            self.attn_net = MLP(
                 inpt_dim=self.feat_inpt_dim,
                 ctxt_dim=self.ctxt_inpt_dim,
                 **self.attn_kwargs,
@@ -514,7 +513,7 @@ class GlobBlock(nn.Module):
 
         # The dense network to update features
         if use_net:
-            self.feat_net = DenseNetwork(
+            self.feat_net = MLP(
                 inpt_dim=self.feat_inpt_dim, ctxt_dim=self.ctxt_dim, **self.feat_kwargs
             )
 

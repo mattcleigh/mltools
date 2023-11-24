@@ -23,7 +23,7 @@ from normflows.transforms.splines.rational_quadratic import (
     unconstrained_rational_quadratic_spline,
 )
 
-from .modules import DenseNetwork
+from .mlp import MLP
 from .torch_utils import get_act
 from .utils import key_change
 
@@ -35,9 +35,8 @@ DEFAULT_MIN_DERIVATIVE = 1e-3
 def change_kwargs_for_made(old_kwargs: Mapping) -> tuple:
     """Convert a dictionary of keyword arguments.
 
-    Used for configuring kwargs made for my DenseNetwork to one that can initialise a
-    MADE network for the nflows package with similar (not exactly the same)
-    hyperparameters.
+    Used for configuring kwargs made for my MLP to one that can initialise a MADE
+    network for the nflows package with similar (not exactly the same) hyperparameters.
     """
     new_kwargs = deepcopy(old_kwargs)
 
@@ -135,8 +134,8 @@ def stacked_norm_flow(
     # For coupling layers we need to define a custom network maker function
     elif param_func == "cplng":
 
-        def net_mkr(inpt, outp) -> DenseNetwork:
-            return DenseNetwork(inpt, outp, **net_kwargs)
+        def net_mkr(inpt, outp) -> MLP:
+            return MLP(inpt, outp, **net_kwargs)
 
     # Start the list of transforms out as an empty list
     trans_list = []
@@ -247,7 +246,7 @@ class ContextSplineTransform(Transform):
         self.tail_bound = tail_bound
         self.init_identity = init_identity
 
-        self.net = DenseNetwork(
+        self.net = MLP(
             inpt_dim=ctxt_dim,
             outp_dim=inpt_dim * self._output_dim_multiplier(),
             **(dense_config or {})

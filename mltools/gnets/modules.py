@@ -14,9 +14,10 @@ import torch.nn as nn
 from ..distances import knn, masked_dist_matrix
 from ..gnets.gn_blocks import GNBlock
 from ..gnets.graphs import GraphBatch
-from ..modules import DenseNetwork
-from ..torch_utils import pass_with_mask, smart_cat
+from ..mlp import MLP
+from ..torch_utils import smart_cat
 from ..utils import merge_dict
+from .utils import pass_with_mask
 
 
 class EmbeddingLayer(nn.Module):
@@ -47,7 +48,7 @@ class EmbeddingLayer(nn.Module):
         self.ctxt_dim = ctxt_dim
 
         # The node embedding mlp (default output is the same as input)
-        self.dense_net = DenseNetwork(
+        self.dense_net = MLP(
             inpt_dim=inpt_dim[1], ctxt_dim=inpt_dim[2] + ctxt_dim, **net_kwargs
         )
 
@@ -442,9 +443,7 @@ class FullGraphVectorGenerator(nn.Module):
         self.ctxt_dim = ctxt_dim
 
         # The initial dense network
-        self.vec_embd = DenseNetwork(
-            inpt_dim=inpt_dim, ctxt_dim=ctxt_dim, **vect_embd_kwargs
-        )
+        self.vec_embd = MLP(inpt_dim=inpt_dim, ctxt_dim=ctxt_dim, **vect_embd_kwargs)
 
         # The graph generator
         self.gvg = GraphVectorGenerator(
@@ -502,7 +501,7 @@ class FullGraphVectorEncoder(nn.Module):
 
         # The series of modules that make up the network
         self.gnn = GraphNeuralNetwork(inpt_dim, ctxt_dim, **gnn_kwargs)
-        self.dns = DenseNetwork(
+        self.dns = MLP(
             inpt_dim=self.gnn.outp_dim[2],
             ctxt_dim=ctxt_dim,
             outp_dim=outp_dim,

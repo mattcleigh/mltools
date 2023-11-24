@@ -121,10 +121,14 @@ def save_config(cfg: OmegaConf) -> None:
     """
 
     # In order to be able to resume the wandb logger session, save the run id
-    if hasattr(cfg, "loggers"):
-        if hasattr(cfg.loggers, "wandb"):
-            if wandb.run is not None:
+    if wandb.run is not None:
+        if hasattr(cfg, "loggers"):
+            if hasattr(cfg.loggers, "wandb"):
                 cfg.loggers.wandb.id = wandb.run.id
+            else:
+                log.warning("WandB is running but cant find config/loggers/wandb!")
+                log.warning("This is required to save the ID for resuming jobs.")
+                log.warning("Is the name of the logger set correctly")
 
     # save config tree to file
     OmegaConf.save(cfg, Path(cfg.paths.full_path, "full_config.yaml"), resolve=True)

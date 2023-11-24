@@ -10,7 +10,7 @@ with open("requirements.txt") as f:
 
 setuptools.setup(
     name="mltools",
-    version="1.5.0",
+    version="2.0.0",
     author="Matthew Leigh",
     author_email="mattcleigh@gmail.com",
     description="Some common utilities used in my DL projects",

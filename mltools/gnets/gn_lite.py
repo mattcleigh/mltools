@@ -6,8 +6,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from ..gnets.graphs import GraphBatch
-from ..gnets.modules import DenseNetwork
-from ..torch_utils import aggr_via_sparse, ctxt_from_mask, decompress, pass_with_mask
+from ..mlp import MLP
+from ..torch_utils import aggr_via_sparse, decompress
+from .utils import ctxt_from_mask, pass_with_mask
 
 
 class EdgeBlockLite(nn.Module):
@@ -47,7 +48,7 @@ class EdgeBlockLite(nn.Module):
         self.same_size = inpt_dim[0] == outp_dim[0]
 
         # The dense network to update messsages
-        self.feat_net = DenseNetwork(
+        self.feat_net = MLP(
             inpt_dim=edge_inpt_dim,
             outp_dim=outp_dim[0],
             ctxt_dim=ctxt_inpt_dim,
@@ -55,7 +56,7 @@ class EdgeBlockLite(nn.Module):
         )
 
         # The attention network for pooling
-        self.attn_net = DenseNetwork(
+        self.attn_net = MLP(
             inpt_dim=edge_inpt_dim,
             outp_dim=n_heads,
             ctxt_dim=ctxt_inpt_dim,
@@ -151,7 +152,7 @@ class NodeBlockLite(nn.Module):
         self.same_size = inpt_dim[1] == outp_dim[1]
 
         # The dense network to update messsages
-        self.feat_net = DenseNetwork(
+        self.feat_net = MLP(
             inpt_dim=node_inpt_dim,
             outp_dim=outp_dim[1],
             ctxt_dim=ctxt_inpt_dim,
@@ -159,7 +160,7 @@ class NodeBlockLite(nn.Module):
         )
 
         # The attention network for pooling
-        self.attn_net = DenseNetwork(
+        self.attn_net = MLP(
             inpt_dim=node_inpt_dim,
             outp_dim=n_heads,
             ctxt_dim=ctxt_inpt_dim,
@@ -242,7 +243,7 @@ class GlobBlockLite(nn.Module):
         self.same_size = inpt_dim[2] == outp_dim[2]
 
         # The dense network to update messsages
-        self.feat_net = DenseNetwork(
+        self.feat_net = MLP(
             inpt_dim=glob_inpt_dim,
             outp_dim=outp_dim[2],
             ctxt_dim=ctxt_dim,

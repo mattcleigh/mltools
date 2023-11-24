@@ -1,4 +1,4 @@
-"""General mix of utility functions not related to numpy or pytorch."""
+"""General mix of utility functions mainly concerning dictionaries."""
 
 import argparse
 import json
@@ -6,17 +6,7 @@ import math
 import operator
 from functools import reduce
 from itertools import chain, count, islice
-from pathlib import Path
-from typing import Any, Generator, Iterable, Mapping, Union
-
-import yaml
-from dotmap import DotMap
-from sklearn.preprocessing import (
-    PowerTransformer,
-    QuantileTransformer,
-    RobustScaler,
-    StandardScaler,
-)
+from typing import Any, Generator, Iterable, Mapping
 
 
 def standard_job_array(
@@ -238,68 +228,6 @@ def insert_if_not_present(dictionary: dict, key: str, value: Any) -> None:
 def signed_angle_diff(angle1: Any, angle2: Any = 0) -> Any:
     """Calculate diff between two angles reduced to the interval of [-pi, pi]"""
     return (angle1 - angle2 + math.pi) % (2 * math.pi) - math.pi
-
-
-def load_yaml_files(files: Union[list, tuple, str]) -> tuple:
-    """Load a list of files using yaml and returns a tuple of dictionaries."""
-
-    # If the input is not a list then it returns a dict
-    if isinstance(files, (str, Path)):
-        with open(files, encoding="utf-8") as f:
-            return yaml.load(f, Loader=yaml.Loader)
-
-    opened = []
-
-    # Load each file using yaml
-    for fnm in files:
-        with open(fnm, encoding="utf-8") as f:
-            opened.append(yaml.load(f, Loader=yaml.Loader))
-
-    return tuple(opened)
-
-
-def save_yaml_files(
-    path: str, file_names: Union[str, list, tuple], dicts: Union[dict, list, tuple]
-) -> None:
-    """Save a collection of yaml files in a folder.
-
-    - Makes the folder if it does not exist
-    """
-
-    # If the input is not a list then one file is saved
-    if isinstance(file_names, (str, Path)):
-        with open(f"{path}/{file_names}.yaml", "w", encoding="UTF-8") as f:
-            yaml.dump(
-                dicts.toDict() if isinstance(dicts, DotMap) else dicts,
-                f,
-                sort_keys=False,
-            )
-        return
-
-    # Make the folder
-    Path(path).mkdir(parents=True, exist_ok=True)
-
-    # Save each file using yaml
-    for f_nm, dic in zip(file_names, dicts):
-        with open(f"{path}/{f_nm}.yaml", "w", encoding="UTF-8") as f:
-            yaml.dump(
-                dic.toDict() if isinstance(dic, DotMap) else dic, f, sort_keys=False
-            )
-
-
-def get_scaler(name: str):
-    """Return a sklearn scaler object given a name."""
-    if name == "standard":
-        return StandardScaler()
-    if name == "robust":
-        return RobustScaler()
-    if name == "power":
-        return PowerTransformer()
-    if name == "quantile":
-        return QuantileTransformer(output_distribution="normal")
-    if name == "none":
-        return None
-    raise ValueError(f"No sklearn scaler with name: {name}")
 
 
 def batched(iterable: Iterable, n: int) -> Generator:

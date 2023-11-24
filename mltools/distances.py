@@ -3,77 +3,6 @@
 import torch as T
 import torch.nn.functional as F
 
-EPS = 1e-8  # epsilon for preventing division by zero
-
-
-# def masked_diff_matrix(
-#     tensor_a: T.Tensor,
-#     mask_a: T.BoolTensor,
-#     tensor_b: T.Tensor | None = None,
-#     mask_b: T.BoolTensor | None = None,
-#     pad_val: float = float("Inf"),
-#     allow_self: bool = False,
-#     track_grad: bool = False,
-# ) -> T.Tensor:
-#     """Build a difference matrix between two masked/padded tensors.
-
-#     - DOES NOT WORK WITH BATCH DIMENSION FOR NOW!
-
-#     - Will create the self distance matrix if only one tensor and mask is provided
-#     - The distance matrix will be padded
-#     - Uses the tensors as a->senders (dim 1) vs b->receivers (dim 2)
-#         - Symettrical if doing self distance (tensor_b is none)
-#     - Attributes of the matrix will be the senders-receivers
-
-#     args:
-#         tensor_a: The first tensor to use (n_nodes x n_features)
-#         mask_a: Shows which nodes in tensor_a are real (n_nodes)
-#     kwargs:
-#         tensor_b:
-#             The second tensor to use (N_nodes x n_features)
-#         mask_b:
-#             Shows which nodes in tensor_b are real (n_nodes)
-#         pad_val:
-#             The value to use for distances between fake and real (fake) nodes
-#         allow_self:
-#             Only applicable for self distances. Allows self connections.
-#         track_grad:
-#             If the gradients are tracked during this step (memory heavy!)
-#     Return:
-#         diff_matrix:
-#             distance between tensor_a and tensor_a(b)
-#         matrix_mask:
-#             location of connections between real nodes
-#     """
-
-#     # Save current gradient settings then change to argument
-#     has_grad = T.is_grad_enabled()
-#     T.set_grad_enabled(track_grad)
-
-#     # Check if this is a self distance matrix
-#     is_self_dist = tensor_b is None
-#     if is_self_dist:
-#         tensor_b = tensor_a
-#         mask_b = mask_a
-
-#     # Calculate the matrix mask of real nodes to real nodes
-#     matrix_mask = mask_a.unsqueeze(-1) * mask_b.unsqueeze(-2)
-
-#     # Remove diagonal (loops) from the mask for self connections
-#     if not allow_self and is_self_dist:
-#         matrix_mask *= ~T.eye(len(mask_a)).bool()
-
-#     # Calculate the distance matrix as normal
-#     diff_matrix = tensor_a.unsqueeze(-2) - tensor_b.unsqueeze(-3)
-
-#     # Ensure the distances between fake nodes take the padding value
-#     diff_matrix[~matrix_mask] = pad_val
-
-#     # Revert the gradient tracking to the previous setting
-#     T.set_grad_enabled(has_grad)
-
-#     return diff_matrix, matrix_mask.detach()
-
 
 def masked_dist_matrix(
     tensor_a: T.Tensor,
@@ -140,7 +69,7 @@ def masked_dist_matrix(
     if measure == "dot":
         a_info = matrix_mask.unsqueeze(-1) * tensor_a.unsqueeze(-2)
         b_info = matrix_mask.unsqueeze(-1) * tensor_b.unsqueeze(-3)
-        dist_matrix = F.cosine_similarity(a_info, b_info, -1, EPS)
+        dist_matrix = F.cosine_similarity(a_info, b_info, -1, 1e-8)
 
     # Ensure the distances between fake nodes take the padding value
     if track_grad:
@@ -218,7 +147,7 @@ def knn(
         # If the size of the point cloud is smaller than k+1
         if distmat.shape[-1] - 1 <= k_val:
             # Simply return where the distance matrix is not infinite
-            return distmat < distmat + EPS  # (Inf < Inf + EPS) is always false!
+            return distmat < distmat + 1e-8  # (Inf < Inf + 1e-8) is always false!
 
         # If looking for the top k connections then flip sign
         if top_k:
@@ -232,4 +161,4 @@ def knn(
         max_distances = T.transpose(max_distances, -1, -2)
 
     # Build a connection if the distance between nodes is smaller or equal to the max
-    return distmat < max_distances + EPS
+    return distmat < max_distances + 1e-8
