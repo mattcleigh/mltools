@@ -7,7 +7,7 @@ from typing import Literal, Mapping
 import numpy as np
 import torch as T
 import torch.nn as nn
-from normflows.transforms import (
+from nflows.transforms import (
     ActNorm,
     AffineCouplingTransform,
     BatchNorm,
@@ -17,8 +17,8 @@ from normflows.transforms import (
     MaskedPiecewiseRationalQuadraticAutoregressiveTransform,
     PiecewiseRationalQuadraticCouplingTransform,
 )
-from normflows.transforms.base import Transform
-from normflows.transforms.splines.rational_quadratic import (
+from nflows.transforms.base import Transform
+from nflows.transforms.splines.rational_quadratic import (
     rational_quadratic_spline,
     unconstrained_rational_quadratic_spline,
 )

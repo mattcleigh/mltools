@@ -138,7 +138,7 @@ class LayerScale(nn.Module):
         super().__init__()
         self.gamma = nn.Parameter(init_value * T.ones(dim))
 
-    def forward(self, x: T.ensor) -> T.Tensor:
+    def forward(self, x: T.Tensor) -> T.Tensor:
         return x * self.gamma
 
 
@@ -369,7 +369,7 @@ class TransformerEncoder(nn.Module):
 
         # Initial linear projection (Here because of positional embedding)
         if self.do_input_linear:
-            self.linear_embed(inpt_dim, dim)
+            self.linear_embed = nn.Linear(inpt_dim, dim)
 
         # Absolute positional encoding
         if self.do_absolute_enc:

@@ -580,12 +580,6 @@ class UNet(nn.Module):
                     ctxt_dim=emb_ctxt_size,
                     **resnet_config,
                 ),
-                MultiHeadedAttentionBlock(
-                    inpt_channels=out_c[-1],
-                    inpt_shape=out_size[-1],
-                    ctxt_dim=emb_ctxt_size,
-                    **attn_config,
-                ),
                 ResNetBlock(
                     inpt_channels=out_c[-1],
                     outp_channels=out_c[-1],
@@ -594,6 +588,18 @@ class UNet(nn.Module):
                 ),
             ]
         )
+
+        # Insert an attention into the middle blocks if the size is small enough
+        if max(out_size[-1]) <= attn_below:
+            self.middle_blocks.insert(
+                1,
+                MultiHeadedAttentionBlock(
+                    inpt_channels=out_c[-1],
+                    inpt_shape=out_size[-1],
+                    ctxt_dim=emb_ctxt_size,
+                    **attn_config,
+                ),
+            )
 
         # Loop in reverse to create the decoder blocks
         decoder_blocks = []
