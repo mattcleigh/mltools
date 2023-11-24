@@ -14,6 +14,11 @@ from .loss import ChampferLoss, MyBCEWithLogit, VAELoss
 from .schedulers import CyclicWithWarmup, LinearWarmupRootDecay, WarmupToConstant
 
 
+def sum_except_batch(x: T.Tensor, num_batch_dims: int = 1) -> T.Tensor:
+    """Sum all elements of x except for the first num_batch_dims dimensions."""
+    return T.sum(x, dim=list(range(num_batch_dims, x.ndim)))
+
+
 def append_dims(x: T.Tensor, target_dims: int, add_to_front: bool = False) -> T.Tensor:
     """Append dimensions of size 1 to the end or front of a tensor.
 
@@ -71,11 +76,6 @@ def dtype_lookup(dtype: Any) -> T.dtype:
         "int": T.int32,
         "long": T.int64,
     }[dtype]
-
-
-def sum_except_batch(x: T.Tensor, num_batch_dims: int = 1) -> T.Tensor:
-    """Sum all elements of x except for the first num_batch_dims dimensions."""
-    return T.sum(x, dim=list(range(num_batch_dims, x.ndim)))
 
 
 class GradsOff:
