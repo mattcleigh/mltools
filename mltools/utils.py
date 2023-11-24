@@ -41,12 +41,13 @@ def standard_job_array(
     f.write("#!/bin/sh\n\n")
     f.write(f"#SBATCH --cpus-per-task={n_cpus}\n")
     f.write(f"#SBATCH --mem={mem_gb}GB\n")
-    f.write(f"#SBATCH --time={time_hrs}:00:00\n")
+    f.write(f"#SBATCH --time={time_hrs//24}-{time_hrs%24:02d}:00:00\n")
     f.write(f"#SBATCH --job-name={job_name}\n")
     f.write(f"#SBATCH --output={log_dir}/%A_%a.out\n")
+    f.write(f"#SBATCH --chdir={work_dir}\n")
     if n_gpus:
         f.write("#SBATCH --partition=shared-gpu,private-dpnc-gpu\n")
-        s = "#SBATCH --gpus="
+        s = "#SBATCH --gres=gpu:"
         if gpu_type:
             s += f"{gpu_type}:"
         s += f"{n_gpus}"
@@ -75,7 +76,6 @@ def standard_job_array(
     f.write('export XDG_RUNTIME_DIR=""\n')
 
     # Creating the base singularity execution script
-    f.write(f"cd {work_dir}\n")
     f.write("srun apptainer exec --nv -B /srv,/home \\\n")
     f.write(f"   {image_path} \\\n")
     f.write(f"   {command} \\\n")
