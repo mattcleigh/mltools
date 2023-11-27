@@ -169,7 +169,7 @@ class MLP(nn.Module):
         ctxt_in_hddn: bool = False,
         ctxt_in_out: bool = False,
         do_bayesian: bool = False,
-        output_init_zeros: bool = False,
+        init_zeros: bool = False,
         use_bias: bool = True,
     ) -> None:
         """Initialise the MLP.
@@ -177,52 +177,48 @@ class MLP(nn.Module):
         Parameters
         ----------
         inpt_dim : int
-            The number of input neurons
+            The number of input features
         outp_dim : int, optional
-            The number of output neurons. If none it will take from inpt or hddn,
-            by default 0
+            The number of output features, by default 0
         ctxt_dim : int, optional
-            The number of context features. The context feature use is determined by
-            ctxt_type, by default 0
-        hddn_dim : Union[int, list], optional
-            The width of each hidden block. If a list it overides depth, by default 32
+            The number of contextual features, by default 0
+        hddn_dim : int | list, optional
+            The number of hidden features in each block, by default 32
         num_blocks : int, optional
-            The number of hidden blocks, can be overwritten by hddn_dim, by default 1
-        n_lyr_pbk : int, optional
-            The number of transform layers per hidden block, by default 1
+            The number of hidden blocks, by default 1.
+            Ignored if hddn_dim is a list.
+        n_lyr_pbk: int, optional
+            The number of layers in each hidden block, by default 1
         act_h : str, optional
-            The name of the activation function to apply in the hidden blocks,
-            by default "lrlu"
+            The activation function for the hidden blocks, by default "lrlu"
         act_o : str, optional
-            The name of the activation function to apply to the outputs,
-            by default "none"
+            The activation function for the output block, by default "none"
         do_out : bool, optional
-            If the network has a dedicated output block, by default True
+            If to include an output block, by default True
         nrm : str, optional
-            Type of normalisation (layer or batch) in each hidden block, by default "none"
+            The normalisation for the hidden blocks, by default "none"
         drp : float, optional
-            Dropout probability for hidden layers (0 means no dropout), by default 0
-        do_res : bool, optional
-            Use resisdual-connections between hidden blocks (only if same size),
-            by default False
-        ctxt_in_inpt : bool, optional
-            Include the ctxt tensor in the input block, by default True
-        ctxt_in_hddn : bool, optional
-            Include the ctxt tensor in the hddn blocks, by default False
-        ctxt_in_out : bool, optional
-            Include the ctxt tensor in the output blocks, by default False
+            The dropout probability for the hidden blocks, by default 0
+        drp_on_output : bool, optional
+            If to apply dropout to the output block, by default False
+        nrm_on_output : bool, optional
+            If to apply normalisation to the output block, by default False
+        do_res  : bool, optional
+            If to include residual connections, by default False
+        ctxt_in_inpt    : bool, optional
+            If to concatenate the context to the input layer, by default True
+        ctxt_in_hddn    : bool, optional
+            If to concatenate the context to the hidden layers, by default False
+        ctxt_in_out    : bool, optional
+            If to concatenate the context to the output layer, by default False
         do_bayesian : bool, optional
-            Create the network with bayesian linear layers, by default False
-        output_init_zeros : bool, optional
-            Initialise the output layer weights as zeros
+            If to fill the block with bayesian linear layers, by default False
+        init_zeros  : bool, optional
+            If the final layer parameters in each MLP block are set to zero
+            Does not apply to bayesian layers
+            Will also prevent normalisation
         use_bias: bool, optional
-            If the linear layers use a bias terms
-
-        Raises
-        ------
-        ValueError
-            If the network was given a context input but both ctxt_in_inpt and
-            ctxt_in_all were False
+            If the linear layers use bias terms
         """
         super().__init__()
 
@@ -272,6 +268,7 @@ class MLP(nn.Module):
                         nrm=nrm,
                         drp=drp,
                         do_res=do_res,
+                        init_zeros=init_zeros,
                         do_bayesian=do_bayesian,
                         use_bias=use_bias,
                     )
@@ -285,7 +282,7 @@ class MLP(nn.Module):
                 ctxt_dim=self.ctxt_dim if ctxt_in_out else 0,
                 act=act_o,
                 do_bayesian=do_bayesian,
-                init_zeros=output_init_zeros,
+                init_zeros=init_zeros,
                 nrm=nrm if nrm_on_output else "none",
                 drp=drp if drp_on_output else 0,
                 use_bias=use_bias,

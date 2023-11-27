@@ -1,6 +1,6 @@
 """Functions and classes used to define invertible transformations."""
 
-from typing import Literal
+from typing import Callable, Literal
 
 import normflows as nf
 import numpy as np
@@ -113,7 +113,7 @@ def rqs_flow(
     num_stacks: int = 3,
     mlp_width: int = 32,
     mlp_depth: int = 2,
-    mlp_act: str = "lrlu",
+    mlp_act: Callable = nn.LeakyReLU,
     tail_bound: float = 4.0,
     dropout: float = 0.0,
     num_bins: int = 8,
