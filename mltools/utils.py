@@ -242,25 +242,6 @@ def batched(iterable: Iterable, n: int) -> Generator:
         yield batch
 
 
-def evenly_spaced(*iterables) -> list:
-    """Return an evenly spaced list from a raggest nest.
-
-    Taken from: https://stackoverflow.com/a/19293603.
-
-    >>> evenly_spaced(range(10), list('abc'))
-    [0, 1, 'a', 2, 3, 4, 'b', 5, 6, 7, 'c', 8, 9]
-    """
-    return [
-        item[1]
-        for item in sorted(
-            chain.from_iterable(
-                zip(count(start=1.0 / (len(seq) + 1), step=1.0 / (len(seq) + 1)), seq)
-                for seq in iterables
-            )
-        )
-    ]
-
-
 def distribute(sequence):
     """Enumerate the sequence evenly over the interval (0, 1).
 

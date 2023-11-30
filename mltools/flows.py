@@ -1,6 +1,6 @@
 """Functions and classes used to define invertible transformations."""
 
-from typing import Literal
+from typing import Callable, Literal
 
 import normflows as nf
 import numpy as np
@@ -10,7 +10,7 @@ from normflows.flows.neural_spline.coupling import PiecewiseRationalQuadraticCou
 from normflows.nets.resnet import ResidualNet
 from normflows.utils.masks import create_alternating_binary_mask
 from normflows.utils.splines import DEFAULT_MIN_DERIVATIVE
-
+from .torch_utils import get_act
 
 class PermuteEvenOdd(nf.flows.Flow):
     """Permutation features along the channel dimension swapping even and odd values."""
@@ -113,7 +113,7 @@ def rqs_flow(
     num_stacks: int = 3,
     mlp_width: int = 32,
     mlp_depth: int = 2,
-    mlp_act: str = "lrlu",
+    mlp_act: str | Callable = "lrlu",
     tail_bound: float = 4.0,
     dropout: float = 0.0,
     num_bins: int = 8,
@@ -123,6 +123,9 @@ def rqs_flow(
     flow_type: Literal["made", "coupling"] = "coupling",
 ) -> nf.flows.Composite:
     """Return a rational quadratic spline normalising flow."""
+
+    if isinstance(mlp_act, str):
+        mlp_act = get_act(mlp_act).__class__
 
     kwargs = {
         "num_input_channels": xz_dim,
@@ -154,7 +157,7 @@ def rqs_flow(
             flows += [nf.flows.ActNorm(xz_dim)]
 
     # Set base distribuiton
-    q0 = nf.distributions.DiagGaussian(xz_dim)
+    q0 = nf.distributions.DiagGaussian(xz_dim, trainable=False)
 
     # Return the full flow
     if ctxt_dim:

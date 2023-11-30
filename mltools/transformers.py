@@ -386,26 +386,25 @@ class TransformerEncoder(nn.Module):
         if self.do_final_norm:
             self.final_norm = nn.LayerNorm(dim)
 
-    def forward(self, x: T.Tensor, **kwargs) -> T.Tensor:
-        # Apply the initial linear embedding
+    def project(self, x: T.Tensor):
+        """Project the input to the transformer dimension."""
         if self.do_input_linear:
             x = self.linear_embed(x)
-
-        # Add the positional encoding
         if self.do_absolute_enc:
             x = x + self.abs_enc[:, : x.shape[-2], :]
-
-        # Pass through the layers
-        for layer in self.layers:
-            x = layer(x, **kwargs)
-
-        # The final normalisation layer
-        if self.do_final_norm:
-            x = self.final_norm(x)
-
-        # Output projections
         return x
 
+    def encode(self, x: T.Tensor, **kwargs) -> T.Tensor:
+        """Pass the input through all layers sequentially."""
+        for layer in self.layers:
+            x = layer(x, **kwargs)
+        if self.do_final_norm:
+            x = self.final_norm(x)
+        return x
+
+    def forward(self, x: T.Tensor, **kwargs) -> T.Tensor:
+        """Project and encode, seperated for flexibility and FlowBert"""
+        return self.encode(self.project(x), **kwargs)
 
 class CrossAttentionEncoder(TransformerEncoder):
     """Permutation equivariant encoder with linear N computational expense."""
