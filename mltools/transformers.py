@@ -403,8 +403,9 @@ class TransformerEncoder(nn.Module):
         return x
 
     def forward(self, x: T.Tensor, **kwargs) -> T.Tensor:
-        """Project and encode, seperated for flexibility and FlowBert"""
+        """Project and encode, seperated for flexibility and FlowBert."""
         return self.encode(self.project(x), **kwargs)
+
 
 class CrossAttentionEncoder(TransformerEncoder):
     """Permutation equivariant encoder with linear N computational expense."""

@@ -5,7 +5,7 @@ import json
 import math
 import operator
 from functools import reduce
-from itertools import chain, count, islice
+from itertools import chain, islice
 from typing import Any, Generator, Iterable, Mapping
 
 

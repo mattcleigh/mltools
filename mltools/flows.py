@@ -10,7 +10,9 @@ from normflows.flows.neural_spline.coupling import PiecewiseRationalQuadraticCou
 from normflows.nets.resnet import ResidualNet
 from normflows.utils.masks import create_alternating_binary_mask
 from normflows.utils.splines import DEFAULT_MIN_DERIVATIVE
+
 from .torch_utils import get_act
+
 
 class PermuteEvenOdd(nf.flows.Flow):
     """Permutation features along the channel dimension swapping even and odd values."""
