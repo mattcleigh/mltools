@@ -40,6 +40,9 @@ class LULinearPermuteEvenOdd(nf.flows.Flow):
             num_channels, identity_init=identity_init
         )
 
+    def use_cache(self, use_cache: bool = True) -> None:
+        self.linear.use_cache(use_cache)
+
     def forward(self, z, context=None):
         z, log_det = self.linear.inverse(z, context=context)
         z, _ = self.permutation.inverse(z, context=context)
@@ -121,7 +124,7 @@ def rqs_flow(
     init_identity: bool = True,
     do_norm: bool = False,
     flow_type: Literal["made", "coupling"] = "coupling",
-) -> nf.flows.Composite:
+) -> nf.NormalizingFlow:
     """Return a rational quadratic spline normalising flow."""
 
     kwargs = {
