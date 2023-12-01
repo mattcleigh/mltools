@@ -488,6 +488,37 @@ class ClassAttentionPooling(nn.Module):
         return g.squeeze(-2)
 
 
+class TransformerVectorEncoder(nn.Module):
+    """Combination of an Encoder and Class Attention to produce a vector from a set."""
+
+    def __init__(
+        self,
+        *,
+        dim: int = 128,
+        ctxt_dim: int = 0,
+        encoder_config: Mapping | None = None,
+        classattention_config: Mapping | None = None,
+    ) -> None:
+        super().__init__()
+
+        # Defaults
+        encoder_config = encoder_config or {}
+        classattention_config = classattention_config or {}
+
+        # Attributes
+        self.dim = dim
+        self.ctxt_dim = ctxt_dim
+
+        # Modules
+        self.encoder = TransformerEncoder(dim=dim, ctxt_dim=ctxt_dim, **encoder_config)
+        self.pool = ClassAttentionPooling(
+            dim=dim, ctxt_dim=ctxt_dim, **classattention_config
+        )
+
+    def forward(self, x: T.Tensor, **kwargs) -> T.Tensor:
+        return self.pool(self.encoder(x, **kwargs), **kwargs)
+
+
 class FullEncoder(nn.Module):
     """Wrap a transformer encoder with input and output embedding networks."""
 

@@ -1,6 +1,6 @@
 """Functions and classes used to define invertible transformations."""
 
-from typing import Callable, Literal
+from typing import Any, Callable, Literal
 
 import normflows as nf
 import numpy as np
@@ -11,7 +11,7 @@ from normflows.nets.resnet import ResidualNet
 from normflows.utils.masks import create_alternating_binary_mask
 from normflows.utils.splines import DEFAULT_MIN_DERIVATIVE
 
-from .torch_utils import get_act
+from .torch_utils import base_modules, get_act
 
 
 class PermuteEvenOdd(nf.flows.Flow):
@@ -126,7 +126,7 @@ def rqs_flow(
     init_identity: bool = True,
     do_norm: bool = False,
     flow_type: Literal["made", "coupling"] = "coupling",
-) -> nf.NormalizingFlow:
+) -> nf.NormalizingFlow | nf.ConditionalNormalizingFlow:
     """Return a rational quadratic spline normalising flow."""
 
     if isinstance(mlp_act, str):
@@ -168,6 +168,44 @@ def rqs_flow(
     if ctxt_dim:
         return nf.ConditionalNormalizingFlow(q0=q0, flows=flows)
     return nf.NormalizingFlow(q0=q0, flows=flows)
+
+
+def prepare_for_onnx(
+    flowwrapper: nn.Module,
+    dummy_input: Any,
+    method: str = "sample",
+) -> None:
+    """Prepare a flow for export to ONNX primarily by filling the LU cache."""
+    flowwrapper.eval()
+
+    # Switch to cache mode
+    n_changed = 0
+    for module in base_modules(flowwrapper):
+        try:
+            module.use_cache(True)
+            n_changed += 1
+        except AttributeError:
+            pass
+    print(f"Switched {n_changed} modules to cache mode")
+
+    # Call the method to fill the cache
+    if isinstance(dummy_input, tuple):
+        getattr(flowwrapper, method)(*dummy_input)
+    else:
+        getattr(flowwrapper, method)(dummy_input)
+
+    # Remove gradients from the LU caches layers
+    n_changed = 0
+    for module in base_modules(flowwrapper):
+        try:
+            module.cache.inverse = module.cache.inverse.data
+            module.cache.logabsdet = module.cache.logabsdet.data
+            n_changed += 1
+        except AttributeError:
+            pass
+    print(f"Removed cache gradients from {n_changed} modules")
+
+    return
 
 
 # class ContextSplineTransform(Transform):
