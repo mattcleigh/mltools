@@ -233,11 +233,11 @@ def get_sched(
         The maximum number of epochs to train for. Only for OneCycle learning.
     """
 
-    # Pop off the name and learning rate for the optimiser
+    # Pop off the name and learning rate for the optimizer
     dict_copy = sched_dict.copy()
     name = dict_copy.pop("name")
 
-    # Get the max_lr from the optimiser if not specified
+    # Get the max_lr from the optimizer if not specified
     max_lr = max_lr or opt.defaults["lr"]
 
     # Exit if the name indicates no scheduler

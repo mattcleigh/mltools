@@ -1,7 +1,6 @@
 """Collection of pytorch modules that make up the common networks."""
 
 import math
-from typing import Union
 
 import torch as T
 import torch.nn as nn
@@ -71,8 +70,8 @@ class IterativeNormLayer(nn.Module):
         means: T.Tensor | None = None,
         vars: T.Tensor | None = None,
         n: int = 0,
-        max_n: int = 1_00_000,
-        dims: Union[tuple, int] = (),
+        max_n: int = 5_00_000,
+        dims: tuple | int = (),
         track_grad_forward: bool = True,
         track_grad_reverse: bool = False,
         ema_sync: float = 0.0,
@@ -283,7 +282,7 @@ class IterativeNormLayer(nn.Module):
         # Check if the shapes changed
         if not cur_mean_shape == self.means.shape:
             print(f"WARNING! The stats in {self} have changed shape!")
-            print("This could be due to incorrect initialisation or maskingm")
+            print("This could be due to incorrect initialisation or masking")
             print(f"Old shape: {cur_mean_shape}")
             print(f"New shape: {self.means.shape}")
 

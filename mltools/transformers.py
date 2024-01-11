@@ -148,6 +148,17 @@ class PreNormScaledResidual(nn.Module):
     def __init__(
         self, fn: nn.Module, dim: int, layerscale_init: float | None = 1e-5
     ) -> None:
+        """
+        Parameters
+        ----------
+        fn : nn.Module
+            The module to wrap.
+        dim : int
+            The dimension of the input and output.
+        layerscale_init : float | None, optional
+            The initial value for the layerscale, by default 1e-5.
+            If None, then no layerscale is applied.
+        """
         super().__init__()
         self.fn = fn
         self.norm = nn.LayerNorm(dim)
@@ -216,6 +227,21 @@ class Attention(nn.Module):
         do_self_attn: bool = False,
         do_rotary_enc: bool = False,
     ) -> None:
+        """
+        Parameters
+        ----------
+        dim : int
+            The dimension of the input and output.
+        num_heads : int, optional
+            The number of attention heads, by default 1.
+        dropout : float, optional
+            The dropout probability, by default 0.
+        do_self_attn : bool, optional
+            Whether to optimise for self attention by using a single weight matrix,
+            by default False.
+        do_rotary_enc : bool, optional
+            Whether to use rotary positional encoding, by default False.
+        """
         super().__init__()
         assert dim % num_heads == 0
 
@@ -246,7 +272,7 @@ class Attention(nn.Module):
         attn_mask: T.BoolTensor | None = None,
         attn_bias: T.Tensor | None = None,
     ) -> T.Tensor:
-        # Generate the q, k, v projections
+        # Generate the q, k, v projections, output shape: B,Seq,F
         if self.do_self_attn:
             q, k, v = self.attn_in(x).chunk(3, -1)
         else:
@@ -257,7 +283,7 @@ class Attention(nn.Module):
             q = self.attn_in[0](x)
             k, v = self.attn_in[1](kv).chunk(2, -1)
 
-        # Break final dim, transpose to get dimensions: B,NH,Seq,Hdim
+        # Break final dim and transpose, output shape: B,NH,Seq,Hdim
         shape = (q.shape[0], -1, self.num_heads, self.attn_dim)
         q, k, v = map(lambda t: t.view(shape).transpose(1, 2), (q, k, v))
 
@@ -265,12 +291,12 @@ class Attention(nn.Module):
         if self.do_rotary_enc:
             q, k = self.rotary(q, k)
 
-        # Perform the attention
+        # Perform the attention, output shape: B,NH,Seq,Hdim
         a_mask = merge_masks(kv_mask, attn_mask, attn_bias, q)
         dropout = self.dropout if self.training else 0.0
         a_out = F.scaled_dot_product_attention(q, k, v, a_mask, dropout)
 
-        # Concatenate the all of the heads together to get shape: B,Seq,F
+        # Concatenate the all of the heads, output shape: B,Seq,F
         shape = (q.shape[0], -1, self.dim)
         a_out = a_out.transpose(1, 2).contiguous().view(shape)
 
@@ -278,7 +304,7 @@ class Attention(nn.Module):
 
 
 class SwiGLUNet(nn.Module):
-    """Simple gated bilinear feedfoward network."""
+    """Simple gated bilinear feedfoward network with the Swish activation."""
 
     def __init__(
         self, dim: int, hddn_dim: int, ctxt_dim: int = 0, dropout: float = 0.0
@@ -295,7 +321,7 @@ class SwiGLUNet(nn.Module):
 
 
 class EncoderBlock(nn.Module):
-    """Simple and building block for a transformer."""
+    """Simple building block for a transformer."""
 
     def __init__(
         self,
@@ -337,8 +363,63 @@ class EncoderBlock(nn.Module):
         return x
 
 
-class TransformerEncoder(nn.Module):
-    """Simple transformer encoder."""
+class DecoderBlock(nn.Module):
+    """Decoder block which includes a cross attention operation."""
+
+    def __init__(
+        self,
+        dim: int,
+        ctxt_dim: int = 0,
+        ff_mult: int = 2,
+        num_heads: int = 8,
+        dropout: float = 0,
+        do_rotary_enc: bool = False,
+        layerscale_init: float | None = 1e-5,
+    ) -> None:
+        super().__init__()
+
+        # Attributes
+        self.dim = dim
+
+        # Submodules
+        self.self_attn = PreNormScaledResidual(
+            Attention(dim, num_heads, dropout, True, do_rotary_enc),
+            dim,
+            layerscale_init,
+        )
+        self.cross_attn = PreNormScaledResidual(
+            Attention(dim, num_heads, dropout, False, False),
+            dim,
+            layerscale_init,
+        )
+        self.ff = PreNormScaledResidual(
+            SwiGLUNet(dim, ff_mult * dim, ctxt_dim, dropout), dim, layerscale_init
+        )
+
+    def forward(
+        self,
+        x: T.Tensor,
+        *,
+        kv: T.Tensor,
+        ctxt: T.Tensor | None = None,
+        kv_mask: T.BoolTensor | None = None,
+        attn_mask: T.Tensor | None = None,
+        attn_bias: T.Tensor | None = None,
+        x_mask: T.BoolTensor | None = None,
+    ) -> T.Tensor:
+        """Pass through the decoder block.
+
+        Same as the encoder but with an extra x_mask for the self attention and kv is
+        required
+        """
+        x = self.self_attn(x, None, x_mask, attn_mask, attn_bias)
+        x = self.cross_attn(x, kv, kv_mask)
+        x = self.ff(x, ctxt)
+        return x
+
+
+class Transformer(nn.Module):
+    """Simple transformer stack of encoder or decoder blocks."""
 
     def __init__(
         self,
@@ -348,10 +429,13 @@ class TransformerEncoder(nn.Module):
         num_layers: int = 6,
         max_seq_len: int = 0,
         do_input_linear: bool = False,
+        do_output_linear: bool = False,
         do_absolute_enc: bool = False,
         do_final_norm: bool = False,
         layer_config: Mapping | None = None,
         inpt_dim: None | int = None,
+        outp_dim: None | int = None,
+        use_decoder: bool = False,
     ) -> None:
         super().__init__()
 
@@ -365,9 +449,12 @@ class TransformerEncoder(nn.Module):
         self.inpt_dim = inpt_dim if do_input_linear else dim
         self.do_final_norm = do_final_norm
         self.do_input_linear = do_input_linear
+        self.do_output_linear = do_output_linear
         self.do_absolute_enc = do_absolute_enc
+        self.use_decoder = use_decoder
+        self.outp_dim = outp_dim if do_output_linear else dim
 
-        # Initial linear projection (Here because of positional embedding)
+        # Initial linear projection (Always done before absolute encoding)
         if self.do_input_linear:
             self.linear_embed = nn.Linear(inpt_dim, dim)
 
@@ -377,16 +464,25 @@ class TransformerEncoder(nn.Module):
                 raise ValueError("If using absolute encoding then define max length!")
             self.abs_enc = nn.Parameter(T.randn((1, max_seq_len, dim)) * 1e-3)
 
-        # Encoder layers
-        self.layers = nn.ModuleList(
-            [EncoderBlock(dim, ctxt_dim, **layer_config) for _ in range(num_layers)]
-        )
+        # Layers
+        if use_decoder:
+            self.layers = nn.ModuleList(
+                [DecoderBlock(dim, ctxt_dim, **layer_config) for _ in range(num_layers)]
+            )
+        else:
+            self.layers = nn.ModuleList(
+                [EncoderBlock(dim, ctxt_dim, **layer_config) for _ in range(num_layers)]
+            )
 
         # Final normalisation layer
         if self.do_final_norm:
             self.final_norm = nn.LayerNorm(dim)
 
-    def project(self, x: T.Tensor):
+        # Final linear projection
+        if self.do_output_linear:
+            self.linear_out = nn.Linear(dim, outp_dim)
+
+    def project(self, x: T.Tensor) -> T.Tensor:
         """Project the input to the transformer dimension."""
         if self.do_input_linear:
             x = self.linear_embed(x)
@@ -398,24 +494,29 @@ class TransformerEncoder(nn.Module):
         """Pass the input through all layers sequentially."""
         for layer in self.layers:
             x = layer(x, **kwargs)
+        return x
+
+    def output(self, x: T.Tensor) -> T.Tensor:
         if self.do_final_norm:
             x = self.final_norm(x)
+        if self.do_output_linear:
+            x = self.linear_out(x)
         return x
 
     def forward(self, x: T.Tensor, **kwargs) -> T.Tensor:
         """Project and encode, seperated for flexibility and FlowBert."""
-        return self.encode(self.project(x), **kwargs)
+        return self.output(self.encode(self.project(x), **kwargs))
 
 
-class CrossAttentionEncoder(TransformerEncoder):
+class CrossAttentionEncoder(Transformer):
     """Permutation equivariant encoder with linear N computational expense."""
 
     def __init__(self, num_tokens: int = 16, **kwargs) -> None:
-        super().__init__(**kwargs)
+        super().__init__(use_decoder=False, **kwargs)
         self.num_tokens = num_tokens
 
         # The learnable global tokens and extra modules
-        self.global_tokens = nn.Parameter(T.randn((1, num_tokens, self.dim)) * 1e-3)
+        self.global_tokens = nn.Parameter(T.randn((1, num_tokens, self.dim)))
         self.pool_layers = nn.ModuleList(
             [
                 EncoderBlock(self.dim, self.ctxt_dim, **self.layer_config)
@@ -423,27 +524,28 @@ class CrossAttentionEncoder(TransformerEncoder):
             ]
         )
 
-    def forward(self, x: T.Tensor, kv_mask: T.BoolTensor, **kwargs) -> T.Tensor:
-        # Apply the initial linear embedding
-        if self.do_input_linear:
-            x = self.linear_embed(x)
+    def encode(
+        self, x: T.Tensor, kv_mask: T.BoolTensor | None = None, **kwargs
+    ) -> T.Tensor:
+        """Pass the input through all layers sequentially."""
 
-        # Add the positional encoding
-        if self.do_absolute_enc:
-            x = x + self.abs_enc[:, : x.shape[-2], :]
-
-        # Pass through the layers with batch expanded global tokens
+        # Expand the global token so it can be broadcasted for the whole batch
         g = self.global_tokens.expand(x.shape[0], -1, self.dim)
+
+        # Pool and distribute
         for pool_layers, dist_layers in zip(self.pool_layers, self.layers):
             g = pool_layers(g, x, kv_mask=kv_mask, **kwargs)
             x = dist_layers(x, g, **kwargs)
 
-        # The final normalisation layer
-        if self.do_final_norm:
-            x = self.final_norm(x)
-
-        # Output projections
         return x
+
+
+class TransformerEncoder(Transformer):
+    """Transformer encoder stack, here for backwards compatibility."""
+
+    def __init__(self, **kwargs) -> None:
+        print("TransformerEncoder is deprecated, use Transformer instead.")
+        super().__init__(use_decoder=False, **kwargs)
 
 
 class ClassAttentionPooling(nn.Module):
@@ -468,7 +570,7 @@ class ClassAttentionPooling(nn.Module):
         self.layer_config = layer_config
 
         # Modules
-        self.global_token = nn.Parameter(T.randn((1, 1, self.dim)) * 1e-3)
+        self.global_token = nn.Parameter(T.randn((1, 1, self.dim)))
         self.layers = nn.ModuleList(
             [
                 EncoderBlock(dim, ctxt_dim, **self.layer_config)
@@ -489,7 +591,7 @@ class ClassAttentionPooling(nn.Module):
 
 
 class TransformerVectorEncoder(nn.Module):
-    """Combination of an Encoder and Class Attention to produce a vector from a set."""
+    """Combination of Encoder+CA to produce a vector given a set."""
 
     def __init__(
         self,
