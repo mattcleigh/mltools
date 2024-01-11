@@ -22,9 +22,9 @@ class PermuteEvenOdd(nf.flows.Flow):
         self.num_channels = num_channels
 
     def forward(self, z, context=None) -> tuple:
-        z1 = z[:, ::2]
+        z1 = z[:, 0::2]
         z2 = z[:, 1::2]
-        z = T.cat([z2, z1], dim=1)
+        z = T.stack((z2, z1), dim=2).view(z.shape[0], -1)
         log_det = T.zeros(z.shape[0], device=z.device)
         return z, log_det
 

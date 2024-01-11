@@ -612,7 +612,7 @@ class TransformerVectorEncoder(nn.Module):
         self.ctxt_dim = ctxt_dim
 
         # Modules
-        self.encoder = TransformerEncoder(dim=dim, ctxt_dim=ctxt_dim, **encoder_config)
+        self.encoder = Transformer(dim=dim, ctxt_dim=ctxt_dim, **encoder_config)
         self.pool = ClassAttentionPooling(
             dim=dim, ctxt_dim=ctxt_dim, **classattention_config
         )
