@@ -140,9 +140,9 @@ class IterativeNormLayer(nn.Module):
         # For the welford algorithm it is useful to have another variable m2
         self.register_buffer(
             "m2",
-            T.ones(self.stat_dim, dtype=T.float32)
+            T.ones(self.stat_dim, dtype=T.float64)
             if vars is None
-            else T.as_tensor(vars, dtype=T.float32),
+            else T.as_tensor(vars, dtype=T.float64),
         )
 
         # If the means are set here then the model is "frozen" and never updated
