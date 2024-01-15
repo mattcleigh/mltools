@@ -1,6 +1,6 @@
 """Functions and classes used to define invertible transformations."""
 
-from typing import Callable, Literal
+from typing import Any, Callable, Literal
 
 import normflows as nf
 import numpy as np
@@ -11,7 +11,7 @@ from normflows.nets.resnet import ResidualNet
 from normflows.utils.masks import create_alternating_binary_mask
 from normflows.utils.splines import DEFAULT_MIN_DERIVATIVE
 
-from .torch_utils import get_act
+from .torch_utils import base_modules, get_act
 
 
 class PermuteEvenOdd(nf.flows.Flow):
@@ -22,9 +22,9 @@ class PermuteEvenOdd(nf.flows.Flow):
         self.num_channels = num_channels
 
     def forward(self, z, context=None) -> tuple:
-        z1 = z[:, ::2]
+        z1 = z[:, 0::2]
         z2 = z[:, 1::2]
-        z = T.cat([z2, z1], dim=1)
+        z = T.stack((z2, z1), dim=2).view(z.shape[0], -1)
         log_det = T.zeros(z.shape[0], device=z.device)
         return z, log_det
 
@@ -32,23 +32,23 @@ class PermuteEvenOdd(nf.flows.Flow):
         return self.forward(z, context)
 
 
-class LULinearPermuteEvenOdd(nf.flows.Flow):
+class LULinear(nf.flows.Flow):
     """Invertible linear layer using LU decomposition."""
 
     def __init__(self, num_channels: int, identity_init: bool = True):
         super().__init__()
-        self.permutation = PermuteEvenOdd(num_channels)
         self.linear = nf.flows.mixing._LULinear(
             num_channels, identity_init=identity_init
         )
 
-    def forward(self, z, context=None):
+    def use_cache(self, use_cache: bool = True) -> None:
+        self.linear.use_cache(use_cache)
+
+    def forward(self, z, context=None) -> tuple[T.Tensor, T.Tensor]:
         z, log_det = self.linear.inverse(z, context=context)
-        z, _ = self.permutation.inverse(z, context=context)
         return z, log_det.view(-1)
 
     def inverse(self, z, context=None) -> tuple:
-        z, _ = self.permutation(z, context=context)
         z, log_det = self.linear(z, context=context)
         return z, log_det.view(-1)
 
@@ -123,12 +123,14 @@ def rqs_flow(
     init_identity: bool = True,
     do_norm: bool = False,
     flow_type: Literal["made", "coupling"] = "coupling",
-) -> nf.flows.Composite:
+) -> nf.NormalizingFlow | nf.ConditionalNormalizingFlow:
     """Return a rational quadratic spline normalising flow."""
 
+    # Normflows wants the activation function as a class
     if isinstance(mlp_act, str):
         mlp_act = get_act(mlp_act).__class__
 
+    # Set the kwargs for the flow as expected by normflows
     kwargs = {
         "num_input_channels": xz_dim,
         "num_blocks": mlp_depth,
@@ -147,14 +149,24 @@ def rqs_flow(
         perm = nf.flows.LULinearPermute if do_lu else nf.flows.Permute
     elif flow_type == "coupling":
         fn = CoupledRationalQuadraticSpline
-        perm = LULinearPermuteEvenOdd if do_lu else PermuteEvenOdd
+        perm = LULinear if do_lu else None
     else:
         raise ValueError("Unrecognised flow type" % flow_type)
 
     flows = []
-    for _ in range(num_stacks):
+    for i in range(num_stacks):
+        # For coupling layers we need to alternate the mask and don't need permute
+        if flow_type == "coupling":
+            kwargs["reverse_mask"] = i % 2 == 1
+
+        # Add the flow
         flows += [fn(**kwargs)]
-        flows += [perm(xz_dim)]
+
+        # Add the permutation layer if required
+        if perm is not None:
+            flows += [perm(xz_dim)]
+
+        # Add the normalisation layer
         if do_norm:
             flows += [nf.flows.ActNorm(xz_dim)]
 
@@ -165,6 +177,44 @@ def rqs_flow(
     if ctxt_dim:
         return nf.ConditionalNormalizingFlow(q0=q0, flows=flows)
     return nf.NormalizingFlow(q0=q0, flows=flows)
+
+
+def prepare_for_onnx(
+    flowwrapper: nn.Module,
+    dummy_input: Any,
+    method: str = "sample",
+) -> None:
+    """Prepare a flow for export to ONNX primarily by filling the LU cache."""
+    flowwrapper.eval()
+
+    # Switch to cache mode
+    n_changed = 0
+    for module in base_modules(flowwrapper):
+        try:
+            module.use_cache(True)
+            n_changed += 1
+        except AttributeError:
+            pass
+    print(f"Switched {n_changed} modules to cache mode")
+
+    # Call the method to fill the cache
+    if isinstance(dummy_input, tuple):
+        getattr(flowwrapper, method)(*dummy_input)
+    else:
+        getattr(flowwrapper, method)(dummy_input)
+
+    # Remove gradients from the LU caches layers
+    n_changed = 0
+    for module in base_modules(flowwrapper):
+        try:
+            module.cache.inverse = module.cache.inverse.data
+            module.cache.logabsdet = module.cache.logabsdet.data
+            n_changed += 1
+        except AttributeError:
+            pass
+    print(f"Removed cache gradients from {n_changed} modules")
+
+    return
 
 
 # class ContextSplineTransform(Transform):

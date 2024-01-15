@@ -305,7 +305,7 @@ class IterativeNormLayer(nn.Module):
         # Check if the shapes changed
         if not cur_mean_shape == self.means.shape:
             print(f"WARNING! The stats in {self} have changed shape!")
-            print("This could be due to incorrect initialisation or maskingm")
+            print("This could be due to incorrect initialisation or masking")
             print(f"Old shape: {cur_mean_shape}")
             print(f"New shape: {self.means.shape}")
 

@@ -1,4 +1,4 @@
-"""Script to define the lookahead optimiser copied from:
+"""Script to define the lookahead optimizer copied from:
 
 https://github.com/alphadl/lookahead.pytorch
 """
@@ -25,7 +25,7 @@ class Lookahead(Optimizer):
         alpha=0.5,
         **opt_kwargs,
     ) -> None:
-        # If we have a fully initialised optimiser
+        # If we have a fully initialised optimizer
         if isinstance(inner_optimizer, Optimizer):
             self.optimizer = inner_optimizer
         # Otherwise we initialise using our parameters

@@ -535,10 +535,10 @@ def plot_multi_hists(
     data_labels: Union[list, str],
     col_labels: Union[list, str],
     path: Optional[Union[Path, str]] = None,
+    bins: Union[list, str, partial] = "auto",
     scale_factors: Optional[list] = None,
     do_err: bool = False,
     do_norm: bool = False,
-    bins: Union[list, str, partial] = "auto",
     logy: bool = False,
     y_label: Optional[str] = None,
     ylims: list | tuple | None = None,
@@ -783,9 +783,6 @@ def plot_multi_hists(
                 # Calculate the new ratio values with their errors
                 rat_hist = hist / denom_hist
                 rat_err = hist_err / denom_hist
-                # rat_err = rat_hist * np.sqrt(
-                #     (hist_err / hist) ** 2 + (denom_err / denom_hist) ** 2
-                # )
 
                 # Plot the ratios
                 axes[1, ax_idx].stairs(rat_hist, ax_bins, **ratio_kwargs)
@@ -873,8 +870,6 @@ def plot_multi_hists(
             axes[1, ax_idx].hlines(
                 1, *axes[1, ax_idx].get_xlim(), colors="k", zorder=-9999
             )
-
-            # After doing the limits for
 
         # Extra text
         if extra_text[ax_idx] is not None:

@@ -288,8 +288,17 @@ class MLP(nn.Module):
                 use_bias=use_bias,
             )
 
-    def forward(self, inputs: T.Tensor, ctxt: T.Tensor | None = None) -> T.Tensor:
+    def forward(
+        self,
+        inputs: T.Tensor,
+        ctxt: T.Tensor | None = None,
+        context: T.Tensor | None = None,
+    ) -> T.Tensor:
         """Pass through all layers of the dense network."""
+
+        # Use context as a synonym for ctxt (normflow compatibility)
+        if context is not None:
+            ctxt = context
 
         # Reshape the context if it is available. Equivalent to performing
         # multiple ctxt.unsqueeze(1) until the dim matches the input.
