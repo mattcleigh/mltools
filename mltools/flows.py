@@ -32,12 +32,11 @@ class PermuteEvenOdd(nf.flows.Flow):
         return self.forward(z, context)
 
 
-class LULinearPermuteEvenOdd(nf.flows.Flow):
+class LULinear(nf.flows.Flow):
     """Invertible linear layer using LU decomposition."""
 
     def __init__(self, num_channels: int, identity_init: bool = True):
         super().__init__()
-        self.permutation = PermuteEvenOdd(num_channels)
         self.linear = nf.flows.mixing._LULinear(
             num_channels, identity_init=identity_init
         )
@@ -45,13 +44,11 @@ class LULinearPermuteEvenOdd(nf.flows.Flow):
     def use_cache(self, use_cache: bool = True) -> None:
         self.linear.use_cache(use_cache)
 
-    def forward(self, z, context=None):
+    def forward(self, z, context=None) -> tuple[T.Tensor, T.Tensor]:
         z, log_det = self.linear.inverse(z, context=context)
-        z, _ = self.permutation.inverse(z, context=context)
         return z, log_det.view(-1)
 
     def inverse(self, z, context=None) -> tuple:
-        z, _ = self.permutation(z, context=context)
         z, log_det = self.linear(z, context=context)
         return z, log_det.view(-1)
 
@@ -129,9 +126,11 @@ def rqs_flow(
 ) -> nf.NormalizingFlow | nf.ConditionalNormalizingFlow:
     """Return a rational quadratic spline normalising flow."""
 
+    # Normflows wants the activation function as a class
     if isinstance(mlp_act, str):
         mlp_act = get_act(mlp_act).__class__
 
+    # Set the kwargs for the flow as expected by normflows
     kwargs = {
         "num_input_channels": xz_dim,
         "num_blocks": mlp_depth,
@@ -150,14 +149,24 @@ def rqs_flow(
         perm = nf.flows.LULinearPermute if do_lu else nf.flows.Permute
     elif flow_type == "coupling":
         fn = CoupledRationalQuadraticSpline
-        perm = LULinearPermuteEvenOdd if do_lu else PermuteEvenOdd
+        perm = LULinear if do_lu else None
     else:
         raise ValueError("Unrecognised flow type" % flow_type)
 
     flows = []
-    for _ in range(num_stacks):
+    for i in range(num_stacks):
+        # For coupling layers we need to alternate the mask and don't need permute
+        if flow_type == "coupling":
+            kwargs["reverse_mask"] = i % 2 == 1
+
+        # Add the flow
         flows += [fn(**kwargs)]
-        flows += [perm(xz_dim)]
+
+        # Add the permutation layer if required
+        if perm is not None:
+            flows += [perm(xz_dim)]
+
+        # Add the normalisation layer
         if do_norm:
             flows += [nf.flows.ActNorm(xz_dim)]
 
