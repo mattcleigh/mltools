@@ -1,7 +1,6 @@
 """Collection of pytorch modules that make up the common networks."""
 
 import math
-from typing import Union
 
 import torch as T
 import torch.nn as nn
@@ -72,7 +71,7 @@ class IterativeNormLayer(nn.Module):
         vars: T.Tensor | None = None,
         n: int = 0,
         max_n: int = 1_00_000,
-        dims: Union[tuple, int] = (),
+        dims: tuple | int = (),
         track_grad_forward: bool = True,
         track_grad_reverse: bool = False,
         ema_sync: float = 0.0,
@@ -88,7 +87,7 @@ class IterativeNormLayer(nn.Module):
         vars : float, optional
             Calculated variances for the mapping. Defaults to None.
         n : int, optional
-            Number of samples used to make the mapping. Defaults to None.
+            Number of samples already used to make the mapping. Defaults to 0.
         max_n : int
             Maximum number of iterations before the means and vars are frozen.
         dims : int
@@ -104,43 +103,24 @@ class IterativeNormLayer(nn.Module):
         """
         super().__init__()
 
-        # If the layer does exponential moving average
-        self.ema_sync = ema_sync
-        self.do_ema = ema_sync > 0
-
         # Fail if only one of means or vars is provided
         if (means is None) ^ (vars is None):  # XOR
             raise ValueError(
                 """Only one of 'means' and 'vars' is defined. Either both or
                 neither must be defined"""
             )
+        if means is not None and means.shape != vars.shape:
+            raise ValueError("The shapes of 'means' and 'vars' do not match")
 
-        # Allow interger inpt_dim and n arguments
-        if isinstance(inpt_dim, int):
-            inpt_dim = (inpt_dim,)
-        if isinstance(n, int):
-            n = T.tensor(n)
+        # Modify the dims to be compatible with the layer
+        dims, inpt_dim, n, stat_dim = self._modify_dims(dims, inpt_dim, n)
 
-        # The dimensions over which to apply the normalisation, make positive!
-        if isinstance(dims, int):  # Ensure it is a list
-            dims = [dims]
-        else:
-            dims = list(dims)
-        if any([abs(d) > len(inpt_dim) for d in dims]):  # Check size
-            raise ValueError("dims argument lists dimensions outside input range")
-        for d in range(len(dims)):
-            if dims[d] < 0:  # make positive
-                dims[d] = len(inpt_dim) + dims[d]
-            dims[d] += 1  # Add one because we are inserting a batch dimension
-        self.dims = dims
-
-        # Calculate the input and output shapes
+        # Class attributes
         self.max_n = max_n
-        self.inpt_dim = list(inpt_dim)
-        self.stat_dim = [1] + list(inpt_dim)  # Add batch dimension
-        for d in range(len(self.stat_dim)):
-            if d in self.dims:
-                self.stat_dim[d] = 1
+        self.ema_sync = ema_sync
+        self.do_ema = ema_sync > 0
+        self.track_grad_forward = track_grad_forward
+        self.track_grad_reverse = track_grad_reverse
 
         # Buffers are needed for saving/loading the layer
         self.register_buffer(
@@ -173,9 +153,51 @@ class IterativeNormLayer(nn.Module):
             ),
         )
 
-        # Gradient tracking options
-        self.track_grad_forward = track_grad_forward
-        self.track_grad_reverse = track_grad_reverse
+    def _modify_dims(
+        self, dims: tuple | int, inpt_dim: T.Tensor | tuple | int, n: int
+    ) -> tuple:
+        """Modify the dims argument to be compatible with the layer."""
+
+        # Input dim must be a list
+        if isinstance(inpt_dim, int):
+            inpt_dim = [inpt_dim]
+        else:
+            inpt_dim = list(inpt_dim)
+
+        # N must be a tensor
+        if isinstance(n, int):
+            n = T.tensor(n)
+
+        # Dims must be a list
+        if isinstance(dims, int):
+            dims = [dims]
+        else:
+            dims = list(dims)
+
+        # Check the dims are within the input range
+        if any([abs(d) > len(inpt_dim) for d in dims]):
+            raise ValueError("Dims argument lists dimensions outside input shape")
+
+        # Convert negative dims to positive
+        for d in range(len(dims)):
+            if dims[d] < 0:  # make positive
+                dims[d] = len(inpt_dim) + dims[d]
+            dims[d] += 1  # Add one because we are inserting a batch dimension
+
+        return dims, inpt_dim, n
+
+    def _calculate_stat_dim(
+        self, inpt_dim: list, dims: list, means: T.Tensor | None
+    ) -> tuple:
+        # If the means are defined just use their shape
+        if means is not None:
+            return means.shape
+
+        # Calculate the input and output shapes
+        self.stat_dim = [1] + list(inpt_dim)  # Add batch dimension
+        for d in range(len(self.stat_dim)):
+            if d in self.dims:
+                self.stat_dim[d] = 1
 
     def __repr__(self):
         return f"IterativeNormLayer({list(self.means.shape)})"
@@ -298,7 +320,7 @@ class IterativeNormLayer(nn.Module):
 
     @T.no_grad()
     def _apply_welford_update(self, inpt: T.Tensor) -> None:
-        """Use an the welford algorithm to update the means and vars."""
+        """Use the welford algorithm to update the means and vars."""
         m = len(inpt)
         d = inpt - self.means
         self.n += m
