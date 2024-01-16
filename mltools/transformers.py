@@ -338,6 +338,7 @@ class EncoderBlock(nn.Module):
 
         # Attributes
         self.dim = dim
+        self.num_heads = num_heads
 
         # Submodules
         self.attn = PreNormScaledResidual(

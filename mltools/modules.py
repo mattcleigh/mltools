@@ -113,10 +113,14 @@ class IterativeNormLayer(nn.Module):
             raise ValueError("The shapes of 'means' and 'vars' do not match")
 
         # Modify the dims to be compatible with the layer
-        dims, inpt_dim, n, stat_dim = self._modify_dims(dims, inpt_dim, n)
+        dims, inpt_dim, n = self._modify_dims(dims, inpt_dim, n)
+
+        # Calculate the stat dimension
+        self._calculate_stat_dim(inpt_dim, dims, means)
 
         # Class attributes
         self.max_n = max_n
+        self.dims = dims
         self.ema_sync = ema_sync
         self.do_ema = ema_sync > 0
         self.track_grad_forward = track_grad_forward
@@ -196,7 +200,7 @@ class IterativeNormLayer(nn.Module):
         # Calculate the input and output shapes
         self.stat_dim = [1] + list(inpt_dim)  # Add batch dimension
         for d in range(len(self.stat_dim)):
-            if d in self.dims:
+            if d in dims:
                 self.stat_dim[d] = 1
 
     def __repr__(self):
