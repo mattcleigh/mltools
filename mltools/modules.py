@@ -120,7 +120,6 @@ class IterativeNormLayer(nn.Module):
         self.inpt_dim = inpt_dim
         self.dims = dims
         self.max_n = max_n
-        self.dims = dims
         self.ema_sync = ema_sync
         self.do_ema = ema_sync > 0
         self.track_grad_forward = track_grad_forward
@@ -226,12 +225,6 @@ class IterativeNormLayer(nn.Module):
         masked_out[mask] = output.type(masked_out.dtype)
         return masked_out
 
-    def _check_attributes(self) -> None:
-        if self.means is None or self.vars is None:
-            raise ValueError(
-                "Stats have not been initialised and fit() has not been run!"
-            )
-
     def fit(
         self, inpt: T.Tensor, mask: T.BoolTensor | None = None, freeze: bool = True
     ) -> None:
@@ -240,7 +233,7 @@ class IterativeNormLayer(nn.Module):
         inpt = self._mask(inpt, mask)
         self.vars, self.means = T.var_mean(inpt, dim=(0, *self.dims), keepdim=True)
         self.n = T.tensor(len(inpt), device=self.means.device)
-        self.m2 = self.vars * self.n
+        self.m2 = (self.vars * self.n).type(self.m2.dtype)
         if freeze:
             self.frozen.fill_(True)
         self._check_shape_change(cur_mean_shape)
@@ -259,7 +252,7 @@ class IterativeNormLayer(nn.Module):
         """
         # Save and check the gradient tracking options
         grad_setting = T.is_grad_enabled()
-        T.set_grad_enabled(self.track_grad_forward)
+        T.set_grad_enabled(self.track_grad_forward and grad_setting)
 
         # Mask the inputs and update the stats
         sel_inpt = self._mask(inpt, mask)
@@ -284,7 +277,7 @@ class IterativeNormLayer(nn.Module):
 
         # Save and check the gradient tracking options
         grad_setting = T.is_grad_enabled()
-        T.set_grad_enabled(self.track_grad_reverse)
+        T.set_grad_enabled(self.track_grad_reverse and grad_setting)
 
         # Mask, revert the inputs, unmask
         sel_inpt = self._mask(inpt, mask)
@@ -339,7 +332,7 @@ class IterativeNormLayer(nn.Module):
         self.means += (d / self.n).mean(dim=(0, *self.dims), keepdim=True) * m
         d2 = inpt - self.means
         self.m2 += (d * d2).mean(dim=(0, *self.dims), keepdim=True) * m
-        self.vars = self.m2 / self.n
+        self.vars = (self.m2 / self.n).to(self.vars.dtype)
 
 
 class CosineEncodingLayer(nn.Module):

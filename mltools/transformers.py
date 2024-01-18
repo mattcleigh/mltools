@@ -284,7 +284,7 @@ class Attention(nn.Module):
         attn_mask: T.BoolTensor | None = None,
         attn_bias: T.Tensor | None = None,
     ) -> T.Tensor:
-        # Generate the q, k, v projections, output shape: B,Seq,F
+        # Generate the q, k, v projections -> B,S,F
         if self.do_self_attn:
             q, k, v = self.attn_in(x).chunk(3, -1)
         else:
