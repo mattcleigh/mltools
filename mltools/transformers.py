@@ -160,8 +160,8 @@ class PreNormScaledResidual(nn.Module):
             If None, then no layerscale is applied.
         """
         super().__init__()
-        self.fn = fn
         self.norm = nn.LayerNorm(dim)
+        self.fn = fn
         self.ls = (
             LayerScale(dim, layerscale_init)
             if layerscale_init is not None

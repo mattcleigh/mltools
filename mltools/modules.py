@@ -115,10 +115,10 @@ class IterativeNormLayer(nn.Module):
         # Modify the dims to be compatible with the layer
         dims, inpt_dim, n = self._modify_dims(dims, inpt_dim, n)
 
-        # Calculate the stat dimension
-        self._calculate_stat_dim(inpt_dim, dims, means)
-
         # Class attributes
+        self.stat_dim = self._calculate_stat_dim(inpt_dim, dims, means)
+        self.inpt_dim = inpt_dim
+        self.dims = dims
         self.max_n = max_n
         self.dims = dims
         self.ema_sync = ema_sync
@@ -193,15 +193,18 @@ class IterativeNormLayer(nn.Module):
     def _calculate_stat_dim(
         self, inpt_dim: list, dims: list, means: T.Tensor | None
     ) -> tuple:
+        """Calculate the shape of the statistics."""
+
         # If the means are defined just use their shape
         if means is not None:
             return means.shape
 
         # Calculate the input and output shapes
-        self.stat_dim = [1] + list(inpt_dim)  # Add batch dimension
-        for d in range(len(self.stat_dim)):
+        stat_dim = [1] + list(inpt_dim)  # Add batch dimension
+        for d in range(len(stat_dim)):
             if d in dims:
-                self.stat_dim[d] = 1
+                stat_dim[d] = 1
+        return stat_dim
 
     def __repr__(self):
         return f"IterativeNormLayer({list(self.means.shape)})"
@@ -233,12 +236,21 @@ class IterativeNormLayer(nn.Module):
         self, inpt: T.Tensor, mask: T.BoolTensor | None = None, freeze: bool = True
     ) -> None:
         """Set the stats given a population of data."""
+        cur_mean_shape = self.means.shape
         inpt = self._mask(inpt, mask)
         self.vars, self.means = T.var_mean(inpt, dim=(0, *self.dims), keepdim=True)
         self.n = T.tensor(len(inpt), device=self.means.device)
         self.m2 = self.vars * self.n
         if freeze:
             self.frozen.fill_(True)
+        self._check_shape_change(cur_mean_shape)
+
+    def _check_shape_change(self, cur_mean_shape: tuple) -> None:
+        if not cur_mean_shape == self.means.shape:
+            print(f"WARNING! The stats in {self} have changed shape!")
+            print("This could be due to incorrect initialisation or masking")
+            print(f"Old shape: {cur_mean_shape}")
+            print(f"New shape: {self.means.shape}")
 
     def forward(self, inpt: T.Tensor, mask: T.BoolTensor | None = None) -> T.Tensor:
         """Apply standardisation to a batch of inputs.
@@ -307,11 +319,7 @@ class IterativeNormLayer(nn.Module):
             self._apply_welford_update(inpt)
 
         # Check if the shapes changed
-        if not cur_mean_shape == self.means.shape:
-            print(f"WARNING! The stats in {self} have changed shape!")
-            print("This could be due to incorrect initialisation or masking")
-            print(f"Old shape: {cur_mean_shape}")
-            print(f"New shape: {self.means.shape}")
+        self._check_shape_change(cur_mean_shape)
 
     @T.no_grad()
     def _apply_ema_update(self, inpt: T.Tensor) -> None:
