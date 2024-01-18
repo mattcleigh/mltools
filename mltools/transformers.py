@@ -53,6 +53,7 @@ def my_scaled_dot_product_attention(
     attn_mask: T.Tensor | None = None,
     dropout_p: float = 0.0,
     is_causal: bool = False,
+    scale: float | None = None,
     attn_act: callable = partial(F.softmax, dim=-1),
     pad_val: float = -float("inf"),
 ) -> T.Tensor:
@@ -74,6 +75,8 @@ def my_scaled_dot_product_attention(
         The dropout probability, by default 0.0.
     is_causal : bool, optional
         Whether to use causal attention, by default False.
+    scale: float | None, optional
+        The scale factor to divide the attention weights by, by default None.
     attn_act : callable, optional
         The attention activation function, by default partial(softmax, dim=-1).
     pad_val : float, optional
@@ -85,21 +88,30 @@ def my_scaled_dot_product_attention(
         The result of the scaled dot product attention operation.
     """
 
-    # Get the shapes
+    # Get the shapes and set the scale
     L = query.shape[-2]
     S = key.shape[-2]
+    scale = 1 / math.sqrt(query.size(-1)) if scale is None else scale
 
-    # Build the attention mask as a float
+    # Build the attention bias as a float
+    attn_bias = T.zeros(L, S, dtype=query.dtype, device=query.device)
+
+    # If using a causal mask, then set the upper triangle to the pad value
     if is_causal:
+        assert attn_mask is None, "Causal attention does not support attention masks!"
         attn_mask = T.ones(L, S, dtype=T.bool).tril(diagonal=0)
-    elif attn_mask is not None and attn_mask.dtype == T.bool:
-        attn_mask = attn_mask.float().masked_fill(~attn_mask, pad_val)
-    else:
-        attn_mask = 0.0
+        attn_bias.masked_fill_(~attn_mask, pad_val)
+
+    # If proved own attention mask, then add it to the bias
+    elif attn_mask is not None:
+        if attn_mask.dtype == T.bool:
+            attn_bias.masked_fill_(~attn_mask, pad_val)
+        else:
+            attn_bias += attn_mask
 
     # Apply the attention operation using the mask as a bias
-    attn_weight = query @ key.transpose(-2, -1) / math.sqrt(query.size(-1))
-    attn_weight = attn_act(attn_weight + attn_mask)
+    attn_weight = query @ key.transpose(-2, -1) * scale
+    attn_weight = attn_act(attn_weight + attn_bias)
     attn_weight = T.dropout(attn_weight, dropout_p, train=True)
 
     return attn_weight @ value
