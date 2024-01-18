@@ -284,7 +284,7 @@ class Attention(nn.Module):
         attn_mask: T.BoolTensor | None = None,
         attn_bias: T.Tensor | None = None,
     ) -> T.Tensor:
-        # Generate the q, k, v projections -> B,S,F
+        # Generate the q, k, v projections -> B,S,D
         if self.do_self_attn:
             q, k, v = self.attn_in(x).chunk(3, -1)
         else:
@@ -295,7 +295,7 @@ class Attention(nn.Module):
             q = self.attn_in[0](x)
             k, v = self.attn_in[1](kv).chunk(2, -1)
 
-        # Break final dim and transpose, output shape: B,NH,Seq,Hdim
+        # Break final dim and transpose -> B,NH,S,Hd
         shape = (q.shape[0], -1, self.num_heads, self.attn_dim)
         q, k, v = map(lambda t: t.view(shape).transpose(1, 2), (q, k, v))
 
@@ -303,12 +303,12 @@ class Attention(nn.Module):
         if self.do_rotary_enc:
             q, k = self.rotary(q, k)
 
-        # Perform the attention, output shape: B,NH,Seq,Hdim
+        # Perform the attention -> B,NH,S,Hd
         a_mask = merge_masks(kv_mask, attn_mask, attn_bias, q)
         dropout = self.dropout if self.training else 0.0
         a_out = F.scaled_dot_product_attention(q, k, v, a_mask, dropout)
 
-        # Concatenate the all of the heads, output shape: B,Seq,F
+        # Concatenate the all of the heads -> B,S,D
         shape = (q.shape[0], -1, self.dim)
         a_out = a_out.transpose(1, 2).contiguous().view(shape)
 
