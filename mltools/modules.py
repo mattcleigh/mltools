@@ -120,6 +120,7 @@ class IterativeNormLayer(nn.Module):
         self.inpt_dim = inpt_dim
         self.dims = dims
         self.max_n = max_n
+        self.dims = dims
         self.ema_sync = ema_sync
         self.do_ema = ema_sync > 0
         self.track_grad_forward = track_grad_forward
