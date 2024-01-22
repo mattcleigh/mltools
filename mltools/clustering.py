@@ -22,11 +22,8 @@ def kmeans(
     # Iterate until convergence
     tqdm_meter = tqdm(desc="Running kmeans")
     for iteration in range(max_iter):
-        # Copy the cluster centers to compare shift
-        cluster_centers_pre = cluster_centers.clone()
-
         # Calculate the distance between the inputs and the cluster centers
-        dist = T.cdist(x, cluster_centers_pre)
+        dist = T.cdist(x, cluster_centers)
 
         # Assign each input to the closest cluster center
         idxes = T.argmin(dist, dim=-1).unsqueeze(-1)
@@ -37,7 +34,7 @@ def kmeans(
         cluster_means /= T.bincount(idxes.squeeze()).unsqueeze(-1)
 
         # Calculate the total shift per dimension of all cluster centers
-        shift = T.norm(cluster_means - cluster_centers_pre, dim=-1).sum()
+        shift = T.norm(cluster_means - cluster_centers, dim=-1).sum()
         shift /= x.shape[-1]
 
         # Replace the cluster centers with the new means
@@ -57,6 +54,6 @@ def kmeans(
 
     # Print a warning if the iteration limit was reached
     if iteration == max_iter - 1:
-        print("Warning: kmeans reached the maximum number of iterations.")
+        print("Warning: kmeans reached maximum iterations without convergence.")
 
     return cluster_means

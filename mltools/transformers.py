@@ -59,7 +59,8 @@ def my_scaled_dot_product_attention(
 ) -> T.Tensor:
     """Compute dot product attention using the given query, key, and value tensors.
 
-    This function is a ONNX compatible equivalent to the Pytorch version.
+    Pure PyTorch implementation of the scaled dot product attention operation.
+    Note that ONNX supports Pytorch's native function since opset 14.
 
     Parameters
     ----------
@@ -309,8 +310,7 @@ class Attention(nn.Module):
         a_out = F.scaled_dot_product_attention(q, k, v, a_mask, dropout)
 
         # Concatenate the all of the heads -> B,S,D
-        shape = (q.shape[0], -1, self.dim)
-        a_out = a_out.transpose(1, 2).contiguous().view(shape)
+        a_out = a_out.transpose(1, 2).contiguous().view(q.shape[0], -1, self.dim)
 
         return self.attn_out(a_out)
 
@@ -445,6 +445,7 @@ class Transformer(nn.Module):
         do_input_linear: bool = False,
         do_output_linear: bool = False,
         do_absolute_enc: bool = False,
+        num_registers: int = 0,
         do_final_norm: bool = False,
         layer_config: Mapping | None = None,
         inpt_dim: None | int = None,
@@ -466,6 +467,7 @@ class Transformer(nn.Module):
         self.do_output_linear = do_output_linear
         self.do_absolute_enc = do_absolute_enc
         self.use_decoder = use_decoder
+        self.num_registers = num_registers
         self.outp_dim = outp_dim if do_output_linear else dim
 
         # Initial linear projection (Always done before absolute encoding)
@@ -479,7 +481,7 @@ class Transformer(nn.Module):
             self.abs_enc = nn.Parameter(T.randn((1, max_seq_len, dim)) * 1e-3)
 
         # Layers
-        if use_decoder:
+        if self.use_decoder:
             self.layers = nn.ModuleList(
                 [DecoderBlock(dim, ctxt_dim, **layer_config) for _ in range(num_layers)]
             )
@@ -496,6 +498,10 @@ class Transformer(nn.Module):
         if self.do_output_linear:
             self.linear_out = nn.Linear(dim, outp_dim)
 
+        # The registers from "TRANSFORMERS NEED REGISTERS" - 2309.16588
+        if self.num_registers:
+            self.registers = nn.Parameter(T.randn((1, self.num_registers, dim)))
+
     def project(self, x: T.Tensor) -> T.Tensor:
         """Project the input to the transformer dimension."""
         if self.do_input_linear:
@@ -504,8 +510,31 @@ class Transformer(nn.Module):
             x = x + self.abs_enc[:, : x.shape[-2], :]
         return x
 
+    def _add_registers(self, x: T.Tensor, **kwargs) -> tuple:
+        """Add the registers to the front of the input and the appropriate mask."""
+
+        # Expand the registers so they can be broadcasted for the whole batch
+        registers = self.registers.expand(x.shape[0], self.num_registers, self.dim)
+
+        # Add the registers to the FRONT of the input
+        x = T.cat([registers, x], dim=-2)
+
+        # If using decoder blocks then mask for x comes from the x_mask (easy)
+        if self.use_decoder and "x_mask" in kwargs:
+            p = T.ones((x.shape[0], self.num_registers), dtype=T.bool, device=x.device)
+            kwargs["x_mask"] = T.cat([p, kwargs["x_mask"]], dim=-1)
+
+        # If using encoder blocks only self attention then we must add to the kv_mask
+        if not self.use_encoder and "kv_mask" in kwargs and "kv" not in kwargs:
+            p = T.ones((x.shape[0], self.num_registers), dtype=T.bool, device=x.device)
+            kwargs["kv_mask"] = T.cat([p, kwargs["kv_mask"]], dim=-1)
+
+        return x, kwargs
+
     def encode(self, x: T.Tensor, **kwargs) -> T.Tensor:
         """Pass the input through all layers sequentially."""
+        if self.num_registers:
+            x, kwargs = self._add_registers(x, **kwargs)
         for layer in self.layers:
             x = layer(x, **kwargs)
         return x
@@ -635,8 +664,8 @@ class TransformerVectorEncoder(nn.Module):
         return self.pool(self.encoder(x, **kwargs), **kwargs)
 
 
-class FullEncoder(nn.Module):
-    """Wrap a transformer encoder with input and output embedding networks."""
+class WrappedTransformer(nn.Module):
+    """Wrap a transformer with input and output embedding networks."""
 
     def __init__(
         self,
