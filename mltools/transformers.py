@@ -519,12 +519,12 @@ class Transformer(nn.Module):
         # Add the registers to the FRONT of the input
         x = T.cat([registers, x], dim=-2)
 
-        # If using decoder blocks then mask for x comes from the x_mask (easy)
+        # If using decoder blocks then mask for x comes from the x_mask (duh!)
         if self.use_decoder and "x_mask" in kwargs:
             p = T.ones((x.shape[0], self.num_registers), dtype=T.bool, device=x.device)
             kwargs["x_mask"] = T.cat([p, kwargs["x_mask"]], dim=-1)
 
-        # If using encoder blocks only self attention then we must add to the kv_mask
+        # If using self attention then we must add to the kv_mask
         if not self.use_decoder and "kv_mask" in kwargs and "kv" not in kwargs:
             p = T.ones((x.shape[0], self.num_registers), dtype=T.bool, device=x.device)
             kwargs["kv_mask"] = T.cat([p, kwargs["kv_mask"]], dim=-1)
