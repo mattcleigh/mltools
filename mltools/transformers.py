@@ -333,7 +333,7 @@ class SwiGLUNet(nn.Module):
 
 
 class EncoderBlock(nn.Module):
-    """Simple building block for a transformer."""
+    """Building block for the transformer encoder containing MHSA and FFN."""
 
     def __init__(
         self,
@@ -657,7 +657,7 @@ class TransformerVectorEncoder(nn.Module):
         # Modules
         self.encoder = Transformer(dim=dim, ctxt_dim=ctxt_dim, **encoder_config)
         self.pool = ClassAttentionPooling(
-            dim=dim, ctxt_dim=ctxt_dim, **classattention_config
+            dim=self.encoder.outp_dim, ctxt_dim=ctxt_dim, **classattention_config
         )
 
     def forward(self, x: T.Tensor, **kwargs) -> T.Tensor:
