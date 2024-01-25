@@ -455,6 +455,8 @@ def to_np(inpt: Union[T.Tensor, tuple]) -> np.ndarray:
     """
     if inpt is None:
         return None
+    if isinstance(inpt, dict):
+        return {k: to_np(inpt[k]) for k in inpt}
     if isinstance(inpt, (tuple, list)):
         return type(inpt)(to_np(x) for x in inpt)
     if inpt.dtype == T.bfloat16:  # Numpy conversions don't support bfloat16s

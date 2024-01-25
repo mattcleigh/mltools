@@ -333,7 +333,7 @@ class SwiGLUNet(nn.Module):
 
 
 class EncoderBlock(nn.Module):
-    """Simple building block for a transformer."""
+    """Building block for the transformer encoder containing MHSA and FFN."""
 
     def __init__(
         self,
@@ -511,7 +511,11 @@ class Transformer(nn.Module):
         return x
 
     def _add_registers(self, x: T.Tensor, **kwargs) -> tuple:
-        """Add the registers to the front of the input and the appropriate mask."""
+        """Add the registers to the front of the input and the appropriate mask.
+
+        TODO How to return the modified kwargs while staying backwards compatible? Needs
+        to be in the forward method.
+        """
 
         # Expand the registers so they can be broadcasted for the whole batch
         registers = self.registers.expand(x.shape[0], self.num_registers, self.dim)
@@ -657,7 +661,7 @@ class TransformerVectorEncoder(nn.Module):
         # Modules
         self.encoder = Transformer(dim=dim, ctxt_dim=ctxt_dim, **encoder_config)
         self.pool = ClassAttentionPooling(
-            dim=dim, ctxt_dim=ctxt_dim, **classattention_config
+            dim=self.encoder.outp_dim, ctxt_dim=ctxt_dim, **classattention_config
         )
 
     def forward(self, x: T.Tensor, **kwargs) -> T.Tensor:
