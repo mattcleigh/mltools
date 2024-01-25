@@ -634,7 +634,7 @@ class ClassAttentionPooling(nn.Module):
 
 
 class TransformerVectorEncoder(nn.Module):
-    """Combination of Encoder+CA to produce a vector given a set."""
+    """Combination of Encoder+ClassAttention to produce a vector given a set."""
 
     def __init__(
         self,
