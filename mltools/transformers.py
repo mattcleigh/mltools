@@ -129,6 +129,17 @@ def attach_context(x: T.Tensor, ctxt: T.Tensor | None = None) -> T.Tensor:
     return T.cat((x, ctxt), dim=-1)
 
 
+def add_context(x: T.Tensor, ctxt: T.Tensor | None = None) -> T.Tensor:
+    """Add a tensor with context which has the same or lower dimensions."""
+    if ctxt is None:
+        return x
+    dim_diff = x.dim() - ctxt.dim()
+    if dim_diff > 0:
+        ctxt = ctxt.view(ctxt.shape[0], *dim_diff * (1,), *ctxt.shape[1:])
+        ctxt = ctxt.expand(*x.shape[:-1], -1)
+    return x + ctxt
+
+
 def rotate_half(x: T.Tensor) -> T.Tensor:
     """Split a tensor in two to and swaps the order."""
     x1, x2 = x.chunk(2, dim=-1)
@@ -230,11 +241,15 @@ class RotaryEmbedding(nn.Module):
 
 
 class Attention(nn.Module):
-    """Basic multiheaded attention block."""
+    """Basic multiheaded attention block.
+
+    Now supports DiffiT style context embedding: https://arxiv.org/abs/2312.02139
+    """
 
     def __init__(
         self,
         dim: int,
+        ctxt_dim: int = 0,
         num_heads: int = 1,
         dropout: float = 0,
         do_self_attn: bool = False,
@@ -245,6 +260,8 @@ class Attention(nn.Module):
         ----------
         dim : int
             The dimension of the input and output.
+        ctxt_dim : int, optional
+            The dimension of the context, by default 0.
         num_heads : int, optional
             The number of attention heads, by default 1.
         dropout : float, optional
@@ -254,6 +271,7 @@ class Attention(nn.Module):
             by default False.
         do_rotary_enc : bool, optional
             Whether to use rotary positional encoding, by default False.
+        use_context : bool
         """
         super().__init__()
         assert dim % num_heads == 0
@@ -261,13 +279,14 @@ class Attention(nn.Module):
         # Attributes
         self.dim = dim
         self.num_heads = num_heads
+        self.ctxt_dim = ctxt_dim
         self.attn_dim = dim // num_heads
         self.do_self_attn = do_self_attn
         self.dropout = dropout
         self.do_rotary_enc = do_rotary_enc
 
         # Weight matrices - only 1 input for self attn
-        if do_self_attn:
+        if self.do_self_attn:
             self.attn_in = nn.Linear(dim, 3 * dim)
         else:
             self.attn_in = nn.ModuleList([nn.Linear(dim, dim), nn.Linear(dim, 2 * dim)])
@@ -277,14 +296,26 @@ class Attention(nn.Module):
         if self.do_rotary_enc:
             self.rotary = RotaryEmbedding(dim)
 
+        # Context embedding, scale the parameters by 1e-3
+        if self.ctxt_dim:
+            self.ctxt_mixer = nn.Linear(ctxt_dim + dim, dim)
+
     def forward(
         self,
         x: T.Tensor,
         kv: T.Tensor | None = None,
+        ctxt: T.Tensor | None = None,
         kv_mask: T.BoolTensor | None = None,
         attn_mask: T.BoolTensor | None = None,
         attn_bias: T.Tensor | None = None,
     ) -> T.Tensor:
+        """Pass through the attention block."""
+
+        # Mix the input together with the context - 2312.02139
+        # This overparameterises the Q, K, V projections but seems to help
+        if self.ctxt_dim:
+            x = self.ctxt_mixer(attach_context(x, ctxt))
+
         # Generate the q, k, v projections -> B,S,D
         if self.do_self_attn:
             q, k, v = self.attn_in(x).chunk(3, -1)
@@ -322,12 +353,14 @@ class SwiGLUNet(nn.Module):
         self, dim: int, hddn_dim: int, ctxt_dim: int = 0, dropout: float = 0.0
     ) -> None:
         super().__init__()
+        self.use_ctxt = ctxt_dim > 0
         self.lin1 = nn.Linear(dim + ctxt_dim, 2 * hddn_dim)
         self.lin2 = nn.Linear(hddn_dim, dim)
         self.drop = nn.Dropout(dropout)
 
     def forward(self, x: T.Tensor, ctxt: T.Tensor | None = None) -> T.Tensor:
-        x = attach_context(x, ctxt)
+        if self.use_ctxt:
+            x = attach_context(x, ctxt)
         x1, x2 = self.lin1(x).chunk(2, dim=-1)
         return self.lin2(self.drop(F.silu(x1) * x2))
 
@@ -345,6 +378,8 @@ class EncoderBlock(nn.Module):
         do_self_attn: bool = False,
         do_rotary_enc: bool = False,
         layerscale_init: float | None = 1e-4,
+        do_ctxt_in_attn: bool = False,
+        do_ctxt_in_ff: bool = True,
     ) -> None:
         super().__init__()
 
@@ -352,14 +387,21 @@ class EncoderBlock(nn.Module):
         self.dim = dim
         self.num_heads = num_heads
 
+        # Some dimensions
+        attn_ctxt = do_ctxt_in_attn * ctxt_dim
+        ff_ctxt = do_ctxt_in_ff * ctxt_dim
+        ff_hddn = ff_mult * dim
+
         # Submodules
         self.attn = PreNormScaledResidual(
-            Attention(dim, num_heads, dropout, do_self_attn, do_rotary_enc),
+            Attention(dim, attn_ctxt, num_heads, dropout, do_self_attn, do_rotary_enc),
             dim,
             layerscale_init,
         )
         self.ff = PreNormScaledResidual(
-            SwiGLUNet(dim, ff_mult * dim, ctxt_dim, dropout), dim, layerscale_init
+            SwiGLUNet(dim, ff_hddn, ff_ctxt, dropout),
+            dim,
+            layerscale_init,
         )
 
     def forward(
@@ -371,7 +413,7 @@ class EncoderBlock(nn.Module):
         attn_mask: T.Tensor | None = None,
         attn_bias: T.Tensor | None = None,
     ) -> T.Tensor:
-        x = self.attn(x, kv, kv_mask, attn_mask, attn_bias)
+        x = self.attn(x, kv, ctxt, kv_mask, attn_mask, attn_bias)
         x = self.ff(x, ctxt)
         return x
 
@@ -388,6 +430,8 @@ class DecoderBlock(nn.Module):
         dropout: float = 0,
         do_rotary_enc: bool = False,
         layerscale_init: float | None = 1e-5,
+        do_ctxt_in_attn: bool = False,
+        do_ctxt_in_ff: bool = True,
     ) -> None:
         super().__init__()
 
@@ -395,19 +439,26 @@ class DecoderBlock(nn.Module):
         self.dim = dim
         self.num_heads = num_heads
 
+        # Some dimensions
+        attn_ctxt = do_ctxt_in_attn * ctxt_dim
+        ff_ctxt = do_ctxt_in_ff * ctxt_dim
+        ff_hddn = ff_mult * dim
+
         # Submodules
         self.self_attn = PreNormScaledResidual(
-            Attention(dim, num_heads, dropout, True, do_rotary_enc),
+            Attention(dim, attn_ctxt, num_heads, dropout, True, do_rotary_enc),
             dim,
             layerscale_init,
         )
         self.cross_attn = PreNormScaledResidual(
-            Attention(dim, num_heads, dropout, False, False),
+            Attention(dim, attn_ctxt, num_heads, dropout, False, False),
             dim,
             layerscale_init,
         )
         self.ff = PreNormScaledResidual(
-            SwiGLUNet(dim, ff_mult * dim, ctxt_dim, dropout), dim, layerscale_init
+            SwiGLUNet(dim, ff_hddn, ff_ctxt, dropout),
+            dim,
+            layerscale_init,
         )
 
     def forward(
@@ -426,8 +477,8 @@ class DecoderBlock(nn.Module):
         Same as the encoder but with an extra x_mask for the self attention and kv is
         required
         """
-        x = self.self_attn(x, None, x_mask, attn_mask, attn_bias)
-        x = self.cross_attn(x, kv, kv_mask)
+        x = self.self_attn(x, None, ctxt, x_mask, attn_mask, attn_bias)
+        x = self.cross_attn(x, kv, ctxt, kv_mask)
         x = self.ff(x, ctxt)
         return x
 
@@ -442,10 +493,10 @@ class Transformer(nn.Module):
         ctxt_dim: int = 0,
         num_layers: int = 6,
         max_seq_len: int = 0,
+        num_registers: int = 0,
         do_input_linear: bool = False,
         do_output_linear: bool = False,
         do_absolute_enc: bool = False,
-        num_registers: int = 0,
         do_final_norm: bool = False,
         layer_config: Mapping | None = None,
         inpt_dim: None | int = None,
@@ -460,15 +511,15 @@ class Transformer(nn.Module):
         # Attributes
         self.dim = dim
         self.ctxt_dim = ctxt_dim
-        self.layer_config = layer_config
-        self.inpt_dim = inpt_dim if do_input_linear else dim
+        self.num_registers = num_registers
         self.do_final_norm = do_final_norm
         self.do_input_linear = do_input_linear
         self.do_output_linear = do_output_linear
         self.do_absolute_enc = do_absolute_enc
-        self.use_decoder = use_decoder
-        self.num_registers = num_registers
+        self.layer_config = layer_config
+        self.inpt_dim = inpt_dim if do_input_linear else dim
         self.outp_dim = outp_dim if do_output_linear else dim
+        self.use_decoder = use_decoder
 
         # Initial linear projection (Always done before absolute encoding)
         if self.do_input_linear:
@@ -530,6 +581,10 @@ class Transformer(nn.Module):
             kwargs["kv_mask"] = T.cat([p, kwargs["kv_mask"]], dim=-1)
 
         return x, kwargs
+
+    def remove_registers(self, x: T.Tensor) -> T.Tensor:
+        """Remove the registers from the front of the input."""
+        return x[:, self.num_registers :]
 
     def encode(self, x: T.Tensor, **kwargs) -> T.Tensor:
         """Pass the input through all layers sequentially."""

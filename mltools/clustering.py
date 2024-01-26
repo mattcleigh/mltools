@@ -8,7 +8,7 @@ def kmeans(
     x: T.Tensor,
     num_clusters: int,
     tol_per_dimension=1e-4,
-    max_iter=400,
+    max_iter=1000,
 ) -> T.Tensor:
     """Perform kmeans and return the cluster centers."""
 
