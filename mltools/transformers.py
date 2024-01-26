@@ -562,7 +562,11 @@ class Transformer(nn.Module):
         return x
 
     def _add_registers(self, x: T.Tensor, **kwargs) -> tuple:
-        """Add the registers to the front of the input and the appropriate mask."""
+        """Add the registers to the front of the input and the appropriate mask.
+
+        TODO How to return the modified kwargs while staying backwards compatible? Needs
+        to be in the forward method.
+        """
 
         # Expand the registers so they can be broadcasted for the whole batch
         registers = self.registers.expand(x.shape[0], self.num_registers, self.dim)
@@ -689,7 +693,7 @@ class ClassAttentionPooling(nn.Module):
 
 
 class TransformerVectorEncoder(nn.Module):
-    """Combination of Encoder+CA to produce a vector given a set."""
+    """Combination of Encoder+ClassAttention to produce a vector given a set."""
 
     def __init__(
         self,
