@@ -1,5 +1,6 @@
 """Functions and classes used to define invertible transformations."""
 
+from functools import partial
 from typing import Any, Callable, Literal
 
 import normflows as nf
@@ -7,10 +8,10 @@ import numpy as np
 import torch as T
 import torch.nn as nn
 from normflows.flows.neural_spline.coupling import PiecewiseRationalQuadraticCoupling
-from normflows.nets.resnet import ResidualNet
 from normflows.utils.masks import create_alternating_binary_mask
 from normflows.utils.splines import DEFAULT_MIN_DERIVATIVE
 
+from .mlp import MLP
 from .torch_utils import base_modules, get_act
 
 
@@ -73,20 +74,22 @@ class CoupledRationalQuadraticSpline(nf.flows.Flow):
         super().__init__()
 
         def transform_net_create_fn(in_features, out_features):
-            net = ResidualNet(
-                in_features=in_features,
-                out_features=out_features,
-                context_features=num_context_channels,
-                hidden_features=num_hidden_channels,
+            net = MLP(  # I find that my MLPs use context information better!
+                inpt_dim=in_features,
+                outp_dim=out_features,
+                ctxt_dim=num_context_channels,
+                hddn_dim=num_hidden_channels,
                 num_blocks=num_blocks,
-                activation=activation(),
-                dropout_probability=dropout_probability,
-                use_batch_norm=False,
+                act_h=partial(activation),
+                drp=dropout_probability,
+                ctxt_in_hddn=True,
+                ctxt_in_inpt=False,
             )
             if init_identity:
-                nn.init.constant_(net.final_layer.weight, 0.0)
+                nn.init.constant_(net.output_block.layers[0].weight, 0.0)
                 nn.init.constant_(
-                    net.final_layer.bias, np.log(np.exp(1 - DEFAULT_MIN_DERIVATIVE) - 1)
+                    net.output_block.layers[0].bias,
+                    np.log(np.exp(1 - DEFAULT_MIN_DERIVATIVE) - 1),
                 )
             return net
 

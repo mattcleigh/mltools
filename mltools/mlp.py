@@ -74,13 +74,13 @@ class MLPBlock(nn.Module):
         self.do_res = do_res and (inpt_dim == outp_dim)
 
         # Initialise the block layers as a module list
-        self.block = nn.ModuleList()
+        self.layers = nn.ModuleList()
         for n in range(n_layers):
             # Increase the input dimension of the first layer to include context
             lyr_in = inpt_dim + ctxt_dim if n == 0 else outp_dim
 
             # Linear transform, activation, normalisation, dropout
-            self.block.append(
+            self.layers.append(
                 BayesianLinear(lyr_in, outp_dim)
                 if do_bayesian
                 else nn.Linear(lyr_in, outp_dim, bias=use_bias)
@@ -89,19 +89,19 @@ class MLPBlock(nn.Module):
             # Initialise the final layer with zeros
             with_zeros = init_zeros and n == n_layers - 1 and not do_bayesian
             if with_zeros:
-                self.block[-1].weight.data.fill_(0)
+                self.layers[-1].weight.data.fill_(0)
                 if use_bias:
-                    self.block[-1].bias.data.fill_(0)
+                    self.layers[-1].bias.data.fill_(0)
 
             # Add the activation layer
             if act != "none":
-                self.block.append(get_act(act))
+                self.layers.append(get_act(act))
             if nrm != "none" and not with_zeros:  # Dont norm after just using zeros
-                self.block.append(get_nrm(nrm, outp_dim))
+                self.layers.append(get_nrm(nrm, outp_dim))
 
             # Add the dropout layer
             if drp > 0:
-                self.block.append(nn.Dropout(drp))
+                self.layers.append(nn.Dropout(drp))
 
     def forward(self, inpt: T.Tensor, ctxt: T.Tensor | None = None) -> T.Tensor:
         """
@@ -118,7 +118,7 @@ class MLPBlock(nn.Module):
         temp = T.cat([inpt, ctxt], dim=-1) if self.ctxt_dim else inpt
 
         # Pass through each transform in the block
-        for layer in self.block:
+        for layer in self.layers:
             temp = layer(temp)
 
         # Add the original inputs again for the residual connection
@@ -132,7 +132,7 @@ class MLPBlock(nn.Module):
         string = str(self.inpt_dim)
         if self.ctxt_dim:
             string += f"({self.ctxt_dim})"
-        for b in self.block:
+        for b in self.layers:
             string += "->"
             string += str(b).split("(", 1)[0]
             if self.init_zeros and isinstance(b, nn.Linear):
@@ -343,7 +343,7 @@ class MLP(nn.Module):
                 [
                     str(layer.out_features)
                     for hidden in self.hidden_blocks
-                    for layer in hidden.block
+                    for layer in hidden.layers
                     if isinstance(layer, nn.Linear)
                 ]
             )

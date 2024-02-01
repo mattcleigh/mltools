@@ -14,6 +14,12 @@ from .loss import ChampferLoss, MyBCEWithLogit, VAELoss
 from .schedulers import CyclicWithWarmup, LinearWarmupRootDecay, WarmupToConstant
 
 
+def reset_params(layer: nn.Module) -> None:
+    """Reset the parameters of a pytorch layer."""
+    if hasattr(layer, "reset_parameters"):
+        layer.reset_parameters()
+
+
 def sum_except_batch(x: T.Tensor, num_batch_dims: int = 1) -> T.Tensor:
     """Sum all elements of x except for the first num_batch_dims dimensions."""
     return T.sum(x, dim=list(range(num_batch_dims, x.ndim)))

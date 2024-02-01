@@ -588,7 +588,7 @@ class Transformer(nn.Module):
 
     def remove_registers(self, x: T.Tensor) -> T.Tensor:
         """Remove the registers from the front of the input."""
-        return x[:, self.num_registers :]
+        return x[:, : self.num_registers], x[:, self.num_registers :]
 
     def encode(self, x: T.Tensor, **kwargs) -> T.Tensor:
         """Pass the input through all layers sequentially."""
@@ -783,7 +783,8 @@ class WrappedTransformer(nn.Module):
             self.edge_emdb = MLP(
                 inpt_dim=self.edge_dim,
                 ctxt_dim=self.ctxt_out,
-                outp_dim=self.num_heads**edge_embd_config,
+                outp_dim=self.num_heads,
+                **edge_embd_config,
             )
 
     def forward(
