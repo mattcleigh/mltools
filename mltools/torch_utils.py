@@ -217,6 +217,7 @@ def get_sched(
     steps_per_epoch: int = 0,
     max_lr: float | None = None,
     max_epochs: float | None = None,
+    max_steps: int | None = None,
 ) -> schd._LRScheduler:
     """Return a pytorch learning rate schedular given a dict containing a name and other
     kwargs.
@@ -260,6 +261,9 @@ def get_sched(
                 "not in the scheduler dictionary!",
             )
 
+    # If max_steps is not specified, then use the max_epochs
+    max_steps = max_steps if max_steps > 1 else steps_per_epoch * max_epochs
+
     # Pop off the number of epochs per cycle (needed as arg)
     if "epochs_per_cycle" in dict_copy:
         epochs_per_cycle = dict_copy.pop("epochs_per_cycle")
@@ -280,9 +284,7 @@ def get_sched(
             opt, steps_per_epoch * epochs_per_cycle, **dict_copy
         )
     elif name == "onecycle":
-        return schd.OneCycleLR(
-            opt, max_lr, total_steps=steps_per_epoch * max_epochs, **dict_copy
-        )
+        return schd.OneCycleLR(opt, max_lr, total_steps=max_steps, **dict_copy)
     elif name == "cyclicwithwarmup":
         return CyclicWithWarmup(
             opt, max_lr, total_steps=steps_per_epoch * epochs_per_cycle, **dict_copy

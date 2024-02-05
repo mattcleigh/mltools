@@ -18,6 +18,7 @@ def standard_optim_sched(model: LightningModule) -> dict:
         opt,
         steps_per_epoch=len(model.trainer.datamodule.train_dataloader()),
         max_epochs=model.trainer.max_epochs,
+        max_steps=model.trainer.max_steps,
     )
 
     # Return the dict for the lightning trainer

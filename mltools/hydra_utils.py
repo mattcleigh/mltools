@@ -25,27 +25,36 @@ def reload_original_config(
     ckpt_flag: str = "*last*",
     set_wandb_resume: bool = True,
 ) -> OmegaConf:
-    """Replace the cfg with the one stored at the checkpoint location.
+    """Return the original config used to start the job.
 
     Will also set the chkpt_dir to the latest version of the last or best checkpoint
     """
 
     log.info(f"Looking for previous job config in {path}")
-    orig_cfg = OmegaConf.load(Path(path, file_name))
+    try:
+        orig_cfg = OmegaConf.load(Path(path, file_name))
+    except FileNotFoundError:
+        log.warning("No previous job config found! Running with current one.")
+        return None
 
     log.info(f"Looking for checkpoints in folder matching {ckpt_flag}")
     if set_ckpt_path:
-        orig_cfg.ckpt_path = str(
-            sorted(
-                Path(path).glob(f"checkpoints/{ckpt_flag}.ckpt"), key=os.path.getmtime
-            )[-1]
-        )
+        try:
+            orig_cfg.ckpt_path = str(
+                sorted(
+                    Path(path).glob(f"checkpoints/{ckpt_flag}.ckpt"),
+                    key=os.path.getmtime,
+                )[-1]
+            )
 
-    if set_wandb_resume:
-        log.info("Attempting to set the same WandB ID to continue logging run")
-        if hasattr(orig_cfg, "loggers"):
-            if hasattr(orig_cfg.loggers, "wandb"):
-                orig_cfg.loggers.wandb.resume = True
+            if set_wandb_resume:
+                log.info("Attempting to set the same WandB ID to continue logging run")
+                if hasattr(orig_cfg, "loggers"):
+                    if hasattr(orig_cfg.loggers, "wandb"):
+                        orig_cfg.loggers.wandb.resume = True
+
+        except IndexError:
+            log.warning("No checkpoint found! Will not set the checkpoint path.")
 
     return orig_cfg
 
