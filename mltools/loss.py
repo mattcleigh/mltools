@@ -3,6 +3,28 @@
 
 import torch as T
 import torch.nn as nn
+from torch.nn.functional import cosine_similarity
+
+
+def contrastive_loss(x1: T.Tensor, x2: T.Tensor, temperature: float = 0.2) -> T.Tensor:
+    """Calculate standard contrastive loss between two sets of embeddings.
+
+    Remember there exist negative samples within x1. Not just between x1 and x2.
+    """
+
+    # Concatenate and get the similarity matrix
+    batch_size = x1.shape[0]
+    z = T.cat([x1, x2])
+    sim = cosine_similarity(z.unsqueeze(0), z.unsqueeze(1), dim=2) / temperature
+
+    # Fill in the matrix with negative infinities along the diagonal
+    mask = T.eye(batch_size * 2, device=x1.device, dtype=bool)
+    sim[mask] = -T.inf
+
+    # Calculate the loss using the reduced form of nce
+    loss = -T.diag(sim, batch_size).mean() + T.logsumexp(sim, dim=-1).mean()
+
+    return loss
 
 
 class VAELoss(nn.Module):

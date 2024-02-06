@@ -1,23 +1,42 @@
 """Clustering algorithms for pytorch tensors."""
 
+import numpy as np
 import torch as T
-from tqdm import tqdm
+from tqdm import tqdm, trange
 
 
+@T.no_grad()
 def kmeans(
     x: T.Tensor,
     num_clusters: int,
-    tol_per_dimension=1e-4,
+    tol_per_dimension=6e-5,
     max_iter=1000,
+    use_plusplus=True,
 ) -> T.Tensor:
     """Perform kmeans and return the cluster centers."""
 
     # Make sure that the input is a float
     x = x.float()
+    dataset_size = x.shape[0]
+
+    # Check if the number of clusters is larger than the dataset
+    if num_clusters > dataset_size:
+        raise ValueError("Number of clusters is larger than the dataset size.")
+
+    # Use the kmeans++ algorithm to initialise the cluster centers
+    if use_plusplus:
+        cluster_centers = T.zeros_like(x[:num_clusters])
+        cluster_centers[0] = T.clone(x[np.random.randint(dataset_size)])
+        for i in trange(1, num_clusters, desc="Initialising centers"):
+            dist = T.cdist(x, cluster_centers[:i])
+            min_dist = dist.min(dim=-1).values
+            probs = min_dist / min_dist.sum()
+            cluster_centers[i] = T.clone(x[T.multinomial(probs, 1)])
 
     # Initialise the cluster centers by randomly sampling from the input
-    indices = T.multinomial(T.ones(x.shape[0]), num_clusters, replacement=False)
-    cluster_centers = x[indices]
+    else:
+        indices = T.multinomial(T.ones(dataset_size), num_clusters, replacement=False)
+        cluster_centers = T.clone(x[indices])
 
     # Iterate until convergence
     tqdm_meter = tqdm(desc="Running kmeans")
@@ -25,13 +44,23 @@ def kmeans(
         # Calculate the distance between the inputs and the cluster centers
         dist = T.cdist(x, cluster_centers)
 
-        # Assign each input to the closest cluster center
+        # For each of the inputs find the closest cluster center
         idxes = T.argmin(dist, dim=-1).unsqueeze(-1)
 
         # For each cluster, calculate the mean of the inputs assigned to it
         cluster_means = T.zeros_like(cluster_centers)
         cluster_means.scatter_add_(0, idxes.expand_as(x), x)
-        cluster_means /= T.bincount(idxes.squeeze()).unsqueeze(-1)
+        cluster_means /= T.bincount(idxes.squeeze(), minlength=num_clusters).unsqueeze(
+            -1
+        )
+
+        # If there are empty clusters, replace them with a random input
+        empty_clusters = T.isnan(cluster_means).any(dim=-1)
+        if empty_clusters.any():
+            new_idx = T.multinomial(
+                T.ones(dataset_size), empty_clusters.sum(), replacement=False
+            )
+            cluster_means[empty_clusters] = T.clone(x[new_idx])
 
         # Calculate the total shift per dimension of all cluster centers
         shift = T.norm(cluster_means - cluster_centers, dim=-1).sum()
@@ -51,6 +80,13 @@ def kmeans(
             break
 
     tqdm_meter.close()
+
+    # Print the cluster occupancy
+    occupancy = T.bincount(idxes.squeeze(), minlength=num_clusters)
+    print("Finished kmeans clustering with occupancy")
+    print(f" - min={occupancy.min()}")
+    print(f" - mean={occupancy.float().mean():.0f}")
+    print(f" - max={occupancy.max()}")
 
     # Print a warning if the iteration limit was reached
     if iteration == max_iter - 1:

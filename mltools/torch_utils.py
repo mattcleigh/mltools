@@ -1,7 +1,7 @@
 """Mix of utility functions specifically for pytorch."""
 import os
 from functools import partial
-from typing import Any, Iterable, Mapping, Tuple, Union
+from typing import Any, Callable, Iterable, Mapping, Tuple, Union
 
 import numpy as np
 import torch as T
@@ -9,6 +9,7 @@ import torch.nn as nn
 import torch.optim.lr_scheduler as schd
 from torch.optim.optimizer import Optimizer
 from torch.utils.data import Dataset, Subset, random_split
+from torch.utils.data.dataloader import default_collate
 
 from .loss import ChampferLoss, MyBCEWithLogit, VAELoss
 from .schedulers import CyclicWithWarmup, LinearWarmupRootDecay, WarmupToConstant
@@ -629,3 +630,19 @@ def ema_param_sync(source: nn.Module, target: nn.Module, ema_decay: float) -> No
         t_params.data.copy_(
             ema_decay * t_params.data + (1.0 - ema_decay) * s_params.data
         )
+
+
+def masked_mean(x: T.Tensor, mask: T.BoolTensor, dim: int = -1) -> T.Tensor:
+    """Return the mean of a tensor along a dimension, ignoring masked elements."""
+    mask_dim = dim + 1 * (dim < 0)
+    total = (x * mask.unsqueeze(-1)).sum(dim)
+    return total / mask.sum(mask_dim, keepdim=True)
+
+
+def preprocess_and_collate(
+    batch: Iterable, preprocessing: Callable | None = None
+) -> Any:
+    """Apply collation with an extra preprocessing fn to each sample."""
+    if preprocessing is not None:
+        batch = [preprocessing(x) for x in batch]
+    return default_collate(batch)

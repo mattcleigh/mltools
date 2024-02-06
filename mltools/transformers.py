@@ -576,19 +576,26 @@ class Transformer(nn.Module):
 
         # If using decoder blocks then mask for x comes from the x_mask (duh!)
         if self.use_decoder and "x_mask" in kwargs:
-            p = T.ones((x.shape[0], self.num_registers), dtype=T.bool, device=x.device)
-            kwargs["x_mask"] = T.cat([p, kwargs["x_mask"]], dim=-1)
+            kwargs["x_mask"] = self.get_combined_mask(kwargs["x_mask"])
 
         # If using self attention then we must add to the kv_mask
         if not self.use_decoder and "kv_mask" in kwargs and "kv" not in kwargs:
-            p = T.ones((x.shape[0], self.num_registers), dtype=T.bool, device=x.device)
-            kwargs["kv_mask"] = T.cat([p, kwargs["kv_mask"]], dim=-1)
+            kwargs["kv_mask"] = self.get_combined_mask(kwargs["kv_mask"])
 
         return x, kwargs
 
     def remove_registers(self, x: T.Tensor) -> T.Tensor:
         """Remove the registers from the front of the input."""
         return x[:, : self.num_registers], x[:, self.num_registers :]
+
+    def get_combined_mask(self, mask: T.BoolTensor) -> T.BoolTensor:
+        """Get a mask which can be used for the combined register+sequence tensor."""
+        if self.num_registers == 0:
+            return mask
+        reg_mask = T.ones(
+            (mask.shape[0], self.num_registers), dtype=T.bool, device=mask.device
+        )
+        return T.cat([reg_mask, mask], dim=-1)
 
     def encode(self, x: T.Tensor, **kwargs) -> T.Tensor:
         """Pass the input through all layers sequentially."""
