@@ -213,7 +213,7 @@ class MLP(nn.Module):
             If to concatenate the context to the output layer, by default False
         do_bayesian : bool, optional
             If to fill the block with bayesian linear layers, by default False
-        init_zeros  : bool, optional
+        init_zeros : bool, optional
             If the final layer parameters in each MLP block are set to zero
             Does not apply to bayesian layers
             Will also prevent normalisation

@@ -435,7 +435,7 @@ class UNet(nn.Module):
         min_size: int = 8,
         max_depth: int = 8,
         n_blocks_per_layer: int = 1,
-        attn_below: int = 8,
+        attn_below: int = 0,
         start_channels: int = 32,
         max_channels: int = 128,
         zero_out: bool = False,

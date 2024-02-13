@@ -42,7 +42,7 @@ class LinearWarmupRootDecay(_LRScheduler):
 class WarmupToConstant(_LRScheduler):
     """Gradually warm-up learning rate in optimizer to a constant value."""
 
-    def __init__(self, optimizer: Optimizer, num_steps: int = 100):
+    def __init__(self, optimizer: Optimizer, num_steps: int = 100, **kwargs):
         """
         args:
             optimizer (Optimizer): Wrapped optimizer.
