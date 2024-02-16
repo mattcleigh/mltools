@@ -93,6 +93,13 @@ def standard_job_array(
     print(f"--saved to {job_name}.sh")
 
 
+def slices(*args) -> slice:
+    """Create slices from arguments (easier for hydra)."""
+    if isinstance(args[0], Iterable):
+        return tuple(slice(*a) for a in args)
+    return slice(*args)
+
+
 def resursive_search(obj: Mapping, key: Any) -> Any | None:
     """Recursively search through a dictionary for a key and return the first."""
     if key in obj:

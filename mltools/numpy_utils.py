@@ -41,7 +41,7 @@ def unison_shuffled_copies(*args) -> tuple:
     n = len(args[0])
     assert all(len(a) == n for a in args)
     p = np.random.permutation(n)
-    return (a[p] for a in args)
+    return tuple(a[p] for a in args)
 
 
 def onehot_encode(
