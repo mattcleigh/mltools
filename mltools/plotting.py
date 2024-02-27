@@ -643,6 +643,9 @@ def plot_multi_hists(
     if not isinstance(axis_callbacks, list):
         axis_callbacks = len(col_labels) * [axis_callbacks]
 
+    # Deepcopy the bins otherwise they will be replaced
+    bins = deepcopy(bins)
+
     # Cycle through the datalist and ensure that they are 2D, as each column is an axis
     for data_idx in range(len(data_list)):
         if data_list[data_idx].ndim < 2:

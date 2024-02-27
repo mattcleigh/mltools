@@ -663,6 +663,9 @@ class ClassAttentionPooling(nn.Module):
         ctxt_dim: int = 0,
         num_layers: int = 2,
         layer_config: Mapping | None = None,
+        do_output_linear: bool = False,
+        outp_dim: int | None = None,
+        inpt_dim: int | None = None,
     ) -> None:
         super().__init__()
 
@@ -670,18 +673,24 @@ class ClassAttentionPooling(nn.Module):
         layer_config = layer_config or {}
 
         # Attributes
-        self.dim = dim
+        self.dim = inpt_dim or dim
         self.ctxt_dim = ctxt_dim
         self.layer_config = layer_config
+        self.do_output_linear = do_output_linear
+        self.outp_dim = outp_dim if do_output_linear else dim
 
         # Modules
         self.global_token = nn.Parameter(T.randn((1, 1, self.dim)))
         self.layers = nn.ModuleList(
             [
-                EncoderBlock(dim, ctxt_dim, **self.layer_config)
+                EncoderBlock(self.dim, ctxt_dim, **self.layer_config)
                 for _ in range(num_layers)
             ]
         )
+
+        # Final linear projection
+        if self.do_output_linear:
+            self.linear_out = nn.Linear(self.dim, outp_dim)
 
     def forward(self, x: T.Tensor, **kwargs) -> T.Tensor:
         # Expand the global token so it can be broadcasted for the whole batch
@@ -690,9 +699,13 @@ class ClassAttentionPooling(nn.Module):
         # Apply the iterative pooling
         for layer in self.layers:
             g = layer(g, x, **kwargs)
+        g.squeeze_(-2)  # Pop out the sequence dimension
 
-        # Pop out the sequence dimension and return
-        return g.squeeze(-2)
+        # Final linear projection
+        if self.do_output_linear:
+            g = self.linear_out(g)
+
+        return g
 
 
 class TransformerVectorEncoder(nn.Module):
