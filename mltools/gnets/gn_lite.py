@@ -1,4 +1,5 @@
 """Defines the lightweight and streamlined graph object and operations."""
+
 import math
 
 import torch as T

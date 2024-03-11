@@ -1,6 +1,5 @@
 """Code for everything convolutional."""
 
-
 import logging
 from typing import Mapping
 

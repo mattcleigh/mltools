@@ -128,24 +128,30 @@ class IterativeNormLayer(nn.Module):
         # Buffers are needed for saving/loading the layer
         self.register_buffer(
             "means",
-            T.zeros(self.stat_dim, dtype=T.float32)
-            if means is None
-            else T.as_tensor(means, dtype=T.float32),
+            (
+                T.zeros(self.stat_dim, dtype=T.float32)
+                if means is None
+                else T.as_tensor(means, dtype=T.float32)
+            ),
         )
         self.register_buffer(
             "vars",
-            T.ones(self.stat_dim, dtype=T.float32)
-            if vars is None
-            else T.as_tensor(vars, dtype=T.float32),
+            (
+                T.ones(self.stat_dim, dtype=T.float32)
+                if vars is None
+                else T.as_tensor(vars, dtype=T.float32)
+            ),
         )
         self.register_buffer("n", n)
 
         # For the welford algorithm it is useful to have another variable m2
         self.register_buffer(
             "m2",
-            T.ones(self.stat_dim, dtype=T.float64)
-            if vars is None
-            else T.as_tensor(vars, dtype=T.float64),
+            (
+                T.ones(self.stat_dim, dtype=T.float64)
+                if vars is None
+                else T.as_tensor(vars, dtype=T.float64)
+            ),
         )
 
         # If the means are set here then the model is "frozen" and never updated

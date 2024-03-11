@@ -1,4 +1,5 @@
 """Defines the graph object type and other operations specific to handing them."""
+
 from __future__ import annotations
 
 from typing import Iterable, _type_repr
