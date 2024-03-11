@@ -1,6 +1,5 @@
 """Custom loss functions and methods to calculate them."""
 
-
 import torch as T
 import torch.nn as nn
 from torch.nn.functional import cosine_similarity

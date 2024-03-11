@@ -1,6 +1,5 @@
 """A collection of functions for the karras EDM diffusion method."""
 
-
 import math
 
 import torch as T
