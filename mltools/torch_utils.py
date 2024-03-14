@@ -11,9 +11,23 @@ import torch.optim.lr_scheduler as schd
 from torch.optim.optimizer import Optimizer
 from torch.utils.data import Dataset, Subset, random_split
 from torch.utils.data.dataloader import default_collate
+from contextlib import contextmanager
 
 from .loss import ChampferLoss, MyBCEWithLogit, VAELoss
 from .schedulers import CyclicWithWarmup, LinearWarmupRootDecay, WarmupToConstant
+
+
+
+@contextmanager
+def set_eval(net):
+    """Temporarily switch to evaluation mode."""
+    istrain = net.training
+    try:
+        net.eval()
+        yield net
+    finally:
+        if istrain:
+            net.train()
 
 
 def reset_params(layer: nn.Module) -> None:

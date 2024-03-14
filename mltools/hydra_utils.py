@@ -22,7 +22,7 @@ def reload_original_config(
     path: str = ".",
     file_name: str = "full_config.yaml",
     set_ckpt_path: bool = True,
-    ckpt_flag: str = "*last*",
+    ckpt_flag: str = "*",
     set_wandb_resume: bool = True,
 ) -> OmegaConf:
     """Return the original config used to start the job.
@@ -42,7 +42,7 @@ def reload_original_config(
         try:
             orig_cfg.ckpt_path = str(
                 sorted(
-                    Path(path).glob(f"checkpoints/{ckpt_flag}.ckpt"),
+                    Path(path).glob(f"checkpoints/{ckpt_flag}"),
                     key=os.path.getmtime,
                 )[-1]
             )

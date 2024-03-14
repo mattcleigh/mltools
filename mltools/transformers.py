@@ -143,51 +143,6 @@ def apply_rotary_pos_emb(x: T.Tensor, cos: T.Tensor, sin: T.Tensor) -> T.Tensor:
     return (x * cos) + (rotate_half(x) * sin)
 
 
-class LayerScale(nn.Module):
-    """Applies the LayerScale operation from the Cait vision transformer."""
-
-    def __init__(
-        self,
-        dim: int,
-        init_value: float = 1e-5,
-    ) -> None:
-        super().__init__()
-        self.gamma = nn.Parameter(init_value * T.ones(dim))
-
-    def forward(self, x: T.Tensor) -> T.Tensor:
-        return x * self.gamma
-
-
-class PreNormScaledResidual(nn.Module):
-    """Wraps a module with pre-norm and layerscale with a residual connection."""
-
-    def __init__(
-        self, fn: nn.Module, dim: int, layerscale_init: float | None = 1e-5
-    ) -> None:
-        """
-        Parameters
-        ----------
-        fn : nn.Module
-            The module to wrap. Must be non-resizing.
-        dim : int
-            The dimension of the input and output.
-        layerscale_init : float | None, optional
-            The initial value for the layerscale, by default 1e-5.
-            If None, then no layerscale is applied.
-        """
-        super().__init__()
-        self.norm = nn.LayerNorm(dim)
-        self.fn = fn
-        self.ls = (
-            LayerScale(dim, layerscale_init)
-            if layerscale_init is not None
-            else nn.Identity()
-        )
-
-    def forward(self, x: T.Tensor, *args, **kwargs) -> T.Tensor:
-        return self.ls(self.fn(self.norm(x), *args, **kwargs)) + x
-
-
 class RotaryEmbedding(nn.Module):
     """Applies rotary positional embedding for relative encoding."""
 
@@ -232,10 +187,72 @@ class RotaryEmbedding(nn.Module):
         )
 
 
+class LayerScale(nn.Module):
+    """Applies the LayerScale operation from the Cait vision transformer."""
+
+    def __init__(self, dim: int, init_value: float = 1e-5) -> None:
+        super().__init__()
+        assert dim > 0, "The dimension must be greater than zero!"
+        self.gamma = nn.Parameter(init_value * T.ones(dim))
+
+    def forward(self, x: T.Tensor) -> T.Tensor:
+        return x * self.gamma
+
+
+class PreNormScaledResidual(nn.Module):
+    """Wraps a module with pre-norm and layerscale with a residual connection."""
+
+    def __init__(
+        self, fn: nn.Module, ls_init: float | None = 1e-5, dim: int = 0
+    ) -> None:
+        """
+        Parameters
+        ----------
+        fn : nn.Module
+            The module to wrap. Must be non-resizing.
+        dim : int
+            The dimension of the input and output.
+            If zero we will try get it from the fn module.
+        ls_init : float | None, optional
+            The initial value for the layerscale, by default 1e-5.
+            If None, then no layerscale is applied.
+        """
+        super().__init__()
+        dim = dim or fn.dim
+        self.fn = fn
+        self.norm = nn.LayerNorm(dim)
+        self.ls = LayerScale(dim, ls_init) if ls_init is not None else nn.Identity()
+
+    def forward(self, x: T.Tensor, *args, **kwargs) -> T.Tensor:
+        return self.ls(self.fn(self.norm(x), *args, **kwargs)) + x
+
+
+class SwiGLUNet(nn.Module):
+    """Simple gated bilinear feedfoward network with the Swish activation."""
+
+    def __init__(
+        self, dim: int, hddn_dim: int, ctxt_dim: int = 0, dropout: float = 0.0
+    ) -> None:
+        super().__init__()
+        self.dim = dim # Usefull for wrapping the module
+        self.ctxt_dim = ctxt_dim
+        self.lin1 = nn.Linear(dim + ctxt_dim, 2 * hddn_dim)
+        self.lin2 = nn.Linear(hddn_dim, dim)
+        self.drop = nn.Dropout(dropout)
+
+    def forward(self, x: T.Tensor, ctxt: T.Tensor | None = None) -> T.Tensor:
+        """Forward pass with contigous steps which allows nested tensors."""
+        if self.ctxt_dim:
+            x = attach_context(x, ctxt)
+        x1, x2 = self.lin1(x).chunk(2, dim=-1)
+        return self.lin2(self.drop(F.silu(x1.contiguous()) * x2.contiguous()))
+
+
 class Attention(nn.Module):
     """Basic multiheaded attention block.
 
     Now supports DiffiT style context embedding: https://arxiv.org/abs/2312.02139
+    Also supports no padding attention for the packed varlen attention.
     """
 
     def __init__(
@@ -245,7 +262,7 @@ class Attention(nn.Module):
         num_heads: int = 1,
         dropout: float = 0,
         do_self_attn: bool = False,
-        do_rotary_enc: bool = False,
+        do_rotary: bool = False,
         do_packed: bool = False,
     ) -> None:
         """
@@ -262,15 +279,16 @@ class Attention(nn.Module):
         do_self_attn : bool, optional
             Whether to optimise for self attention by using a single weight matrix,
             by default False.
-        do_rotary_enc : bool, optional
+        do_rotary : bool, optional
             Whether to use rotary positional encoding, by default False.
         do_packed : bool, optional
             Whether to use the packed varlen attention, by default False.
         """
         super().__init__()
-        assert dim % num_heads == 0
-        if do_packed and not do_self_attn:
-            raise ValueError("Packed attention only supports self attention for now!")
+        assert dim % num_heads == 0, "Dim must be divisible by the number of heads!"
+        if do_packed:
+            assert do_self_attn, "Packed attn only supports self attn!"
+            assert not do_rotary, "Packed attn does not support rotary!"
 
         # Attributes
         self.dim = dim
@@ -279,24 +297,40 @@ class Attention(nn.Module):
         self.attn_dim = dim // num_heads
         self.do_self_attn = do_self_attn
         self.dropout = dropout
-        self.do_rotary_enc = do_rotary_enc
+        self.do_rotary = do_rotary
         self.do_packed = do_packed
 
-        # Weight matrices - Only need 1 for self attn - Better parallelism
+        # Only one projection matrix for self attn - Better parallelism
         if self.do_self_attn:
             self.attn_in = nn.Linear(dim, 3 * dim)
         else:
             self.attn_q = nn.Linear(dim, dim)
             self.attn_kv = nn.Linear(dim, 2 * dim)
-        self.attn_out = nn.Linear(dim, dim)
-
-        # Positional encoding
-        if self.do_rotary_enc:
+        if self.do_rotary:
             self.rotary = RotaryEmbedding(dim)
-
-        # Context embedding
         if self.ctxt_dim:
             self.ctxt_mixer = nn.Linear(ctxt_dim + dim, dim)
+        self.attn_out = nn.Linear(dim, dim)
+
+    def _check_inputs(self, kv: T.Tensor, attn_bias: T.Tensor) -> None:
+        """Check the inputs are optimal for the forward pass."""
+        if self.do_self_attn:
+            if kv is not None:
+                warnings.warn("Doing self attention but passing external kv!")
+        else:
+            if kv is None:
+                warnings.warn("Suboptimal use of self_attn! Use do_self_attn=True!")
+        if self.do_packed and attn_bias is not None:
+                warnings.warn("Packed attention does not support attention bias!")
+
+    def _packed_attention(
+            self, x: T.Tensor, culens: T.Tensor, maxlen: int
+        ) -> T.Tensor:
+        """Perform flash attention with the packed sequences."""
+        qkv = self.attn_in(x).view(x.shape[0], 3, self.num_heads, self.attn_dim)
+        drop = self.dropout if self.training else 0.0
+        a_out = flash_attn_varlen_qkvpacked_func(qkv, culens, maxlen, drop)
+        return self.attn_out(a_out.view(-1, self.dim))
 
     def forward(
         self,
@@ -310,6 +344,7 @@ class Attention(nn.Module):
         maxlen: int | None = None,
     ) -> T.Tensor:
         """Pass through the attention block."""
+        self._check_inputs(kv, attn_bias)
 
         # Mix in the context to the main sequence
         if self.ctxt_dim:
@@ -317,23 +352,13 @@ class Attention(nn.Module):
 
         # Perform the flash attention with the packed sequences
         if self.do_packed:
-            qkv = self.attn_in(x).view(x.shape[0], 3, self.num_heads, self.attn_dim)
-            a_out = flash_attn_varlen_qkvpacked_func(
-                qkv,
-                culens,
-                maxlen,
-                self.dropout if self.training else 0.0,
-            )
-            a_out = a_out.view(-1, self.dim)
-            return self.attn_out(a_out)
+            return self._packed_attention(x, culens, maxlen)
 
         # Generate the q, k, v projections -> B,S,D
         if self.do_self_attn:
             q, k, v = self.attn_in(x).chunk(3, -1)
         else:
-            if kv is None:
-                warnings.warn("Suboptimal use of self_attn! Use do_self_attn=True!")
-                kv = x
+            kv = x if kv is None else kv
             q = self.attn_q(x)
             k, v = self.attn_kv(kv).chunk(2, -1)
 
@@ -342,37 +367,19 @@ class Attention(nn.Module):
         q, k, v = map(lambda t: t.view(shape).transpose(1, 2).contiguous(), (q, k, v))
 
         # Apply rotary positional encoding on the q and k tensors
-        if self.do_rotary_enc:
+        if self.do_rotary:
             q, k = self.rotary(q, k)
 
         # Perform the attention -> B,NH,S,Hd
         a_mask = merge_masks(kv_mask, attn_mask, attn_bias, q)
-        dropout = self.dropout if self.training else 0.0
-        a_out = F.scaled_dot_product_attention(q, k, v, a_mask, dropout)
+        drop = self.dropout if self.training else 0.0
+        a_out = F.scaled_dot_product_attention(q, k, v, a_mask, drop)
 
         # Concatenate the all of the heads -> B,S,D
         a_out = a_out.transpose(1, 2).contiguous().view(q.size(0), -1, self.dim)
 
+        # Mix with final linear layer
         return self.attn_out(a_out)
-
-
-class SwiGLUNet(nn.Module):
-    """Simple gated bilinear feedfoward network with the Swish activation."""
-
-    def __init__(
-        self, dim: int, hddn_dim: int, ctxt_dim: int = 0, dropout: float = 0.0
-    ) -> None:
-        super().__init__()
-        self.use_ctxt = ctxt_dim > 0
-        self.lin1 = nn.Linear(dim + ctxt_dim, 2 * hddn_dim)
-        self.lin2 = nn.Linear(hddn_dim, dim)
-        self.drop = nn.Dropout(dropout)
-
-    def forward(self, x: T.Tensor, ctxt: T.Tensor | None = None) -> T.Tensor:
-        if self.use_ctxt:
-            x = attach_context(x, ctxt)
-        x1, x2 = self.lin1(x).chunk(2, dim=-1)
-        return self.lin2(self.drop(F.silu(x1.contiguous()) * x2.contiguous()))
 
 
 class EncoderBlock(nn.Module):
@@ -386,7 +393,7 @@ class EncoderBlock(nn.Module):
         num_heads: int = 8,
         dropout: float = 0,
         do_self_attn: bool = False,
-        do_rotary_enc: bool = False,
+        do_rotary: bool = False,
         layerscale_init: float | None = 1e-4,
         do_ctxt_in_attn: bool = False,
         do_ctxt_in_ff: bool = True,
@@ -398,44 +405,27 @@ class EncoderBlock(nn.Module):
         self.dim = dim
         self.num_heads = num_heads
 
-        # Some dimensions
-        attn_ctxt = do_ctxt_in_attn * ctxt_dim
-        ff_ctxt = do_ctxt_in_ff * ctxt_dim
-        ff_hddn = ff_mult * dim
-
         # Submodules
         self.attn = PreNormScaledResidual(
             Attention(
                 dim,
-                attn_ctxt,
+                do_ctxt_in_attn * ctxt_dim,
                 num_heads,
                 dropout,
                 do_self_attn,
-                do_rotary_enc,
+                do_rotary,
                 do_packed,
             ),
-            dim,
             layerscale_init,
         )
         self.ff = PreNormScaledResidual(
-            SwiGLUNet(dim, ff_hddn, ff_ctxt, dropout),
-            dim,
+            SwiGLUNet(dim, ff_mult * dim, do_ctxt_in_ff * ctxt_dim, dropout),
             layerscale_init,
         )
 
-    def forward(
-        self,
-        x: T.Tensor,
-        kv: T.Tensor | None = None,
-        ctxt: T.Tensor | None = None,
-        kv_mask: T.BoolTensor | None = None,
-        attn_mask: T.Tensor | None = None,
-        attn_bias: T.Tensor | None = None,
-        culens: T.Tensor | None = None,
-        maxlen: int | None = None,
-    ) -> T.Tensor:
-        x = self.attn(x, kv, ctxt, kv_mask, attn_mask, attn_bias, culens, maxlen)
-        x = self.ff(x, ctxt)
+    def forward(self, x: T.Tensor, ctxt: T.Tensor | None = None, **kwargs) -> T.Tensor:
+        x = self.attn(x, ctxt=ctxt, **kwargs)
+        x = self.ff(x, ctxt=ctxt)
         return x
 
 
@@ -449,7 +439,7 @@ class DecoderBlock(nn.Module):
         ff_mult: int = 2,
         num_heads: int = 8,
         dropout: float = 0,
-        do_rotary_enc: bool = False,
+        do_rotary: bool = False,
         layerscale_init: float | None = 1e-5,
         do_ctxt_in_attn: bool = False,
         do_ctxt_in_ff: bool = True,
@@ -460,26 +450,23 @@ class DecoderBlock(nn.Module):
         self.dim = dim
         self.num_heads = num_heads
 
-        # Some dimensions
+        # Some dimensions (where to put the context)
         attn_ctxt = do_ctxt_in_attn * ctxt_dim
         ff_ctxt = do_ctxt_in_ff * ctxt_dim
         ff_hddn = ff_mult * dim
 
         # Submodules
         self.self_attn = PreNormScaledResidual(
-            Attention(dim, attn_ctxt, num_heads, dropout, True, do_rotary_enc),
-            dim,
-            layerscale_init,
+            Attention(dim, attn_ctxt, num_heads, dropout, True, do_rotary),
+            layerscale_init
         )
+
         self.cross_attn = PreNormScaledResidual(
             Attention(dim, attn_ctxt, num_heads, dropout, False, False),
-            dim,
             layerscale_init,
         )
         self.ff = PreNormScaledResidual(
-            SwiGLUNet(dim, ff_hddn, ff_ctxt, dropout),
-            dim,
-            layerscale_init,
+            SwiGLUNet(dim, ff_hddn, ff_ctxt, dropout), layerscale_init
         )
 
     def forward(
@@ -584,27 +571,24 @@ class Transformer(nn.Module):
         if self.num_registers:
             x, kwargs = self._add_registers(x, **kwargs)
         if self.do_packed:
-            x, kwargs = self._compress(x, **kwargs)
+            x, kwargs = self._pack(x, **kwargs)
         for layer in self.layers:
             x = layer(x, **kwargs)
-        if self.do_packed:
-            x = self._decompress(x, **kwargs)
-        return x
-
-    def output(self, x: T.Tensor) -> T.Tensor:
         if self.do_final_norm:
             x = self.final_norm(x)
         if self.do_output_linear:
             x = self.linear_out(x)
+        if self.do_packed:
+            x = self._unpack(x, **kwargs)
         return x
 
     def forward(self, x: T.Tensor, **kwargs) -> T.Tensor:
         """Project and encode, seperated for flexibility and FlowBert."""
         x = self.project(x)
         x = self.encode(x, **kwargs)
-        return self.output(x)
+        return x
 
-    def _compress(self, x: T.Tensor, **kwargs) -> T.Tensor:
+    def _pack(self, x: T.Tensor, **kwargs) -> T.Tensor:
         """Undo the padding and compress the sequence."""
         if "kv_mask" not in kwargs:
             raise ValueError("Packed only helps with padding!")
@@ -615,10 +599,9 @@ class Transformer(nn.Module):
         kwargs["maxlen"] = seqlens.max().item()
         return x[mask], kwargs
 
-    def _decompress(self, x: T.Tensor, **kwargs) -> T.Tensor:
-        out = T.zeros(
-            (*kwargs["kv_mask"].shape, x.shape[-1]), dtype=x.dtype, device=x.device
-        )
+    def _unpack(self, x: T.Tensor, **kwargs) -> T.Tensor:
+        full_shape = (*kwargs["kv_mask"].shape, x.shape[-1])
+        out = T.zeros(full_shape, dtype=x.dtype, device=x.device)
         out[kwargs["kv_mask"]] = x
         return out
 
@@ -649,9 +632,8 @@ class Transformer(nn.Module):
         """Get a mask which can be used for the combined register+sequence tensor."""
         if self.num_registers == 0:
             return mask
-        reg_mask = T.ones(
-            (mask.shape[0], self.num_registers), dtype=T.bool, device=mask.device
-        )
+        full_shape = (mask.shape[0], self.num_registers)
+        reg_mask = T.ones(full_shape, dtype=T.bool, device=mask.device)
         return T.cat([reg_mask, mask], dim=-1)
 
 
@@ -705,6 +687,7 @@ class ClassAttentionPooling(nn.Module):
         ctxt_dim: int = 0,
         num_layers: int = 2,
         layer_config: Mapping | None = None,
+        do_input_linear: bool = False,
         do_output_linear: bool = False,
         outp_dim: int | None = None,
         inpt_dim: int | None = None,
@@ -718,8 +701,10 @@ class ClassAttentionPooling(nn.Module):
         self.dim = inpt_dim or dim
         self.ctxt_dim = ctxt_dim
         self.layer_config = layer_config
+        self.do_input_linear = do_input_linear
         self.do_output_linear = do_output_linear
         self.outp_dim = outp_dim if do_output_linear else dim
+        self.inpt_dim = inpt_dim if do_input_linear else dim
 
         # Modules
         self.global_token = nn.Parameter(T.randn((1, 1, self.dim)))
@@ -730,17 +715,24 @@ class ClassAttentionPooling(nn.Module):
             ]
         )
 
-        # Final linear projection
+        # Optional layers
+        if self.do_input_linear:
+            self.linear_embed = nn.Linear(self.inpt_dim, self.dim)
         if self.do_output_linear:
             self.linear_out = nn.Linear(self.dim, outp_dim)
 
     def forward(self, x: T.Tensor, **kwargs) -> T.Tensor:
+
+        # Project the input
+        if self.do_input_linear:
+            x = self.linear_embed(x)
+
         # Expand the global token so it can be broadcasted for the whole batch
         g = self.global_token.expand(x.shape[0], -1, self.dim)
 
         # Apply the iterative pooling
         for layer in self.layers:
-            g = layer(g, x, **kwargs)
+            g = layer(g, kv=x, **kwargs)
         g.squeeze_(-2)  # Pop out the sequence dimension
 
         # Final linear projection

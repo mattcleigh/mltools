@@ -21,7 +21,7 @@ def standard_job_array(
     time_hrs: int,
     mem_gb: int,
     opt_dict: Mapping,
-    vrap_per_gpu: int = 0,
+    vram_per_gpu: int = 0,
     gpu_type: str = "",
     use_dashes: bool = True,
     extra_slurm: str = "",
@@ -52,8 +52,8 @@ def standard_job_array(
         if gpu_type:
             s += f"{gpu_type}:"
         s += f"{n_gpus}"
-        if vrap_per_gpu:
-            s += f",VramPerGpu:{vrap_per_gpu}G"
+        if vram_per_gpu:
+            s += f",VramPerGpu:{vram_per_gpu}G"
         f.write(f"{s}\n")
     else:
         f.write("#SBATCH --partition=shared-cpu,private-dpnc-cpu\n")
