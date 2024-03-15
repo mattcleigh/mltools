@@ -2,8 +2,7 @@
 
 import torch as T
 import torch.nn as nn
-from torch.nn.functional import cosine_similarity
-
+import torch.nn.functional as F
 
 def contrastive_loss(x1: T.Tensor, x2: T.Tensor, temperature: float = 0.2) -> T.Tensor:
     """Calculate standard contrastive loss between two sets of embeddings.
@@ -14,7 +13,7 @@ def contrastive_loss(x1: T.Tensor, x2: T.Tensor, temperature: float = 0.2) -> T.
     # Concatenate and get the similarity matrix
     batch_size = x1.shape[0]
     z = T.cat([x1, x2])
-    sim = cosine_similarity(z.unsqueeze(0), z.unsqueeze(1), dim=2) / temperature
+    sim = F.cosine_similarity(z.unsqueeze(0), z.unsqueeze(1), dim=2) / temperature
 
     # Fill in the matrix with negative infinities along the diagonal
     mask = T.eye(batch_size * 2, device=x1.device, dtype=bool)
@@ -24,6 +23,48 @@ def contrastive_loss(x1: T.Tensor, x2: T.Tensor, temperature: float = 0.2) -> T.
     loss = -T.diag(sim, batch_size).mean() + T.logsumexp(sim, dim=-1).mean()
 
     return loss
+
+
+@T.autocast("cuda", enabled=False)
+def koleo_loss(x: T.Tensor, eps: float = 1e-8, normed: bool = False) -> T.Tensor:
+    """Kozachenko-Leonenko entropic loss regularizer
+
+    From Sablayrolles et al. - 2018 - Spreading vectors for similarity search
+
+    Parameters
+    ----------
+    x : T.Tensor
+        The input tensor to calculate the Kozachenko-Leonenko entropy
+        Must be of shape (batch, features)
+    eps : float, optional
+        The epsilon value to avoid numerical instability, by default 1e-8
+    normed : bool, optional
+        If the input tensor is already normalized, by default False
+    """
+
+    # Normalize the input if not already
+    if not normed:
+        x = F.normalize(x, eps=eps, dim=-1)
+
+    # Calculate the closest pair idxes via the max inner product
+    with T.no_grad():
+        dots = T.mm(x, x.t())
+        dots.fill_diagonal_(-1)
+        min_idx = T.argmax(dots, dim=1)
+
+    # Get the distance between closest pairs
+    distances = F.pairwise_distance(x, x[min_idx])
+
+    # Return the kozachenko-leonenko entropy
+    return -T.log(distances + eps).mean()
+
+
+@T.autocast("cuda", enabled=False)
+def pressure_loss(x: T.Tensor, normed: bool = False) -> T.Tensor:
+    """Positive pressure loss regularizer"""
+    if not normed:
+        x = F.normalize(x, dim=-1)
+    return - F.pdist(x).mean()
 
 
 class VAELoss(nn.Module):

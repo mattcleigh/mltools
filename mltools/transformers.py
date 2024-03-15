@@ -698,7 +698,7 @@ class ClassAttentionPooling(nn.Module):
         layer_config = layer_config or {}
 
         # Attributes
-        self.dim = inpt_dim or dim
+        self.dim = inpt_dim or dim # TODO Fix this bug after training, should be dim
         self.ctxt_dim = ctxt_dim
         self.layer_config = layer_config
         self.do_input_linear = do_input_linear
