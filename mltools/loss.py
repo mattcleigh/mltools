@@ -4,6 +4,7 @@ import torch as T
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 def contrastive_loss(x1: T.Tensor, x2: T.Tensor, temperature: float = 0.2) -> T.Tensor:
     """Calculate standard contrastive loss between two sets of embeddings.
 
@@ -27,7 +28,7 @@ def contrastive_loss(x1: T.Tensor, x2: T.Tensor, temperature: float = 0.2) -> T.
 
 @T.autocast("cuda", enabled=False)
 def koleo_loss(x: T.Tensor, eps: float = 1e-8, normed: bool = False) -> T.Tensor:
-    """Kozachenko-Leonenko entropic loss regularizer
+    """Kozachenko-Leonenko entropic loss regularizer.
 
     From Sablayrolles et al. - 2018 - Spreading vectors for similarity search
 
@@ -61,10 +62,10 @@ def koleo_loss(x: T.Tensor, eps: float = 1e-8, normed: bool = False) -> T.Tensor
 
 @T.autocast("cuda", enabled=False)
 def pressure_loss(x: T.Tensor, normed: bool = False) -> T.Tensor:
-    """Positive pressure loss regularizer"""
+    """Positive pressure loss regularizer."""
     if not normed:
         x = F.normalize(x, dim=-1)
-    return - F.pdist(x).mean()
+    return -F.pdist(x).mean()
 
 
 class VAELoss(nn.Module):

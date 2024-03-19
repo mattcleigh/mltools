@@ -43,7 +43,9 @@ def truncate_colormap(cmap, minval=0.0, maxval=1.0, n=100):
 def gaussian(x_data, mu=0, sig=1):
     """Return the value of the gaussian distribution."""
     return (
-        1 / np.sqrt(2 * np.pi * sig**2) * np.exp(-((x_data - mu) ** 2) / (2 * sig**2))
+        1
+        / np.sqrt(2 * np.pi * sig**2)
+        * np.exp(-((x_data - mu) ** 2) / (2 * sig**2))
     )
 
 

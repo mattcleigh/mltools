@@ -234,7 +234,7 @@ class SwiGLUNet(nn.Module):
         self, dim: int, hddn_dim: int, ctxt_dim: int = 0, dropout: float = 0.0
     ) -> None:
         super().__init__()
-        self.dim = dim # Usefull for wrapping the module
+        self.dim = dim  # Usefull for wrapping the module
         self.ctxt_dim = ctxt_dim
         self.lin1 = nn.Linear(dim + ctxt_dim, 2 * hddn_dim)
         self.lin2 = nn.Linear(hddn_dim, dim)
@@ -321,11 +321,9 @@ class Attention(nn.Module):
             if kv is None:
                 warnings.warn("Suboptimal use of self_attn! Use do_self_attn=True!")
         if self.do_packed and attn_bias is not None:
-                warnings.warn("Packed attention does not support attention bias!")
+            warnings.warn("Packed attention does not support attention bias!")
 
-    def _packed_attention(
-            self, x: T.Tensor, culens: T.Tensor, maxlen: int
-        ) -> T.Tensor:
+    def _packed_attention(self, x: T.Tensor, culens: T.Tensor, maxlen: int) -> T.Tensor:
         """Perform flash attention with the packed sequences."""
         qkv = self.attn_in(x).view(x.shape[0], 3, self.num_heads, self.attn_dim)
         drop = self.dropout if self.training else 0.0
@@ -395,7 +393,7 @@ class EncoderBlock(nn.Module):
         do_self_attn: bool = False,
         do_rotary: bool = False,
         layerscale_init: float | None = 1e-4,
-        do_ctxt_in_attn: bool = False,
+        do_ctxt_in_attn: bool = True,
         do_ctxt_in_ff: bool = True,
         do_packed: bool = False,
     ) -> None:
@@ -458,7 +456,7 @@ class DecoderBlock(nn.Module):
         # Submodules
         self.self_attn = PreNormScaledResidual(
             Attention(dim, attn_ctxt, num_heads, dropout, True, do_rotary),
-            layerscale_init
+            layerscale_init,
         )
 
         self.cross_attn = PreNormScaledResidual(
@@ -597,6 +595,15 @@ class Transformer(nn.Module):
         zero = T.zeros(1, dtype=seqlens.dtype, device=seqlens.device)
         kwargs["culens"] = T.cat([zero, T.cumsum(seqlens, dim=-1)]).to(T.int32)
         kwargs["maxlen"] = seqlens.max().item()
+
+        # context info gets tricky because it too must be repeated
+        try:
+            ctxt = kwargs["ctxt"]
+            ctxt = ctxt.unsqueeze(1).expand(-1, x.shape[1], -1)
+            kwargs["ctxt"] = ctxt[mask]
+        except KeyError:
+            pass
+
         return x[mask], kwargs
 
     def _unpack(self, x: T.Tensor, **kwargs) -> T.Tensor:
@@ -689,6 +696,7 @@ class ClassAttentionPooling(nn.Module):
         layer_config: Mapping | None = None,
         do_input_linear: bool = False,
         do_output_linear: bool = False,
+        do_final_norm: bool = False,
         outp_dim: int | None = None,
         inpt_dim: int | None = None,
     ) -> None:
@@ -698,11 +706,12 @@ class ClassAttentionPooling(nn.Module):
         layer_config = layer_config or {}
 
         # Attributes
-        self.dim = inpt_dim or dim # TODO Fix this bug after training, should be dim
+        self.dim = dim
         self.ctxt_dim = ctxt_dim
         self.layer_config = layer_config
         self.do_input_linear = do_input_linear
         self.do_output_linear = do_output_linear
+        self.do_final_norm = do_final_norm
         self.outp_dim = outp_dim if do_output_linear else dim
         self.inpt_dim = inpt_dim if do_input_linear else dim
 
@@ -718,11 +727,12 @@ class ClassAttentionPooling(nn.Module):
         # Optional layers
         if self.do_input_linear:
             self.linear_embed = nn.Linear(self.inpt_dim, self.dim)
+        if self.do_final_norm:
+            self.final_norm = nn.LayerNorm(self.dim)
         if self.do_output_linear:
             self.linear_out = nn.Linear(self.dim, outp_dim)
 
     def forward(self, x: T.Tensor, **kwargs) -> T.Tensor:
-
         # Project the input
         if self.do_input_linear:
             x = self.linear_embed(x)
@@ -735,7 +745,9 @@ class ClassAttentionPooling(nn.Module):
             g = layer(g, kv=x, **kwargs)
         g.squeeze_(-2)  # Pop out the sequence dimension
 
-        # Final linear projection
+        # Final layers
+        if self.do_final_norm:
+            g = self.final_norm(g)
         if self.do_output_linear:
             g = self.linear_out(g)
 
@@ -748,8 +760,9 @@ class TransformerVectorEncoder(nn.Module):
     def __init__(
         self,
         *,
-        dim: int = 128,
+        inpt_dim: int = 128,
         ctxt_dim: int = 0,
+        outp_dim: int = 128,
         encoder_config: Mapping | None = None,
         classattention_config: Mapping | None = None,
     ) -> None:
@@ -760,17 +773,27 @@ class TransformerVectorEncoder(nn.Module):
         classattention_config = classattention_config or {}
 
         # Attributes
-        self.dim = dim
+        self.inpt_dim = inpt_dim
         self.ctxt_dim = ctxt_dim
+        self.outp_dim = outp_dim
 
         # Modules
-        self.encoder = Transformer(dim=dim, ctxt_dim=ctxt_dim, **encoder_config)
+        self.encoder = Transformer(
+            inpt_dim=inpt_dim, ctxt_dim=ctxt_dim, do_input_linear=True, **encoder_config
+        )
         self.pool = ClassAttentionPooling(
-            dim=self.encoder.outp_dim, ctxt_dim=ctxt_dim, **classattention_config
+            inpt_dim=self.encoder.outp_dim,
+            ctxt_dim=ctxt_dim,
+            outp_dim=outp_dim,
+            do_output_linear=True,
+            **classattention_config,
         )
 
     def forward(self, x: T.Tensor, **kwargs) -> T.Tensor:
-        return self.pool(self.encoder(x, **kwargs), **kwargs)
+        enc = self.encoder(x, **kwargs)
+        if "kv_mask" in kwargs:  # God damn I hate registers
+            kwargs["kv_mask"] = self.encoder.get_combined_mask(kwargs["kv_mask"])
+        return self.pool(enc, **kwargs)
 
 
 class WrappedTransformer(nn.Module):

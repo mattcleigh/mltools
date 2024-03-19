@@ -1,14 +1,16 @@
 """General utilities for lightning modules."""
 
+import logging
 import math
-from pytorch_lightning import LightningModule
+
+from lightning import LightningModule
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LambdaLR
-import logging
 
 from .torch_utils import get_sched
 
 logger = logging.getLogger(__name__)
+
 
 def get_max_steps(model: LightningModule) -> int:
     """Get the maximum number of steps from the model trainer."""
@@ -16,7 +18,7 @@ def get_max_steps(model: LightningModule) -> int:
         logger.info("Attempting to get the max steps from the model trainer")
         max_steps = model.trainer.max_steps
         if max_steps < 1:
-            steps_per_epoch=len(model.trainer.datamodule.train_dataloader())
+            steps_per_epoch = len(model.trainer.datamodule.train_dataloader())
             max_epochs = model.trainer.max_epochs
             max_steps = steps_per_epoch * max_epochs
         logger.info(f"Success:  max_steps = {max_steps}")
@@ -25,23 +27,25 @@ def get_max_steps(model: LightningModule) -> int:
         max_steps = 0
     return max_steps
 
+
 def linear_warmup(
-        *,
-        optimizer: Optimizer,
-        model: LightningModule,
-        warmup_steps: int = 1000,
-    ) -> LambdaLR:
+    *,
+    optimizer: Optimizer,
+    model: LightningModule,
+    warmup_steps: int = 1000,
+) -> LambdaLR:
     """Return a scheduler with a linear warmup."""
     return LambdaLR(optimizer, lambda x: min(1, x / max(1, warmup_steps)))
 
+
 def linear_warmup_cosine_decay(
-        *,
-        optimizer: Optimizer,
-        model: LightningModule,
-        warmup_steps: int = 100,
-        total_steps: int = 1000,
-        warmup_ratio: float | None = None,
-    ) -> LambdaLR:
+    *,
+    optimizer: Optimizer,
+    model: LightningModule,
+    warmup_steps: int = 100,
+    total_steps: int = 1000,
+    warmup_ratio: float | None = None,
+) -> LambdaLR:
     """Return a scheduler with a linear warmup and a cosine decay."""
 
     # Replace the total_steps with the model trainer's actual max_steps
@@ -60,6 +64,7 @@ def linear_warmup_cosine_decay(
 
     # The lambda scheduler is the easiest way to define a custom scheduler
     return LambdaLR(optimizer, fn)
+
 
 def standard_optim_sched(model: LightningModule) -> dict:
     """Configure the optimizers and learning rate sheduler.
@@ -92,6 +97,6 @@ def simple_optim_sched(model: LightningModule) -> dict:
     opt = model.hparams.optimizer(filter(lambda p: p.requires_grad, model.parameters()))
     scheduler = {
         "scheduler": model.hparams.scheduler(optimizer=opt, model=model),
-        "interval": "step"
+        "interval": "step",
     }
     return [opt], [scheduler]

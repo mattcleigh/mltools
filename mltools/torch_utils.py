@@ -1,6 +1,7 @@
 """Mix of utility functions specifically for pytorch."""
 
 import os
+from contextlib import contextmanager
 from functools import partial
 from typing import Any, Callable, Iterable, Mapping, Tuple, Union
 
@@ -11,11 +12,9 @@ import torch.optim.lr_scheduler as schd
 from torch.optim.optimizer import Optimizer
 from torch.utils.data import Dataset, Subset, random_split
 from torch.utils.data.dataloader import default_collate
-from contextlib import contextmanager
 
 from .loss import ChampferLoss, MyBCEWithLogit, VAELoss
 from .schedulers import CyclicWithWarmup, LinearWarmupRootDecay, WarmupToConstant
-
 
 
 @contextmanager
@@ -649,3 +648,23 @@ def preprocess_and_collate(
     if preprocessing is not None:
         batch = [preprocessing(x) for x in batch]
     return default_collate(batch)
+
+
+def squash_fn(x: T.Tensor | np.ndarray, a: float) -> np.ndarray:
+    """Hand crafted squash function for bounded data in the range (0, 1)."""
+    if a == 1:
+        return x
+    assert a >= 1
+    x[x < 0] = 0
+    x[x > 1] = 1
+    return (1 - (1 - x) ** a) ** (1 / a)
+
+
+def unsquash_fn(x: T.Tensor | np.ndarray, a: float) -> np.ndarray:
+    """Undo the squash function above."""
+    if a == 1:
+        return x
+    assert a >= 1
+    x[x < 0] = 0
+    x[x > 1] = 1
+    return 1 - (1 - x**a) ** (1 / a)
