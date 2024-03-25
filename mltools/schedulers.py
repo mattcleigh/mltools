@@ -3,10 +3,10 @@
 import warnings
 
 from torch.optim import Optimizer
-from torch.optim.lr_scheduler import OneCycleLR, _LRScheduler
+from torch.optim.lr_scheduler import LRScheduler, OneCycleLR
 
 
-class LinearWarmupRootDecay(_LRScheduler):
+class LinearWarmupRootDecay(LRScheduler):
     """Learning rate scheduler with a linear wamup and a sqrt decay."""
 
     def __init__(
@@ -39,14 +39,13 @@ class LinearWarmupRootDecay(_LRScheduler):
         return [lr] * self.num_param_groups
 
 
-class WarmupToConstant(_LRScheduler):
+class WarmupToConstant(LRScheduler):
     """Gradually warm-up learning rate in optimizer to a constant value."""
 
-    def __init__(self, optimizer: Optimizer, num_steps: int = 100, **kwargs):
-        """
-        args:
-            optimizer (Optimizer): Wrapped optimizer.
-            num_steps: target learning rate is reached at num_steps.
+    def __init__(self, optimizer: Optimizer, num_steps: int = 100, **_kwargs):
+        """args:
+        optimizer (Optimizer): Wrapped optimizer.
+        num_steps: target learning rate is reached at num_steps.
         """
         self.num_steps = num_steps
         self.finished = False
@@ -54,7 +53,7 @@ class WarmupToConstant(_LRScheduler):
 
     def get_lr(self):
         if self.last_epoch > self.num_steps:
-            return [base_lr for base_lr in self.base_lrs]
+            return list(self.base_lrs)
         return [
             (base_lr / self.num_steps) * self.last_epoch for base_lr in self.base_lrs
         ]
@@ -68,9 +67,9 @@ class CyclicWithWarmup(OneCycleLR):
     """
 
     def get_lr(self):
-        """Overloaded method for aquiring new learning rates Only line that is changed
-        from the original method is the step number!
+        """Overloaded method for aquiring new learning rates.
 
+        Only line that is changed from the original method is the step number!
         Also removed the warning that step > length
         """
         if not self._get_lr_called_within_step:  # pylint: disable=no-member
@@ -78,6 +77,7 @@ class CyclicWithWarmup(OneCycleLR):
                 "To get the last learning rate computed by the scheduler, "
                 "please use `get_last_lr()`.",
                 UserWarning,
+                stacklevel=2,
             )
 
         lrs = []

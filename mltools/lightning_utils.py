@@ -29,9 +29,8 @@ def get_max_steps(model: LightningModule) -> int:
 
 
 def linear_warmup(
-    *,
     optimizer: Optimizer,
-    model: LightningModule,
+    model: LightningModule,  # noqa: ARG001
     warmup_steps: int = 1000,
 ) -> LambdaLR:
     """Return a scheduler with a linear warmup."""
@@ -39,7 +38,6 @@ def linear_warmup(
 
 
 def linear_warmup_cosine_decay(
-    *,
     optimizer: Optimizer,
     model: LightningModule,
     warmup_steps: int = 100,
@@ -47,7 +45,6 @@ def linear_warmup_cosine_decay(
     warmup_ratio: float | None = None,
 ) -> LambdaLR:
     """Return a scheduler with a linear warmup and a cosine decay."""
-
     # Replace the total_steps with the model trainer's actual max_steps
     total_steps = get_max_steps(model) or total_steps
 
@@ -71,7 +68,6 @@ def standard_optim_sched(model: LightningModule) -> dict:
 
     In favour of deprecating this in the future, as it is overly verbose.
     """
-
     # Finish initialising the partialy created methods
     opt = model.hparams.optimizer(filter(lambda p: p.requires_grad, model.parameters()))
 

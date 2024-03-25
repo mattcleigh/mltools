@@ -4,10 +4,11 @@ import argparse
 import json
 import math
 import operator
+from collections.abc import Generator, Iterable
 from functools import reduce
 from itertools import chain, islice
 from pathlib import Path
-from typing import Any, Generator, Iterable, Mapping
+from typing import Any
 
 
 def standard_job_array(
@@ -20,100 +21,97 @@ def standard_job_array(
     n_cpus: int,
     time_hrs: int,
     mem_gb: int,
-    opt_dict: Mapping,
+    opt_dict: dict,
     vram_per_gpu: int = 0,
     gpu_type: str = "",
     use_dashes: bool = True,
     extra_slurm: str = "",
 ) -> None:
     """Save a slurm submission file for running on the baobab cluster."""
-
     # Calculate the total number of jobs to perform
     n_jobs = 1
     for key, vals in opt_dict.items():
         if not isinstance(vals, list):
-            vals = [vals]
-            opt_dict[key] = vals
+            opt_dict[key] = [vals]
         n_jobs *= len(vals)
     print(f"Generating job array with {n_jobs} subjobs")
 
     # Creating the slurm submision file
-    f = open(f"{job_name}.sh", "w", newline="\n", encoding="utf-8")
-    f.write("#!/bin/sh\n\n")
-    f.write(f"#SBATCH --cpus-per-task={n_cpus}\n")
-    f.write(f"#SBATCH --mem={mem_gb}GB\n")
-    f.write(f"#SBATCH --time={time_hrs//24}-{time_hrs%24:02d}:00:00\n")
-    f.write(f"#SBATCH --job-name={job_name}\n")
-    f.write(f"#SBATCH --output={log_dir}/%A_%a.out\n")
-    f.write(f"#SBATCH --chdir={work_dir}\n")
-    if n_gpus:
-        f.write("#SBATCH --partition=shared-gpu,private-dpnc-gpu\n")
-        s = "#SBATCH --gres=gpu:"
-        if gpu_type:
-            s += f"{gpu_type}:"
-        s += f"{n_gpus}"
-        if vram_per_gpu:
-            s += f",VramPerGpu:{vram_per_gpu}G"
-        f.write(f"{s}\n")
-    else:
-        f.write("#SBATCH --partition=shared-cpu,private-dpnc-cpu\n")
+    with open(f"{job_name}.sh", "w", newline="\n", encoding="utf-8") as f:
+        f.write("#!/bin/sh\n\n")
+        f.write(f"#SBATCH --cpus-per-task={n_cpus}\n")
+        f.write(f"#SBATCH --mem={mem_gb}GB\n")
+        f.write(f"#SBATCH --time={time_hrs // 24}-{time_hrs % 24:02d}:00:00\n")
+        f.write(f"#SBATCH --job-name={job_name}\n")
+        f.write(f"#SBATCH --output={log_dir}/%A_%a.out\n")
+        f.write(f"#SBATCH --chdir={work_dir}\n")
+        if n_gpus:
+            f.write("#SBATCH --partition=shared-gpu,private-dpnc-gpu\n")
+            s = "#SBATCH --gres=gpu:"
+            if gpu_type:
+                s += f"{gpu_type}:"
+            s += f"{n_gpus}"
+            if vram_per_gpu:
+                s += f",VramPerGpu:{vram_per_gpu}G"
+            f.write(f"{s}\n")
+        else:
+            f.write("#SBATCH --partition=shared-cpu,private-dpnc-cpu\n")
 
-    # Include the extra slurm here
-    f.write(extra_slurm + "\n")
+        # Include the extra slurm here
+        f.write(extra_slurm + "\n")
 
-    # The job array setup using the number of jobs
-    f.write(f"\n#SBATCH -a 0-{n_jobs-1}\n\n")
+        # The job array setup using the number of jobs
+        f.write(f"\n#SBATCH -a 0-{n_jobs - 1}\n\n")
 
-    # Creating the bash lists of the job arguments
-    simple_keys = [str(k).replace(".", "") for k in opt_dict]
-    for i, (opt, vals) in enumerate(opt_dict.items()):
-        f.write(f"{simple_keys[i]}=(")
-        for v in vals:
-            f.write(" " + str(v))
-        f.write(" )\n")
-    f.write("\n")
+        # Creating the bash lists of the job arguments
+        simple_keys = [str(k).replace(".", "") for k in opt_dict]
+        for i, vals in enumerate(opt_dict.values()):
+            f.write(f"{simple_keys[i]}=(")
+            for v in vals:
+                f.write(" " + str(v))
+            f.write(" )\n")
+        f.write("\n")
 
-    # The command line arguments
-    f.write('export XDG_RUNTIME_DIR=""\n')
+        # The command line arguments
+        f.write('export XDG_RUNTIME_DIR=""\n')
 
-    # Creating the base singularity execution script
-    f.write("srun apptainer exec --nv -B /srv,/home \\\n")
-    f.write(f"   {image_path} \\\n")
-    f.write(f"   {command} \\\n")
+        # Creating the base singularity execution script
+        f.write("srun apptainer exec --nv -B /srv,/home \\\n")
+        f.write(f"   {image_path} \\\n")
+        f.write(f"   {command} \\\n")
 
-    # Now include the job array options using the bash lists
-    run_tot = 1
-    dashdash = "--" if use_dashes else ""
-    for i, (opt, vals) in enumerate(opt_dict.items()):
-        f.write(f"       {dashdash}{opt}=${{{simple_keys[i]}")
-        f.write(f"[`expr ${{SLURM_ARRAY_TASK_ID}} / {run_tot} % {len(vals)}`]")
-        f.write("} \\\n")
-        run_tot *= len(vals)
-    f.close()
+        # Now include the job array options using the bash lists
+        run_tot = 1
+        dashdash = "--" if use_dashes else ""
+        for i, (opt, vals) in enumerate(opt_dict.items()):
+            f.write(f"       {dashdash}{opt}=${{{simple_keys[i]}")
+            f.write(f"[`expr ${{SLURM_ARRAY_TASK_ID}} / {run_tot} % {len(vals)}`]")
+            f.write("} \\\n")
+            run_tot *= len(vals)
     print(f"--saved to {job_name}.sh")
 
 
-def resursive_search(obj: Mapping, key: Any) -> Any | None:
+def resursive_search(obj: dict, key: Any) -> Any | None:
     """Recursively search through a dictionary for a key and return the first."""
     if key in obj:
         return obj[key]
-    for k, v in obj.items():
-        if isinstance(v, Mapping):
+    for v in obj.values():
+        if isinstance(v, dict):
             item = resursive_search(v, key)
             if item is not None:
                 return item
+    return None
 
 
 def str2bool(mystring: str) -> bool:
     """Convert a string object into a boolean."""
     if isinstance(mystring, bool):
         return mystring
-    if mystring.lower() in ("yes", "true", "t", "y", "1"):
+    if mystring.lower() in {"yes", "true", "t", "y", "1"}:
         return True
-    if mystring.lower() in ("no", "false", "f", "n", "0"):
+    if mystring.lower() in {"no", "false", "f", "n", "0"}:
         return False
-    else:
-        raise argparse.ArgumentTypeError("Boolean value expected.")
+    raise argparse.ArgumentTypeError("Boolean value expected.")
 
 
 def merge_dict(source: dict, update: dict) -> dict:
@@ -180,9 +178,9 @@ def set_in_dict(data_dict: dict, key_list: list, value: Any):
 def flatlist(xs: any) -> list:
     """Return a flat list of any iterable or single element."""
 
-    def flatten(xs):
+    def flatten(xs) -> Generator:
         for x in xs:
-            if isinstance(x, Iterable) and not isinstance(x, (str, bytes)):
+            if isinstance(x, Iterable) and not isinstance(x, (str | bytes)):
                 yield from flatten(x)
             else:
                 yield x
@@ -197,7 +195,6 @@ def key_prefix(pref: str, dic: dict) -> dict:
 
 def key_change(dic: dict, old_key: str, new_key: str, new_value=None) -> None:
     """Change the key used in a dictionary inplace only if it exists."""
-
     # If the original key is not present, nothing changes
     if old_key not in dic:
         return
@@ -226,8 +223,8 @@ def insert_if_not_present(dictionary: dict, key: str, value: Any) -> None:
         dictionary[key] = value
 
 
-def signed_angle_diff(angle1: Any, angle2: Any = 0) -> Any:
-    """Calculate diff between two angles reduced to the interval of [-pi, pi]"""
+def signed_angle_diff(angle1: float, angle2: float = 0) -> float:
+    """Calculate diff between two angles reduced to the interval of [-pi, pi]."""
     return (angle1 - angle2 + math.pi) % (2 * math.pi) - math.pi
 
 

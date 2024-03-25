@@ -3,8 +3,7 @@
 import math
 
 import torch as T
-import torch.nn as nn
-from pyparsing import Mapping
+from torch import nn
 from torchdiffeq import odeint
 from tqdm import trange
 
@@ -15,6 +14,7 @@ def c_values(sigmas: T.Tensor) -> tuple:
     """Calculate the Karras C values.
 
     Needed to scale the inputs, outputs, and skip connection.
+    Assumes your data sigma is 1.
     """
     c_in = 1 / (1 + sigmas**2).sqrt()
     c_out = sigmas / (1 + sigmas**2).sqrt()
@@ -28,19 +28,25 @@ def multistep_consistency_sampling(
     sigmas: T.Tensor,
     min_sigma: float,
     x: T.Tensor,
-    extra_args: Mapping | None = None,
+    extra_args: dict | None = None,
     same_noise: bool = False,
 ) -> T.Tensor:
     """Perform multistep consistency sampling from a consistency model.
 
     Parameters
     ----------
-    model : callable
-        The consistency model.
+    model : nn.Module
+        The model to generate samples from.
     sigmas : torch.Tensor
-        A sequence of sigma values to iterate through.
-    initial_noise : torch.Tensor
-        The initial noise.
+        The sequence of noise levels to generate samples.
+    min_sigma : float
+        The minimum noise level.
+    x : torch.Tensor
+        The initial noise for generation.
+    extra_args : dict or None, optional
+        Extra arguments to pass to the model. Default is None.
+    same_noise : bool, optional
+        Whether to use the same noise for each step or not. Default is False.
 
     Returns
     -------
@@ -69,10 +75,9 @@ def log_likelihood(
     atol: float = 1e-3,
     rtol: float = 5e-2,
     solver: str = "dopri5",
-    mask: T.Tensor | int | float = 1.0,
+    mask: T.Tensor | float = 1.0,
 ) -> tuple:
     """Calculate the liklihood of a batch of data given a diffusion model."""
-
     # Default dict arguments
     extra_args = extra_args or {}
 
@@ -139,7 +144,7 @@ def shift_gaussian(x: T.Tensor, mu: T.Tensor, var: T.Tensor) -> T.Tensor:
     diff = (x - mu) ** 2
     diff = diff.sum(dim=tuple(range(2, diff.dim())), keepdims=True)
     diff /= -2 * var
-    diff_max = T.max(diff, dim=1, keepdim=True).values
+    diff_max = T.max(diff, dim=1, keepdim=True)
     return T.exp(diff - diff_max)
 
 
@@ -152,9 +157,7 @@ def ideal_denoise(noisy_data, data, sigma):
         append_dims(sigma, noisy_data.dim() + 1) ** 2,
     )
     numerator = (gaus_term * data.unsqueeze(0)).sum(1)
-    denoised = numerator / gaus_term.sum(1)
-
-    return denoised
+    return numerator / gaus_term.sum(1)
 
 
 @T.no_grad()
@@ -174,7 +177,6 @@ def to_d(x, sigma, denoised):
 @T.no_grad()
 def one_step_dpm_2(model, x, sigma_start, sigma_end, extra_args):
     """Apply just one step of the DPM2 to get two adjacent points on the PF- ODE."""
-
     # Initial setup
     extra_args = extra_args or {}
 
@@ -191,15 +193,12 @@ def one_step_dpm_2(model, x, sigma_start, sigma_end, extra_args):
     x_2 = x + d * dt_1
     denoised_2 = model(x_2, sigma_mid, **extra_args)
     d_2 = to_d(x_2, sigma_mid, denoised_2)
-    x = x + d_2 * dt_2
-
-    return x
+    return x + d_2 * dt_2
 
 
 @T.no_grad()
 def one_step_heun(model, x, sigma_start, sigma_end, extra_args):
     """Apply just one step of the heun-solver."""
-
     # Initial setup
     extra_args = extra_args or {}
 
@@ -213,9 +212,7 @@ def one_step_heun(model, x, sigma_start, sigma_end, extra_args):
     denoised_2 = model(x_2, sigma_end, **extra_args)
     d_2 = (x_2 - denoised_2) / append_dims(sigma_end, x.dim())
     d_prime = (d + d_2) / 2
-    x = x + d_prime * dt
-
-    return x
+    return x + d_prime * dt
 
 
 def get_sigmas_karras(
@@ -234,12 +231,8 @@ def get_sigmas_karras(
         The maximum/starting time
     n_steps:
         The number of time steps
-    p:
-        The degree of curvature, p=1 equal step size, recommened 7 for diffusion
-    ramp_min:
-        The min of the support for this function
-    ramp_max:
-        The max of the support for this function
+    rho:
+        The degree of curvature, rho=1 equal step size, recommened 7 for diffusion
     """
     ramp = T.linspace(0, 1, n_steps)
     max_inv_rho = sigma_max ** (1 / rho)
@@ -254,7 +247,7 @@ def sample_heun(
     sigmas: T.Tensor,
     do_heun_step: bool = True,
     keep_all: bool = False,
-    extra_args: Mapping | None = None,
+    extra_args: dict | None = None,
     disable: bool | None = True,
 ) -> None:
     """Deterministic sampler using Heun's second order method.
@@ -271,8 +264,11 @@ def sample_heun(
         Whether to use Heun's 2nd order method or not. Default is True.
     keep_all : bool, optional
         Whether to store the samples at each step or not. Default is False.
-    extra_args : Mapping[str, Any] or None, optional
+    extra_args : dict or None, optional
         Extra arguments to pass to the model. Default is None.
+    disable : bool or None, optional
+        Whether to disable the progress bar or not. Default is True.
+
 
     Returns
     -------
@@ -286,7 +282,6 @@ def sample_heun(
     Hard coded such that t = sigma and s(t) = 1.
     Alg. 1 from the https://arxiv.org/pdf/2206.00364.pdf.
     """
-
     # Initial setup
     num_steps = len(sigmas) - 1
     all_stages = [x] if keep_all else None
@@ -332,7 +327,7 @@ def sample_stochastic_heun(
     s_tmin: float = 0.05,
     s_tmax: float = 50.0,
     s_noise: float = 1.003,
-    extra_args: Mapping | None = None,
+    extra_args: dict | None = None,
     disable: bool | None = True,
 ) -> None:
     """Stochastic sampler using Heun's second order method.
@@ -357,8 +352,10 @@ def sample_stochastic_heun(
         The upper bound of sigma where the stochasticity is allowed
     s_noise : float, optional (default=1.003)
         The std of the noise which is added to the sample
-    extra_args : Mapping[str, Any] or None, optional
+    extra_args : dict or None, optional
         Extra arguments to pass to the model. Default is None.
+    disable : bool or None, optional
+        Whether to disable the progress bar or not. Default is True.
 
     Returns
     -------
@@ -374,7 +371,6 @@ def sample_stochastic_heun(
     - Hard coded such that t = sigma and s(t) = 1
     - Default s values are taken from empirical results in the paper
     """
-
     # Initial setup
     num_steps = len(sigmas) - 1
     all_stages = [x] if keep_all else None

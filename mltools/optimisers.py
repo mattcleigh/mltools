@@ -1,11 +1,9 @@
-"""Script to define the lookahead optimizer copied from:
-
-https://github.com/alphadl/lookahead.pytorch
-"""
+"""Custom optimisers for PyTorch."""
 
 from collections import defaultdict
+from collections.abc import Callable, Iterable
 from functools import partial
-from typing import Any, Callable, Iterable
+from typing import Any
 
 import torch as T
 from torch.optim import Optimizer
@@ -19,16 +17,21 @@ class Lookahead(Optimizer):
 
     def __init__(
         self,
-        inner_optimizer: partial | Optimizer | None = None,
         params: Iterable | None = None,
+        inner_optimizer: partial | Optimizer | None = None,
         k=10,
         alpha=0.5,
         **opt_kwargs,
     ) -> None:
-        # If we have a fully initialised optimizer
-        if isinstance(inner_optimizer, Optimizer):
+        # Default optimiser is Adam
+        if inner_optimizer is None:
+            inner_optimizer = partial(T.optim.Adam, lr=0.001)
+
+        # Otherwise use our fully initialised optimizer
+        elif isinstance(inner_optimizer, Optimizer):
             self.optimizer = inner_optimizer
-        # Otherwise we initialise using our parameters
+
+        # Otherwise initialise using our parameters
         else:
             self.optimizer = inner_optimizer(params, **opt_kwargs)
 
@@ -44,6 +47,9 @@ class Lookahead(Optimizer):
     @property
     def defaults(self):
         return self.optimizer.defaults
+
+    def zero_grad(self):
+        self.optimizer.zero_grad()
 
     def update(self, group):
         """Update the parameter groups."""
@@ -109,21 +115,21 @@ class Lion(Optimizer):
     """
 
     def __init__(self, params, lr=1e-4, betas=(0.9, 0.99), weight_decay=0.0):
-        """
-        Args:
-          params: iterable of parameters to optimize or dicts defining groups
-          lr: Learning rate, should be ~5 lower than Adam (default: 1e-4)
-          betas: coefficients used for computing running averages of gradient and square
-          weight_decay: weight decay coefficient (default: 0)
-        """
+        """Initialise the lion optimizer.
 
-        if not 0.0 <= lr:
+        Args:
+            params: iterable of parameters to optimize or dicts defining groups
+            lr: Learning rate, should be ~5 lower than Adam (default: 1e-4)
+            betas: coefficients used for computing running averages
+            weight_decay: weight decay coefficient (default: 0)
+        """
+        if not lr >= 0.0:
             raise ValueError(f"Invalid learning rate: {lr}")
         if not 0.0 <= betas[0] < 1.0:
             raise ValueError(f"Invalid beta parameter at index 0: {betas[0]}")
         if not 0.0 <= betas[1] < 1.0:
             raise ValueError(f"Invalid beta parameter at index 1: {betas[1]}")
-        defaults = dict(lr=lr, betas=betas, weight_decay=weight_decay)
+        defaults = {"lr": lr, "betas": betas, "weight_decay": weight_decay}
         super().__init__(params, defaults)
 
     @T.no_grad()
@@ -135,7 +141,6 @@ class Lion(Optimizer):
           closure:
             A closure that reevaluates the model and returns the loss
         """
-
         # Define the loss using the closure function
         loss = None
         if closure is not None:
@@ -155,7 +160,8 @@ class Lion(Optimizer):
                 # Get the gradients
                 grad = p.grad
 
-                # State (default-dict for each group) initialization at start of training
+                # State (default-dict for each group)
+                # initialization at start of training
                 state = self.state[p]
                 if len(state) == 0:
                     state["mt"] = T.zeros_like(p)
