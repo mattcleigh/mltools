@@ -2,8 +2,9 @@
 
 import logging
 import os
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, List, Sequence
+from typing import Any
 
 import hydra
 import rich
@@ -29,7 +30,6 @@ def reload_original_config(
 
     Will also set the chkpt_dir to the latest version of the last or best checkpoint
     """
-
     log.info(f"Looking for previous job config in {path}")
     try:
         orig_cfg = OmegaConf.load(Path(path, file_name))
@@ -49,9 +49,8 @@ def reload_original_config(
 
             if set_wandb_resume:
                 log.info("Attempting to set the same WandB ID to continue logging run")
-                if hasattr(orig_cfg, "loggers"):
-                    if hasattr(orig_cfg.loggers, "wandb"):
-                        orig_cfg.loggers.wandb.resume = True
+                if hasattr(orig_cfg, "loggers") and hasattr(orig_cfg.loggers, "wandb"):
+                    orig_cfg.loggers.wandb.resume = True
 
         except IndexError:
             log.warning("No checkpoint found! Will not set the checkpoint path.")
@@ -76,16 +75,13 @@ def print_config(
 
     Parameters
     ----------
-        cfg:
-            Configuration composed by Hydra.
-        print_order:
-            Determines in what order config components are printed.
-        resolve:
-            Whether to resolve reference fields of DictConfig.
-        save_to_file:
-            Whether to export config to the hydra output folder.
+    cfg:
+        Configuration composed by Hydra.
+    print_order:
+        Determines in what order config components are printed.
+    resolve:
+        Whether to resolve reference fields of DictConfig.
     """
-
     style = "dim"
     tree = rich.tree.Tree("CONFIG", style=style, guide_style=style)
 
@@ -132,16 +128,14 @@ def save_config(cfg: OmegaConf) -> None:
     work around is reload_original_config but that will fail as hydra overwites the
     default config.yaml file on startup, so this backup is needed for resuming.
     """
-
     # In order to be able to resume the wandb logger session, save the run id
-    if wandb.run is not None:
-        if hasattr(cfg, "loggers"):
-            if hasattr(cfg.loggers, "wandb"):
-                cfg.loggers.wandb.id = wandb.run.id
-            else:
-                log.warning("WandB is running but cant find config/loggers/wandb!")
-                log.warning("This is required to save the ID for resuming jobs.")
-                log.warning("Is the name of the logger set correctly")
+    if wandb.run is not None and hasattr(cfg, "loggers"):
+        if hasattr(cfg.loggers, "wandb"):
+            cfg.loggers.wandb.id = wandb.run.id
+        else:
+            log.warning("WandB is running but cant find config/loggers/wandb!")
+            log.warning("This is required to save the ID for resuming jobs.")
+            log.warning("Is the name of the logger set correctly")
 
     # save config tree to file
     OmegaConf.save(cfg, Path(cfg.paths.full_path, "full_config.yaml"), resolve=True)
@@ -155,7 +149,6 @@ def log_hyperparameters(
 
     Also calculates and logs the number of parameters
     """
-
     # Convert the config object to a hyperparameter dict
     hparams = OmegaConf.to_container(cfg, resolve=True)
 
@@ -171,7 +164,7 @@ def log_hyperparameters(
     trainer.logger.log_hyperparams(hparams)
 
 
-def instantiate_collection(cfg_coll: DictConfig) -> List[Any]:
+def instantiate_collection(cfg_coll: DictConfig) -> list[Any]:
     """Use hydra to instantiate a collection of classes and return a list."""
     objs = []
 
@@ -182,9 +175,9 @@ def instantiate_collection(cfg_coll: DictConfig) -> List[Any]:
     if not isinstance(cfg_coll, DictConfig):
         raise TypeError("List of configs must be a DictConfig!")
 
-    for _, cb_conf in cfg_coll.items():
+    for cb_conf in cfg_coll.values():
         if isinstance(cb_conf, DictConfig) and "_target_" in cb_conf:
-            log.info(f"Instantiating <{cb_conf._target_}>")
+            log.info(f"Instantiating <{cb_conf._target_}>")  # noqa: SLF001
             objs.append(hydra.utils.instantiate(cb_conf))
 
     return objs

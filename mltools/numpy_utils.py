@@ -1,7 +1,5 @@
 """A collection utility functions for numpy arrays."""
 
-from typing import Optional
-
 import numpy as np
 
 
@@ -40,7 +38,7 @@ def unison_shuffled_copies(*args) -> tuple:
     """
     n = len(args[0])
     assert all(len(a) == n for a in args)
-    p = np.random.permutation(n)
+    p = np.random.Generator().permutation(n)
     return tuple(a[p] for a in args)
 
 
@@ -82,24 +80,18 @@ def onehot_encode(
     one-hot encoding.
     """
     if count_unique:
-        unique, inverse = np.unique(a, return_inverse=True)
+        _, inverse = np.unique(a, return_inverse=True)
         a = inverse
     max_idx = max_idx or a.max()
     ncols = max_idx + 1
     out = np.zeros((a.size, ncols), dtype=dtype)
     out[np.arange(a.size), a.ravel()] = 1
-    out.shape = a.shape + (ncols,)
+    out.shape = (*a.shape, ncols)
     return out
 
 
 def interweave(arr_1: np.ndarray, arr_2: np.ndarray) -> np.ndarray:
-    """Combine two arrays by alternating along the first dimension
-    args:
-        a: array to take even indices
-        b: array to take odd indices
-    returns:
-        combined array
-    """
+    """Combine two arrays by alternating even/odd along the first dimension."""
     arr_comb = np.empty(
         (arr_1.shape[0] + arr_2.shape[0], *arr_1.shape[1:]), dtype=arr_1.dtype
     )
@@ -110,7 +102,7 @@ def interweave(arr_1: np.ndarray, arr_2: np.ndarray) -> np.ndarray:
 
 def sum_other_axes(array: np.ndarray, axis: int) -> np.ndarray:
     """Apply numpy sum to all axes except one in an array."""
-    axes_for_sum = [i for i in range(len(array.shape))]
+    axes_for_sum = list(range(len(array.shape)))
     axes_for_sum.pop(axis)
     return array.sum(axis=tuple(axes_for_sum))
 
@@ -118,14 +110,6 @@ def sum_other_axes(array: np.ndarray, axis: int) -> np.ndarray:
 def mid_points(array: np.ndarray) -> np.ndarray:
     """Return the midpoints of an array, one smaller."""
     return (array[1:] + array[:-1]) / 2
-
-
-def undo_mid(array: np.ndarray) -> np.ndarray:
-    """Undo the midpoints, trying to get the bin boundaries."""
-    array = np.array(array)  # Have to include this because of pandas
-    half_bw = (array[1] - array[0]) / 2  # Assumes constant bin widths
-    array = np.insert(array + half_bw, 0, array[0] - half_bw)
-    return array
 
 
 def chunk_given_size(a: np.ndarray, size: int, axis: int = 0) -> np.ndarray:
@@ -139,7 +123,7 @@ def mask_list(arrays: list, mask: np.ndarray) -> list:
 
 
 def log_clip(
-    data: np.ndarray, clip_min: Optional[float] = 1e-6, clip_max: Optional[float] = None
+    data: np.ndarray, clip_min: float | None = 1e-6, clip_max: float | None = None
 ) -> np.ndarray:
     """Apply a clip and then the log function, typically to prevent neg infs."""
     return np.log(np.clip(data, clip_min, clip_max))
@@ -162,7 +146,6 @@ def undo_log_squash(data: np.ndarray) -> np.ndarray:
 
 def empty_0dim_like(inpt: np.ndarray) -> np.ndarray:
     """Return an empty tensor with same size as input but with final dim = 0."""
-
     # Get all but the final dimension
     all_but_last = inpt.shape[:-1]
 
@@ -174,7 +157,7 @@ def empty_0dim_like(inpt: np.ndarray) -> np.ndarray:
 
 
 def group_by(a: np.ndarray) -> np.ndarray:
-    """Run a groupby method which over a numpy array.
+    """Run a groupby method over a numpy array.
 
     Bins by the first column, making many seperate arrays as results.
     """

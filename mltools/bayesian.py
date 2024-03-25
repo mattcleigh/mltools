@@ -1,11 +1,10 @@
 """Stuff for bayesian neural networks."""
 
 import math
-from typing import Union
 
 import torch as T
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 
 
 def contains_bayesian_layers(model: nn.Module) -> bool:
@@ -18,7 +17,7 @@ def contains_bayesian_layers(model: nn.Module) -> bool:
     return any(isinstance(m, BayesianLinear) for m in model.modules())
 
 
-def prior_loss(model: nn.Module) -> Union[T.Tensor, int]:
+def prior_loss(model: nn.Module) -> T.Tensor | int:
     """Calculate the prior loss of a bayesian neural network."""
     kl_loss = model.prior_kl() if isinstance(model, BayesianLinear) else 0
     for m in model.children():
@@ -57,8 +56,7 @@ class BayesianLinear(nn.Module):
         deterministic: bool = False,
         logsig2_init: float = -9.0,
     ):
-        """
-        Parameters
+        """Parameters
         ----------
         in_features:
             The size of the input tensor
@@ -105,29 +103,27 @@ class BayesianLinear(nn.Module):
             ).sum()
         )
 
-    def forward(self, input) -> T.Tensor:
+    def forward(self, x: T.Tensor) -> T.Tensor:
         """Forward pass for the layer.
 
         - Behaves differently depending on tain() or eval() has been called
         """
-
         # For deterministic mode, simply calculate the nomimal output
         if self.deterministic:
-            return F.linear(input, self.weight, self.bias)  # Nominal
+            return F.linear(x, self.weight, self.bias)  # Nominal
 
         # For numerical stability going forward
         w_logsig2 = self.w_logsig2.clamp(-11, 11)
 
         # In training mode, we perform the Local Reparam Trick
         if self.training:
-            nom_out = F.linear(input, self.weight, self.bias)  # Nominal
-            var_out = F.linear(input**2, w_logsig2.exp())
+            nom_out = F.linear(x, self.weight, self.bias)  # Nominal
+            var_out = F.linear(x**2, w_logsig2.exp())
             return nom_out + var_out.sqrt() * T.randn_like(nom_out)
 
         # In evaluation mode we do the full noise generation
-        else:
-            noise = T.exp(self.w_logsig2 / 2) * T.randn_like(self.weight)
-            return F.linear(input, self.weight + noise, self.bias)
+        noise = T.exp(self.w_logsig2 / 2) * T.randn_like(self.weight)
+        return F.linear(x, self.weight + noise, self.bias)
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}({self.n_in}, {self.n_out})"

@@ -3,7 +3,7 @@
 import math
 
 import torch as T
-import torch.nn as nn
+from torch import nn
 from torch.autograd import Function
 
 
@@ -15,13 +15,13 @@ class GRF(Function):
     """
 
     @staticmethod
-    def forward(ctx, inpt, alpha):
+    def forward(ctx, inpt, alpha) -> T.Tensor:
         """Pass inputs without chaning them."""
         ctx.alpha = alpha
         return inpt.clone()
 
     @staticmethod
-    def backward(ctx, grads):
+    def backward(ctx, grads) -> tuple:
         """Inverse the gradients."""
         alpha = ctx.alpha
         neg_grads = -alpha * grads
@@ -68,7 +68,7 @@ class IterativeNormLayer(nn.Module):
         self,
         inpt_dim: T.Tensor | tuple | int,
         means: T.Tensor | None = None,
-        vars: T.Tensor | None = None,
+        variances: T.Tensor | None = None,
         n: int = 0,
         max_n: int = 1_00_000,
         dims: tuple | int = (),
@@ -84,7 +84,7 @@ class IterativeNormLayer(nn.Module):
             Shape of the input tensor (non batched), required for reloading.
         means : float, optional
             Calculated means for the mapping. Defaults to None.
-        vars : float, optional
+        variances : float, optional
             Calculated variances for the mapping. Defaults to None.
         n : int, optional
             Number of samples already used to make the mapping. Defaults to 0.
@@ -104,12 +104,12 @@ class IterativeNormLayer(nn.Module):
         super().__init__()
 
         # Fail if only one of means or vars is provided
-        if (means is None) ^ (vars is None):  # XOR
+        if (means is None) ^ (variances is None):  # XOR
             raise ValueError(
                 """Only one of 'means' and 'vars' is defined. Either both or
                 neither must be defined"""
             )
-        if means is not None and means.shape != vars.shape:
+        if means is not None and means.shape != variances.shape:
             raise ValueError("The shapes of 'means' and 'vars' do not match")
 
         # Modify the dims to be compatible with the layer
@@ -138,8 +138,8 @@ class IterativeNormLayer(nn.Module):
             "vars",
             (
                 T.ones(self.stat_dim, dtype=T.float32)
-                if vars is None
-                else T.as_tensor(vars, dtype=T.float32)
+                if variances is None
+                else T.as_tensor(variances, dtype=T.float32)
             ),
         )
         self.register_buffer("n", n)
@@ -149,8 +149,8 @@ class IterativeNormLayer(nn.Module):
             "m2",
             (
                 T.ones(self.stat_dim, dtype=T.float64)
-                if vars is None
-                else T.as_tensor(vars, dtype=T.float64)
+                if variances is None
+                else T.as_tensor(variances, dtype=T.float64)
             ),
         )
 
@@ -158,7 +158,7 @@ class IterativeNormLayer(nn.Module):
         self.register_buffer(
             "frozen",
             T.as_tensor(
-                (means is not None and vars is not None) or self.n > self.max_n
+                (means is not None and variances is not None) or self.n > self.max_n
             ),
         )
 
@@ -166,25 +166,16 @@ class IterativeNormLayer(nn.Module):
         self, dims: tuple | int, inpt_dim: T.Tensor | tuple | int, n: int
     ) -> tuple:
         """Modify the dims argument to be compatible with the layer."""
-
-        # Input dim must be a list
-        if isinstance(inpt_dim, int):
-            inpt_dim = [inpt_dim]
-        else:
-            inpt_dim = list(inpt_dim)
+        # Input dim and dims must be a list
+        inpt_dim = [inpt_dim] if isinstance(inpt_dim, int) else list(inpt_dim)
+        dims = [dims] if isinstance(dims, int) else list(dims)
 
         # N must be a tensor
         if isinstance(n, int):
             n = T.tensor(n)
 
-        # Dims must be a list
-        if isinstance(dims, int):
-            dims = [dims]
-        else:
-            dims = list(dims)
-
         # Check the dims are within the input range
-        if any([abs(d) > len(inpt_dim) for d in dims]):
+        if any(abs(d) > len(inpt_dim) for d in dims):
             raise ValueError("Dims argument lists dimensions outside input shape")
 
         # Convert negative dims to positive
@@ -199,13 +190,12 @@ class IterativeNormLayer(nn.Module):
         self, inpt_dim: list, dims: list, means: T.Tensor | None
     ) -> tuple:
         """Calculate the shape of the statistics."""
-
         # If the means are defined just use their shape
         if means is not None:
             return means.shape
 
         # Calculate the input and output shapes
-        stat_dim = [1] + list(inpt_dim)  # Add batch dimension
+        stat_dim = [1, *list(inpt_dim)]  # Add batch dimension
         for d in range(len(stat_dim)):
             if d in dims:
                 stat_dim[d] = 1
@@ -237,7 +227,11 @@ class IterativeNormLayer(nn.Module):
         """Set the stats given a population of data."""
         cur_mean_shape = self.means.shape
         inpt = self._mask(inpt, mask)
-        self.vars, self.means = T.var_mean(inpt, dim=(0, *self.dims), keepdim=True)
+        if len(inpt) == 1:
+            raise ValueError("Cannot fit with a single sample, increase batch size")
+        self.vars, self.means = T.var_mean(
+            inpt, dim=(0, *self.dims), keepdim=True, unbiased=False
+        )
         self.n = T.tensor(len(inpt), device=self.means.device)
         self.m2 = (self.vars * self.n).type(self.m2.dtype)
         if freeze:
@@ -245,7 +239,7 @@ class IterativeNormLayer(nn.Module):
         self._check_shape_change(cur_mean_shape)
 
     def _check_shape_change(self, cur_mean_shape: tuple) -> None:
-        if not cur_mean_shape == self.means.shape:
+        if cur_mean_shape != self.means.shape:
             print(f"WARNING! The stats in {self} have changed shape!")
             print("This could be due to incorrect initialisation or masking")
             print(f"Old shape: {cur_mean_shape}")
@@ -280,7 +274,6 @@ class IterativeNormLayer(nn.Module):
 
     def reverse(self, inpt: T.Tensor, mask: T.BoolTensor | None = None) -> T.Tensor:
         """Unnormalises the inputs given the recorded stats."""
-
         # Save and check the gradient tracking options
         grad_setting = T.is_grad_enabled()
         T.set_grad_enabled(self.track_grad_reverse and grad_setting)
@@ -297,7 +290,6 @@ class IterativeNormLayer(nn.Module):
 
     def update(self, inpt: T.Tensor) -> None:
         """Update the running stats using a batch of data."""
-
         # Check the current shapes of the means
         cur_mean_shape = self.means.shape
 
@@ -354,8 +346,7 @@ class CosineEncodingLayer(nn.Module):
         max_value: float | list | T.Tensor = 1.0,
         do_sin: bool = False,
     ) -> None:
-        """
-        Parameters
+        """Parameters
         ----------
         inpt_dim : int
             The dimension of the input tensor.
@@ -403,7 +394,7 @@ class CosineEncodingLayer(nn.Module):
         # Create the frequencies to use
         freq_dim = encoding_dim // 2 if do_sin else encoding_dim
         freqs = T.arange(freq_dim).float().unsqueeze(-1)
-        if scheme in ["exp", "exponential"]:
+        if scheme in {"exp", "exponential"}:
             freqs = T.exp(freqs)
         elif scheme == "pow":
             freqs = 2**freqs
@@ -415,7 +406,6 @@ class CosineEncodingLayer(nn.Module):
 
     def _check_bounds(self, x: T.Tensor) -> None:
         """Throw a warning if the input to the layer will yeild degenerate outputs."""
-
         # Check to see if the inputs are within the bounds
         if T.any(x > (self.max_value + 1e-4)):
             print("Warning! Passing values to CosineEncodingLayer encoding above max!")

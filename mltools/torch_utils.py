@@ -1,20 +1,27 @@
 """Mix of utility functions specifically for pytorch."""
 
+import contextlib
 import os
+from collections.abc import Callable, Iterable
 from contextlib import contextmanager
-from functools import partial
-from typing import Any, Callable, Iterable, Mapping, Tuple, Union
+from typing import Any
 
 import numpy as np
 import torch as T
-import torch.nn as nn
 import torch.optim.lr_scheduler as schd
+from torch import nn
 from torch.optim.optimizer import Optimizer
 from torch.utils.data import Dataset, Subset, random_split
 from torch.utils.data.dataloader import default_collate
 
-from .loss import ChampferLoss, MyBCEWithLogit, VAELoss
 from .schedulers import CyclicWithWarmup, LinearWarmupRootDecay, WarmupToConstant
+
+
+def zero_module(module: nn.Module) -> nn.Module:
+    """Zero out the parameters of a module and return it."""
+    for p in module.parameters():
+        p.data.zero_()
+    return module
 
 
 @contextmanager
@@ -40,40 +47,13 @@ def sum_except_batch(x: T.Tensor, num_batch_dims: int = 1) -> T.Tensor:
     return T.sum(x, dim=list(range(num_batch_dims, x.ndim)))
 
 
-def append_dims(x: T.Tensor, target_dims: int) -> T.Tensor:
-    """Append dimensions of size 1 to the end or front of a tensor.
-
-    Parameters
-    ----------
-    x : T.Tensor
-        The input tensor to be reshaped.
-    target_dims : int
-        The target number of dimensions for the output tensor.
-
-    Returns
-    -------
-    T.Tensor
-        The reshaped tensor with target_dims dimensions.
-
-    Raises
-    ------
-    ValueError
-        If the input tensor already has more dimensions than target_dims.
-
-    Examples
-    --------
-    >>> x = T.tensor([1, 2, 3])
-    >>> x.shape
-    torch.Size([3])
-
-    >>> append_dims(x, 3)
-    tensor([[[1]], [[2]], [[3]]])
-    >>> append_dims(x, 3).shape
-    torch.Size([3, 1, 1])
-    """
+def append_dims(x: T.Tensor, target_dims: int, at_front: bool = False) -> T.Tensor:
+    """Append dimensions of size 1 to tensor until it has target_dims."""
     if (dim_diff := target_dims - x.dim()) < 0:
         raise ValueError(f"x has more dims ({x.ndim}) than target ({target_dims})")
-    return x[(...,) + (None,) * dim_diff]  # x.view(*x.shape, *dim_diff * (1,))
+    if at_front:
+        return x[(None,) * dim_diff + (...,)]
+    return x[(...,) + (None,) * dim_diff]
 
 
 def dtype_lookup(dtype: Any) -> T.dtype:
@@ -105,38 +85,9 @@ def rms(tens: T.Tensor, dim: int = 0) -> T.Tensor:
     return tens.pow(2).mean(dim=dim).sqrt()
 
 
-def rmse(tens_a: T.Tensor, tens_b: T.Tensor, dim: int = 0) -> T.Tensor:
+def rmse(x: T.Tensor, y: T.Tensor, dim: int = 0) -> T.Tensor:
     """Return RMSE without using torch's warning filled mseloss method."""
-    return (tens_a - tens_b).pow(2).mean(dim=dim).sqrt()
-
-
-def get_act(name: str) -> nn.Module:
-    """Return a pytorch activation function given a name."""
-    if isinstance(name, partial):
-        return name()
-    if name == "relu":
-        return nn.ReLU()
-    if name == "elu":
-        return nn.ELU()
-    if name == "lrlu":
-        return nn.LeakyReLU(0.1)
-    if name == "silu" or name == "swish":
-        return nn.SiLU()
-    if name == "selu":
-        return nn.SELU()
-    if name == "softmax":
-        return nn.Softmax()
-    if name == "gelu":
-        return nn.GELU()
-    if name == "tanh":
-        return nn.Tanh()
-    if name == "softmax":
-        return nn.Softmax()
-    if name == "sigmoid":
-        return nn.Sigmoid()
-    if name == "identity" or name == "none":
-        return nn.Identity()
-    raise ValueError("No activation function with name: ", name)
+    return (x - y).pow(2).mean(dim=dim).sqrt()
 
 
 def base_modules(module: nn.Module) -> list:
@@ -153,7 +104,6 @@ def base_modules(module: nn.Module) -> list:
 
 def empty_0dim_like(inpt: T.Tensor | np.ndarray) -> T.Tensor | np.ndarray:
     """Return an empty tensor with same size as input but with final dim = 0."""
-
     # Get all but the final dimension
     all_but_last = inpt.shape[:-1]
 
@@ -166,56 +116,8 @@ def empty_0dim_like(inpt: T.Tensor | np.ndarray) -> T.Tensor | np.ndarray:
     return np.empty((*all_but_last, 0))
 
 
-def get_nrm(name: str, outp_dim: int) -> nn.Module:
-    """Return a 1D pytorch normalisation layer given a name and a output size."""
-    if name == "batch":
-        return nn.BatchNorm1d(outp_dim)
-    if name in ["lyr", "layer"]:
-        return nn.LayerNorm(outp_dim)
-    if name == "none":
-        return None
-    else:
-        raise ValueError("No normalistation with name: ", name)
-
-
-def get_loss_fn(name: Union[partial, str], **kwargs) -> nn.Module:
-    """Return a pytorch loss function given a name."""
-
-    # Supports using partial methods instad of having to do support each string
-    if isinstance(name, partial):
-        return name()
-
-    if name == "none":
-        return None
-
-    # Classification losses
-    if name == "crossentropy":
-        return nn.CrossEntropyLoss(reduction="none")
-    if name == "bcewithlogit":
-        return MyBCEWithLogit(reduction="none")
-
-    # Regression losses
-    if name == "huber":
-        return nn.HuberLoss(reduction="none")
-    if name == "mse":
-        return nn.MSELoss(reduction="none")
-    if name == "mae":
-        return nn.L1Loss(reduction="none")
-
-    # Distribution matching losses
-    if name == "champfer":
-        return ChampferLoss()
-
-    # Encoding losses
-    if name == "vaeloss":
-        return VAELoss()
-
-    else:
-        raise ValueError(f"No standard loss function with name: {name}")
-
-
 def get_sched(
-    sched_dict: Mapping,
+    sched_dict: dict,
     opt: Optimizer,
     steps_per_epoch: int = 0,
     max_lr: float | None = None,
@@ -241,8 +143,9 @@ def get_sched(
         The maximum learning rate for the one shot. Only for OneCycle learning.
     max_epochs : int, optional
         The maximum number of epochs to train for. Only for OneCycle learning.
+    max_steps : int, optional
+        The maximum number of steps to train for. Only for OneCycle learning.
     """
-
     # Pop off the name and learning rate for the optimizer
     dict_copy = sched_dict.copy()
     name = dict_copy.pop("name")
@@ -251,18 +154,18 @@ def get_sched(
     max_lr = max_lr or opt.defaults["lr"]
 
     # Exit if the name indicates no scheduler
-    if name in ["", "none", "None"]:
+    if name in {"", "none", "None"}:
         return None
 
     # If the steps per epoch is 0, try and get it from the sched_dict
     if steps_per_epoch == 0:
         try:
             steps_per_epoch = dict_copy.pop("steps_per_epoch")
-        except KeyError:
+        except KeyError as e:
             raise ValueError(
                 "steps_per_epoch was not passed to get_sched and was ",
                 "not in the scheduler dictionary!",
-            )
+            ) from e
 
     # If max_steps is not specified, then use the max_epochs
     max_steps = max_steps if max_steps > 1 else steps_per_epoch * max_epochs
@@ -274,39 +177,37 @@ def get_sched(
         epochs_per_cycle = 1
 
     # Use the same div_factor for cyclic with warmup
-    if name == "cyclicwithwarmup":
-        if "div_factor" not in dict_copy:
-            dict_copy["div_factor"] = 1e4
+    if name == "cyclicwithwarmup" and "div_factor" not in dict_copy:
+        dict_copy["div_factor"] = 1e4
 
     if name == "cosann":
         return schd.CosineAnnealingLR(
             opt, steps_per_epoch * epochs_per_cycle, **dict_copy
         )
-    elif name == "cosannwr":
+    if name == "cosannwr":
         return schd.CosineAnnealingWarmRestarts(
             opt, steps_per_epoch * epochs_per_cycle, **dict_copy
         )
-    elif name == "onecycle":
+    if name == "onecycle":
         return schd.OneCycleLR(opt, max_lr, total_steps=max_steps, **dict_copy)
-    elif name == "cyclicwithwarmup":
+    if name == "cyclicwithwarmup":
         return CyclicWithWarmup(
             opt, max_lr, total_steps=steps_per_epoch * epochs_per_cycle, **dict_copy
         )
-    elif name == "linearwarmuprootdecay":
+    if name == "linearwarmuprootdecay":
         return LinearWarmupRootDecay(opt, **dict_copy)
-    elif name == "warmup":
+    if name == "warmup":
         return WarmupToConstant(opt, **dict_copy)
-    elif name == "lr_sheduler.ExponentialLR":
+    if name == "lr_sheduler.ExponentialLR":
         return schd.ExponentialLR(opt, **dict_copy)
-    elif name == "lr_scheduler.ConstantLR":
+    if name == "lr_scheduler.ConstantLR":
         return schd.ConstantLR(opt, **dict_copy)
-    else:
-        raise ValueError(f"No scheduler with name: {name}")
+    raise ValueError(f"No scheduler with name: {name}")
 
 
 def train_valid_split(
     dataset: Dataset, v_frac: float, split_type="interweave"
-) -> Tuple[Subset, Subset]:
+) -> tuple[Subset, Subset]:
     """Split a pytorch dataset into a training and validation pytorch Subsets.
 
     Parameters
@@ -320,23 +221,23 @@ def train_valid_split(
         interweave: The every x events for the validation
         rand: Use a random splitting method (seed 42)
     """
-
     if split_type == "rand":
         v_size = int(v_frac * len(dataset))
         t_size = len(dataset) - v_size
         return random_split(
             dataset, [t_size, v_size], generator=T.Generator().manual_seed(42)
         )
-    elif split_type == "basic":
+    if split_type == "basic":
         v_size = int(v_frac * len(dataset))
         valid_indxs = np.arange(0, v_size)
         train_indxs = np.arange(v_size, len(dataset))
         return Subset(dataset, train_indxs), Subset(dataset, valid_indxs)
-    elif split_type == "interweave":
+    if split_type == "interweave":
         v_every = int(1 / v_frac)
         valid_indxs = np.arange(0, len(dataset), v_every)
         train_indxs = np.delete(np.arange(len(dataset)), np.s_[::v_every])
         return Subset(dataset, train_indxs), Subset(dataset, valid_indxs)
+    raise ValueError(f"Split type {split_type} not recognised!")
 
 
 def k_fold_split(
@@ -348,7 +249,7 @@ def k_fold_split(
 
     test_fold = fold_idx
     val_fold = (fold_idx + 1) % num_folds
-    train_folds = [i for i in range(num_folds) if i not in [fold_idx, val_fold]]
+    train_folds = [i for i in range(num_folds) if i not in {fold_idx, val_fold}]
 
     data_idxes = np.arange(len(dataset))
     in_k = data_idxes % num_folds
@@ -358,79 +259,6 @@ def k_fold_split(
     train = Subset(dataset, data_idxes[np.isin(in_k, train_folds)])
 
     return train, valid, test
-
-
-def masked_pool(
-    pool_type: str, tensor: T.Tensor, mask: T.BoolTensor, axis: int | None = None
-) -> T.Tensor:
-    """Apply a pooling operation to masked elements of a tensor
-    args:
-        pool_type: Which pooling operation to use, currently supports max, sum and mean
-        tensor: The input tensor to pool over
-        mask: The mask to show which values should be included in the pool
-
-    kwargs:
-        axis: The axis to pool over, gets automatically from shape of mask
-
-    """
-
-    # Automatically get the pooling dimension from the shape of the mask
-    if axis is None:
-        axis = len(mask.shape) - 1
-
-    # Or at least ensure that the axis is a positive number
-    elif axis < 0:
-        axis = len(tensor.shape) - axis
-
-    # Apply the pooling method
-    if pool_type == "max":
-        tensor[~mask] = -T.inf
-        return tensor.max(dim=axis)
-    if pool_type == "sum":
-        tensor[~mask] = 0
-        return tensor.sum(dim=axis)
-    if pool_type == "mean":
-        tensor[~mask] = 0
-        return tensor.sum(dim=axis) / (mask.sum(dim=axis, keepdim=True) + 1e-8)
-
-    raise ValueError(f"Unknown pooling type: {pool_type}")
-
-
-def smart_cat(inputs: Iterable, dim=-1) -> T.Tensor:
-    """Concatenate without memory copy if tensors are are empty or None."""
-
-    # Check number of non-empty tensors in the dimension for pooling
-    n_nonempt = [0 if i is None else bool(i.size(dim=dim)) for i in inputs]
-
-    # If there is only one non-empty tensor then we just return it directly
-    if sum(n_nonempt) == 1:
-        return inputs[np.argmax(n_nonempt)]
-
-    # Otherwise concatenate the not None variables
-    return T.cat([i for i in inputs if i is not None], dim=dim)
-
-
-def sel_device(dev: str | T.device) -> T.device:
-    """Return a pytorch device given a string (or a device)
-
-    Passing cuda or gpu will run a hardware check first
-    """
-    # Not from config, but when device is specified already
-    if isinstance(dev, T.device):
-        return dev
-
-    # Tries to get gpu if available
-    if dev in ["cuda", "gpu"]:
-        print("Trying to select cuda based on available hardware")
-        dev = "cuda" if T.cuda.is_available() else "cpu"
-
-    # Tries to get specific gpu
-    elif "cuda" in dev:
-        print(f"Trying to select {dev} based on available hardware")
-        dev = dev if T.cuda.is_available() else "cpu"
-
-    print(f"Running on hardware: {dev}")
-    return T.device(dev)
 
 
 def move_dev(
@@ -443,22 +271,16 @@ def move_dev(
     - tuple of tensors
     - dict of tensors
     """
-
-    # Select the pytorch device object if dev was a string
-    if isinstance(dev, str):
-        dev = sel_device(dev)
-
     if isinstance(tensor, tuple):
         return tuple(t.to(dev) for t in tensor)
-    elif isinstance(tensor, list):
+    if isinstance(tensor, list):
         return [t.to(dev) for t in tensor]
-    elif isinstance(tensor, dict):
+    if isinstance(tensor, dict):
         return {t: tensor[t].to(dev) for t in tensor}
-    else:
-        return tensor.to(dev)
+    return tensor.to(dev)
 
 
-def to_np(inpt: Union[T.Tensor, tuple]) -> np.ndarray:
+def to_np(inpt: T.Tensor | tuple) -> np.ndarray:
     """More consicse way of doing all the necc steps to convert a pytorch tensor to
     numpy array.
 
@@ -468,7 +290,7 @@ def to_np(inpt: Union[T.Tensor, tuple]) -> np.ndarray:
         return None
     if isinstance(inpt, dict):
         return {k: to_np(inpt[k]) for k in inpt}
-    if isinstance(inpt, (tuple, list)):
+    if isinstance(inpt, (tuple | list)):
         return type(inpt)(to_np(x) for x in inpt)
     if inpt.dtype == T.bfloat16:  # Numpy conversions don't support bfloat16s
         inpt = inpt.half()
@@ -498,7 +320,7 @@ def get_grad_norm(model: nn.Module, norm_type: float = 2.0):
     )
 
 
-def reparam_trick(tensor: T.Tensor) -> Tuple[T.Tensor, T.Tensor, T.Tensor]:
+def reparam_trick(tensor: T.Tensor) -> tuple[T.Tensor, T.Tensor, T.Tensor]:
     """Apply the reparameterisation trick to split a tensor into means and devs.
 
     - Returns a sample, the means and devs as a tuple
@@ -510,99 +332,16 @@ def reparam_trick(tensor: T.Tensor) -> Tuple[T.Tensor, T.Tensor, T.Tensor]:
     return latents, means, lstds
 
 
-def apply_residual(rsdl_type: str, res: T.Tensor, outp: T.Tensor) -> T.Tensor:
-    """Apply a residual connection by either adding or concatenating."""
-    if rsdl_type == "cat":
-        return smart_cat([res, outp], dim=-1)
-    if rsdl_type == "add":
-        return outp + res
-    raise ValueError(f"Unknown residual type: {rsdl_type}")
-
-
-def aggr_via_sparse(compressed: T.Tensor, mask: T.BoolTensor, reduction: str, dim: int):
-    """Aggregate a compressed tensor by first blowing up to a sparse representation.
-
-    The tensor is blown up to full size such that: full[mask] = compressed
-    This is suprisingly quick and the fastest method I have tested to do sparse
-    aggregation in pytorch.
-    I am sure that there might be a way to get this to work with gather though!
-
-    Supports sum, mean, and softmax
-    - mean is not supported by torch.sparse, so we use sum and the mask
-    - softmax does not reduce the size of the tensor, but applies softmax along dim
-
-    Parameters
-    ----------
-    cmprsed:
-        The nonzero elements of the compressed tensor
-    mask:
-        A mask showing where the nonzero elements should go
-    reduction:
-        A string indicating the type of reduction
-    dim:
-        Which dimension to apply the reduction
-    """
-
-    # Create a sparse representation of the tensor
-    sparse_rep = sparse_from_mask(compressed, mask, is_compressed=True)
-
-    # Apply the reduction
-    if reduction == "sum":
-        return T.sparse.sum(sparse_rep, dim).values()
-    if reduction == "mean":
-        reduced = T.sparse.sum(sparse_rep, dim)
-        mask_sum = mask.sum(dim)
-        mask_sum = mask_sum.unsqueeze(-1).expand(reduced.shape)[mask_sum > 0]
-        return reduced.values() / mask_sum
-    if reduction == "softmax":
-        return T.sparse.softmax(sparse_rep, dim).coalesce().values()
-    raise ValueError(f"Unknown sparse reduction method: {reduction}")
-
-
-def sparse_from_mask(inpt: T.Tensor, mask: T.BoolTensor, is_compressed: bool = False):
-    """Create a pytorch sparse matrix given a tensor and a mask.
-
-    - Shape is infered from the mask, meaning the final dim will be dense
-    """
-    return T.sparse_coo_tensor(
-        T.nonzero(mask).t(),
-        inpt if is_compressed else inpt[mask],
-        size=(*mask.shape, inpt.shape[-1]),
-        device=inpt.device,
-        dtype=inpt.dtype,
-        requires_grad=inpt.requires_grad,
-    ).coalesce()
-
-
-def decompress(compressed: T.Tensor, mask: T.BoolTensor) -> T.Tensor:
-    """Take a compressed input and use the mask to blow it to its original shape.
-
-    Ensures that: full[mask] = cmprsed.
-    """
-    # We first create the zero padded tensor of the right size then replace
-    full = T.zeros(
-        (*mask.shape, compressed.shape[-1]),
-        dtype=compressed.dtype,
-        device=compressed.device,
-    )
-
-    # Place the nonpadded samples into the full shape
-    full[mask] = compressed
-
-    return full
-
-
 def get_max_cpu_suggest():
-    """Try to compute a suggested max number of worker based on system's resource."""
-    max_num_worker_suggest = None
-    if hasattr(os, "sched_getaffinity"):
-        try:
-            max_num_worker_suggest = len(os.sched_getaffinity(0))
-        except Exception:
-            pass
-    if max_num_worker_suggest is None:
-        max_num_worker_suggest = os.cpu_count()
-    return max_num_worker_suggest
+    """Try to compute a suggested max number of worker based on system's resources."""
+    suggest = None
+    with contextlib.suppress((OSError, AttributeError, ValueError)):
+        suggest = len(os.sched_getaffinity(0))
+    if suggest is None:
+        suggest = os.cpu_count()
+    if suggest is not None:
+        suggest -= 1
+    return suggest
 
 
 def log_squash(data: T.Tensor) -> T.Tensor:
@@ -628,7 +367,9 @@ def ema_param_sync(source: nn.Module, target: nn.Module, ema_decay: float) -> No
     ema_decay : float
         The decay rate for the EMA update.
     """
-    for s_params, t_params in zip(source.parameters(), target.parameters()):
+    for s_params, t_params in zip(
+        source.parameters(), target.parameters(), strict=False
+    ):
         t_params.data.copy_(
             ema_decay * t_params.data + (1.0 - ema_decay) * s_params.data
         )
@@ -655,7 +396,7 @@ def squash_fn(x: T.Tensor | np.ndarray, a: float) -> np.ndarray:
     if a == 1:
         return x
     assert a >= 1
-    x[x < 0] = 0
+    x[x < 0] = 0  # Works on both tensors and numpy arrays
     x[x > 1] = 1
     return (1 - (1 - x) ** a) ** (1 / a)
 
@@ -665,6 +406,6 @@ def unsquash_fn(x: T.Tensor | np.ndarray, a: float) -> np.ndarray:
     if a == 1:
         return x
     assert a >= 1
-    x[x < 0] = 0
+    x[x < 0] = 0  # Works on both tensors and numpy arrays
     x[x > 1] = 1
     return 1 - (1 - x**a) ** (1 / a)

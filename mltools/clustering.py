@@ -14,7 +14,6 @@ def kmeans(
     use_plusplus=True,
 ) -> T.Tensor:
     """Perform kmeans and return the cluster centers."""
-
     # Make sure that the input is a float
     x = x.float()
     dataset_size = x.shape[0]
@@ -26,7 +25,7 @@ def kmeans(
     # Use the kmeans++ algorithm to initialise the cluster centers
     if use_plusplus:
         cluster_centers = T.zeros_like(x[:num_clusters])
-        cluster_centers[0] = T.clone(x[np.random.randint(dataset_size)])
+        cluster_centers[0] = T.clone(x[np.random.Generator().integers(dataset_size)])
         for i in trange(1, num_clusters, desc="Initialising centers"):
             dist = T.cdist(x, cluster_centers[:i])
             min_dist = dist.min(dim=-1).values

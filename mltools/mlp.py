@@ -1,10 +1,13 @@
 """Highly configurable MLP for all needs."""
 
+import itertools
+
 import torch as T
-import torch.nn as nn
+from torch import nn
+
+from mltools.torch_utils import zero_module
 
 from .bayesian import BayesianLinear
-from .torch_utils import get_act, get_nrm
 
 
 class MLPBlock(nn.Module):
@@ -25,14 +28,13 @@ class MLPBlock(nn.Module):
         inpt_dim: int,
         outp_dim: int,
         ctxt_dim: int = 0,
-        n_layers: int = 1,
-        act: str = "lrlu",
-        nrm: str = "none",
-        drp: float = 0,
-        do_res: bool = False,
+        num_layers: int = 1,
+        activation: str | None = "lrlu",
+        norm: str | None = None,
+        dropout: float = 0,
+        do_residual: bool = False,
         do_bayesian: bool = False,
         init_zeros: bool = False,
-        use_bias: bool = True,
     ) -> None:
         """Init method for MLPBlock.
 
@@ -44,23 +46,21 @@ class MLPBlock(nn.Module):
             The number of output features
         ctxt_dim : int, optional
             The number of contextual features to concat to the inputs, by default 0
-        n_layers : int, optional
+        num_layers : int, optional
             The number of transform layers in this block, by default 1
-        act : str, optional
+        activation : str, optional
             A string indicating the name of the activation function, by default "lrlu"
-        nrm : str, optional
-            A string indicating the name of the normalisation, by default "none"
-        drp : float, optional
+        norm : str, optional
+            A string indicating the name of the normalisation, by default None
+        dropout : float, optional
             The dropout probability, 0 implies no dropout, by default 0
-        do_res : bool, optional
+        do_residual : bool, optional
             Add to previous output, only if dim does not change, by default 0
         do_bayesian : bool, optional
             If to fill the block with bayesian linear layers, by default False
         init_zeros : bool, optional
             If the final layer weights and bias values are set to zero
             Does not apply to bayesian layers
-        use_bias: bool, optional
-            If the linear layers use bias terms
         """
         super().__init__()
 
@@ -69,63 +69,49 @@ class MLPBlock(nn.Module):
         self.outp_dim = outp_dim
         self.ctxt_dim = ctxt_dim
         self.init_zeros = init_zeros
+        self.do_res = do_residual and (inpt_dim == outp_dim)
 
-        # If this layer includes an additive residual connection
-        self.do_res = do_res and (inpt_dim == outp_dim)
+        # Change certain defaults if using bayesian layers
+        linear = BayesianLinear if do_bayesian else nn.Linear
+        init_zeros = init_zeros and not do_bayesian
 
         # Initialise the block layers as a module list
         self.layers = nn.ModuleList()
-        for n in range(n_layers):
+        for n in range(num_layers):
             # Increase the input dimension of the first layer to include context
             lyr_in = inpt_dim + ctxt_dim if n == 0 else outp_dim
 
             # Linear transform, activation, normalisation, dropout
-            self.layers.append(
-                BayesianLinear(lyr_in, outp_dim)
-                if do_bayesian
-                else nn.Linear(lyr_in, outp_dim, bias=use_bias)
-            )
+            self.layers.append(linear(lyr_in, outp_dim))
 
-            # Initialise the final layer with zeros
-            with_zeros = init_zeros and n == n_layers - 1 and not do_bayesian
+            # Check if the linear layer should be initialised with zeros
+            with_zeros = init_zeros and n == num_layers - 1
             if with_zeros:
-                self.layers[-1].weight.data.fill_(0)
-                if use_bias:
-                    self.layers[-1].bias.data.fill_(0)
+                zero_module(self.layers[-1])
 
             # Add the activation layer
-            if act != "none":
-                self.layers.append(get_act(act))
-            if nrm != "none" and not with_zeros:  # Dont norm after just using zeros
-                self.layers.append(get_nrm(nrm, outp_dim))
+            if activation is not None:
+                self.layers.append(getattr(nn, activation)())
 
-            # Add the dropout layer
-            if drp > 0:
-                self.layers.append(nn.Dropout(drp))
+            # Normalisation layer, not right after initialising with zeros
+            if norm is not None and not with_zeros:
+                self.layers.append(getattr(nn, norm)(outp_dim))
 
-    def forward(self, inpt: T.Tensor, ctxt: T.Tensor | None = None) -> T.Tensor:
-        """
-        args:
-            tensor: Pytorch tensor to pass through the network
-            ctxt: The conditioning tensor, can be ignored
-        """
+            # Dropout layer
+            if dropout > 0:
+                self.layers.append(nn.Dropout(dropout))
 
-        # Concatenate the context information to the input of the block
-        if self.ctxt_dim and ctxt is None:
-            raise ValueError(
-                "Was expecting contextual information but none has been provided!"
-            )
-        temp = T.cat([inpt, ctxt], dim=-1) if self.ctxt_dim else inpt
-
-        # Pass through each transform in the block
-        for layer in self.layers:
-            temp = layer(temp)
-
-        # Add the original inputs again for the residual connection
-        if self.do_res:
-            temp = temp + inpt
-
-        return temp
+    def forward(self, x: T.Tensor, ctxt: T.Tensor | None = None) -> T.Tensor:
+        """Pass the input through the block and return the output."""
+        if self.do_res:  # Double checked that this does copy
+            orig = x
+        if self.ctxt_dim:  # Concatenate context to input
+            x = T.cat([x, ctxt], dim=-1)
+        for layer in self.layers:  # Pass through each layer
+            x = layer(x)
+        if self.do_res:  # Add the original input to the output
+            x = x + orig
+        return x
 
     def __repr__(self) -> str:
         """Generate a one line string summing up the components of the block."""
@@ -133,10 +119,7 @@ class MLPBlock(nn.Module):
         if self.ctxt_dim:
             string += f"({self.ctxt_dim})"
         for b in self.layers:
-            string += "->"
-            string += str(b).split("(", 1)[0]
-            if self.init_zeros and isinstance(b, nn.Linear):
-                string += "0"
+            string += "->" + str(b).split("(", 1)[0]
         string += "->" + str(self.outp_dim)
         if self.do_res:
             string += "(add)"
@@ -152,25 +135,23 @@ class MLP(nn.Module):
     def __init__(
         self,
         inpt_dim: int,
-        outp_dim: int = 0,
+        outp_dim: int,
         ctxt_dim: int = 0,
         hddn_dim: int | list = 32,
         num_blocks: int = 1,
-        n_lyr_pbk: int = 1,
-        act_h: str = "lrlu",
-        act_o: str = "none",
-        do_out: bool = True,
-        nrm: str = "none",
-        drp: float = 0,
-        drp_on_output: bool = False,
-        nrm_on_output: bool = False,
+        num_layers_per_block: int = 1,
+        act_h: str = "SiLU",
+        act_o: str | None = None,
+        norm: str | None = None,
+        dropout: float = 0,
+        drop_on_output: bool = False,
+        norm_on_output: bool = False,
         do_res: bool = False,
         ctxt_in_inpt: bool = True,
         ctxt_in_hddn: bool = False,
         ctxt_in_out: bool = False,
         do_bayesian: bool = False,
         init_zeros: bool = False,
-        use_bias: bool = True,
     ) -> None:
         """Initialise the MLP.
 
@@ -178,115 +159,102 @@ class MLP(nn.Module):
         ----------
         inpt_dim : int
             The number of input features
-        outp_dim : int, optional
-            The number of output features, by default 0
+        outp_dim : int
+            The number of output features
         ctxt_dim : int, optional
-            The number of contextual features, by default 0
+            The number of context features to inject, by default 0
         hddn_dim : int | list, optional
             The number of hidden features in each block, by default 32
+            If a list it will override the num_blocks parameter
         num_blocks : int, optional
-            The number of hidden blocks, by default 1.
-            Ignored if hddn_dim is a list.
-        n_lyr_pbk: int, optional
-            The number of layers in each hidden block, by default 1
+            The number of hidden blocks, by default 1
+        num_layers_per_block : int, optional
+            The number of liner layers in each hidden block, by default 1
         act_h : str, optional
-            The activation function for the hidden blocks, by default "lrlu"
+            The activation function for the hidden layers, by default "SiLU"
         act_o : str, optional
-            The activation function for the output block, by default "none"
-        do_out : bool, optional
-            If to include an output block, by default True
-        nrm : str, optional
-            The normalisation for the hidden blocks, by default "none"
-        drp : float, optional
-            The dropout probability for the hidden blocks, by default 0
-        drp_on_output : bool, optional
-            If to apply dropout to the output block, by default False
-        nrm_on_output : bool, optional
-            If to apply normalisation to the output block, by default False
-        do_res  : bool, optional
-            If to include residual connections, by default False
-        ctxt_in_inpt    : bool, optional
-            If to concatenate the context to the input layer, by default True
-        ctxt_in_hddn    : bool, optional
-            If to concatenate the context to the hidden layers, by default False
-        ctxt_in_out    : bool, optional
-            If to concatenate the context to the output layer, by default False
+            The activation function for the output layer, by default None
+        norm : str, optional
+            The normalisation layer to use, by default None
+        dropout : float, optional
+            The dropout probability, by default 0
+        drop_on_output : bool, optional
+            If to apply dropout to the output layer, by default False
+        norm_on_output : bool, optional
+            If to apply normalisation to the output layer, by default False
+        do_res : bool, optional
+            If to add the input to the output of each hidden block, by default False
+        ctxt_in_inpt : bool, optional
+            If to inject context into the input layer, by default True
+        ctxt_in_hddn : bool, optional
+            If to inject context into each hidden layer, by default False
+        ctxt_in_out : bool, optional
+            If to inject context into the output layer, by default False
         do_bayesian : bool, optional
-            If to fill the block with bayesian linear layers, by default False
+            If to use bayesian linear layers, by default False
         init_zeros : bool, optional
-            If the final layer parameters in each MLP block are set to zero
-            Does not apply to bayesian layers
-            Will also prevent normalisation
-        use_bias: bool, optional
-            If the linear layers use bias terms
+            If to initialise final layer weights and bias to zero, by default False
         """
         super().__init__()
 
         # Check that the context is used somewhere
-        if ctxt_dim:
-            if not ctxt_in_inpt and not ctxt_in_hddn and not ctxt_in_out:
-                raise ValueError("Network has context inputs but nowhere to use them!")
+        if ctxt_dim and not ctxt_in_inpt and not ctxt_in_hddn and not ctxt_in_out:
+            raise ValueError("Network has context inputs but nowhere to use them!")
 
-        # We store the input, hddn (list), output, and ctxt dims to query them later
+        # Attributes
         self.inpt_dim = inpt_dim
-        if not isinstance(hddn_dim, int):
-            self.hddn_dim = hddn_dim
-        else:
-            self.hddn_dim = num_blocks * [hddn_dim]
-        self.outp_dim = outp_dim or inpt_dim if do_out else self.hddn_dim[-1]
-        self.num_blocks = len(self.hddn_dim)
+        self.outp_dim = outp_dim
         self.ctxt_dim = ctxt_dim
-        self.do_out = do_out
+        self.hddn_dim = (
+            hddn_dim if isinstance(hddn_dim, list) else num_blocks * [hddn_dim]
+        )
+        self.num_blocks = len(self.hddn_dim)
 
-        # Necc for this module to work with the nflows package
+        # For compatibility with the normflows package we need this attribute
         self.hidden_features = self.hddn_dim[-1]
 
         # Input MLP block
         self.input_block = MLPBlock(
             inpt_dim=self.inpt_dim,
             outp_dim=self.hddn_dim[0],
-            ctxt_dim=self.ctxt_dim if ctxt_in_inpt else 0,
-            act=act_h,
-            nrm=nrm,
-            drp=drp,
+            ctxt_dim=self.ctxt_dim * ctxt_in_inpt,
+            activation=act_h,
+            norm=norm,
+            dropout=dropout,
             do_bayesian=do_bayesian,
-            use_bias=use_bias,
         )
 
         # All hidden blocks as a single module list
-        self.hidden_blocks = []
-        if self.num_blocks > 1:
-            self.hidden_blocks = nn.ModuleList()
-            for h_1, h_2 in zip(self.hddn_dim[:-1], self.hddn_dim[1:]):
-                self.hidden_blocks.append(
-                    MLPBlock(
-                        inpt_dim=h_1,
-                        outp_dim=h_2,
-                        ctxt_dim=self.ctxt_dim if ctxt_in_hddn else 0,
-                        n_layers=n_lyr_pbk,
-                        act=act_h,
-                        nrm=nrm,
-                        drp=drp,
-                        do_res=do_res,
-                        init_zeros=init_zeros,
-                        do_bayesian=do_bayesian,
-                        use_bias=use_bias,
-                    )
-                )
+        hidden_blocks = [
+            MLPBlock(
+                inpt_dim=h_1,
+                outp_dim=h_2,
+                ctxt_dim=self.ctxt_dim * 0,
+                num_layers=num_layers_per_block,
+                activation=act_h,
+                norm=norm,
+                dropout=dropout,
+                do_residual=do_res,
+                init_zeros=init_zeros,
+                do_bayesian=do_bayesian,
+            )
+            for h_1, h_2 in itertools.pairwise(self.hddn_dim)
+        ]
+
+        # Only wrap with module list if there are blocks
+        self.hidden_blocks = nn.ModuleList(hidden_blocks) if hidden_blocks else []
 
         # Output block
-        if do_out:
-            self.output_block = MLPBlock(
-                inpt_dim=self.hddn_dim[-1],
-                outp_dim=self.outp_dim,
-                ctxt_dim=self.ctxt_dim if ctxt_in_out else 0,
-                act=act_o,
-                do_bayesian=do_bayesian,
-                init_zeros=init_zeros,
-                nrm=nrm if nrm_on_output else "none",
-                drp=drp if drp_on_output else 0,
-                use_bias=use_bias,
-            )
+        self.output_block = MLPBlock(
+            inpt_dim=self.hddn_dim[-1],
+            outp_dim=self.outp_dim,
+            ctxt_dim=self.ctxt_dim * ctxt_in_out,
+            activation=act_o,
+            do_bayesian=do_bayesian,
+            norm=norm if norm_on_output else None,
+            dropout=dropout * drop_on_output,
+            init_zeros=init_zeros,
+        )
 
     def forward(
         self,
@@ -294,60 +262,26 @@ class MLP(nn.Module):
         ctxt: T.Tensor | None = None,
         context: T.Tensor | None = None,
     ) -> T.Tensor:
-        """Pass through all layers of the dense network."""
-
+        """Pass through the mlp."""
         # Use context as a synonym for ctxt (normflow compatibility)
-        if context is not None:
-            ctxt = context
+        ctxt = ctxt if ctxt is not None else context
 
         # Reshape the context if it is available. Equivalent to performing
         # multiple ctxt.unsqueeze(1) until the dim matches the input.
-        # Batch dimension is kept the same.
-        if ctxt is not None:
-            dim_diff = inputs.dim() - ctxt.dim()
-            if dim_diff > 0:
-                ctxt = ctxt.view(ctxt.shape[0], *dim_diff * (1,), *ctxt.shape[1:])
-                ctxt = ctxt.expand(*inputs.shape[:-1], -1)
+        if ctxt is not None and (dim_diff := inputs.dim() - ctxt.dim()) > 0:
+            ctxt = ctxt.view(ctxt.shape[0], *dim_diff * (1,), *ctxt.shape[1:])
+            ctxt = ctxt.expand(*inputs.shape[:-1], -1)
 
-        # Pass through the input block
+        # Pass through all layers
         inputs = self.input_block(inputs, ctxt)
-
-        # Pass through each hidden block
-        for h_block in self.hidden_blocks:  # Context tensor will only be used if
-            inputs = h_block(inputs, ctxt)  # block was initialised with a ctxt dim
-
-        # Pass through the output block
-        if self.do_out:
-            inputs = self.output_block(inputs)
-
-        return inputs
+        for h_block in self.hidden_blocks:
+            inputs = h_block(inputs, ctxt)
+        return self.output_block(inputs)
 
     def __repr__(self):
         string = ""
         string += "\n  (inp): " + repr(self.input_block) + "\n"
         for i, h_block in enumerate(self.hidden_blocks):
-            string += f"  (h-{i+1}): " + repr(h_block) + "\n"
-        if self.do_out:
-            string += "  (out): " + repr(self.output_block)
-        return string
-
-    def one_line_string(self):
-        """Return a one line string that sums up the network structure."""
-        string = str(self.inpt_dim)
-        if self.ctxt_dim:
-            string += f"({self.ctxt_dim})"
-        string += ">"
-        string += str(self.input_block.outp_dim) + ">"
-        if self.num_blocks > 1:
-            string += ">".join(
-                [
-                    str(layer.out_features)
-                    for hidden in self.hidden_blocks
-                    for layer in hidden.layers
-                    if isinstance(layer, nn.Linear)
-                ]
-            )
-            string += ">"
-        if self.do_out:
-            string += str(self.outp_dim)
+            string += f"  (h-{i + 1}): " + repr(h_block) + "\n"
+        string += "  (out): " + repr(self.output_block)
         return string

@@ -1,28 +1,27 @@
 """Functions and classes used to define invertible transformations."""
 
-from functools import partial
-from typing import Any, Callable, Literal
+from collections.abc import Callable
+from typing import Any, Literal
 
 import normflows as nf
 import numpy as np
 import torch as T
-import torch.nn as nn
 from normflows.flows.neural_spline.coupling import PiecewiseRationalQuadraticCoupling
 from normflows.utils.masks import create_alternating_binary_mask
 from normflows.utils.splines import DEFAULT_MIN_DERIVATIVE
+from torch import nn
 
 from .mlp import MLP
-from .torch_utils import base_modules, get_act
+from .torch_utils import base_modules
 
 
 class PermuteEvenOdd(nf.flows.Flow):
     """Permutation features along the channel dimension swapping even and odd values."""
 
-    def __init__(self, num_channels: int):
+    def __init__(self) -> None:
         super().__init__()
-        self.num_channels = num_channels
 
-    def forward(self, z, context=None) -> tuple:
+    def forward(self, z, context=None) -> tuple:  # noqa: ARG002
         z1 = z[:, 0::2]
         z2 = z[:, 1::2]
         z = T.stack((z2, z1), dim=2).view(z.shape[0], -1)
@@ -34,11 +33,15 @@ class PermuteEvenOdd(nf.flows.Flow):
 
 
 class LULinear(nf.flows.Flow):
-    """Invertible linear layer using LU decomposition."""
+    """Invertible linear layer using LU decomposition.
+
+    Needed because normflows doesn't offer this layer by itself.
+    Also needed to change the caching mechanism for ONNX export.
+    """
 
     def __init__(self, num_channels: int, identity_init: bool = True):
         super().__init__()
-        self.linear = nf.flows.mixing._LULinear(
+        self.linear = nf.flows.mixing._LULinear(  # noqa: SLF001
             num_channels, identity_init=identity_init
         )
 
@@ -55,36 +58,43 @@ class LULinear(nf.flows.Flow):
 
 
 class CoupledRationalQuadraticSpline(nf.flows.Flow):
-    """Overloaded class from normflows which allow init_identity."""
+    """Overloaded class from normflows which allow init_identity.
+
+    This is a single coupling layer using rational quadratic splines.
+    """
 
     def __init__(
         self,
-        num_input_channels,
-        num_blocks,
-        num_hidden_channels,
-        num_context_channels=None,
-        num_bins=8,
-        tails="linear",
-        tail_bound=3.0,
-        activation=nn.ReLU,
-        dropout_probability=0.0,
-        reverse_mask=False,
-        init_identity=True,
+        num_input_channels: int,
+        num_blocks: int,
+        num_hidden_channels: int,
+        num_context_channels: int | None = None,
+        num_bins: int = 8,
+        tails: str = "linear",
+        tail_bound: float = 3.0,
+        activation: str = "ReLU",
+        dropout_probability: float = 0.0,
+        reverse_mask: bool = False,
+        init_identity: bool = True,
     ) -> None:
         super().__init__()
 
+        # Need to define the network construction function
         def transform_net_create_fn(in_features, out_features):
-            net = MLP(  # I find that my MLPs use context information better!
+            # I find that my MLPs use context information better!
+            net = MLP(
                 inpt_dim=in_features,
                 outp_dim=out_features,
                 ctxt_dim=num_context_channels or 0,
                 hddn_dim=num_hidden_channels,
                 num_blocks=num_blocks,
-                act_h=partial(activation),
-                drp=dropout_probability,
+                act_h=activation,
+                dropout=dropout_probability,
                 ctxt_in_hddn=True,
-                ctxt_in_inpt=False,
+                ctxt_in_inpt=True,
             )
+
+            # For the identity inits with a spline they must follow predefined values
             if init_identity:
                 nn.init.constant_(net.output_block.layers[0].weight, 0.0)
                 nn.init.constant_(
@@ -93,14 +103,15 @@ class CoupledRationalQuadraticSpline(nf.flows.Flow):
                 )
             return net
 
+        # Create the coupling layer itself
         self.prqct = PiecewiseRationalQuadraticCoupling(
             mask=create_alternating_binary_mask(num_input_channels, even=reverse_mask),
             transform_net_create_fn=transform_net_create_fn,
             num_bins=num_bins,
             tails=tails,
             tail_bound=tail_bound,
-            # Setting True corresponds to equations (4), (5), (6) in the NSF paper:
             apply_unconditional_transform=True,
+            # This allows the non-transformed values to still be modified by a spline
         )
 
     def forward(self, z, context=None) -> tuple:
@@ -125,13 +136,42 @@ def rqs_flow(
     do_lu: bool = True,
     init_identity: bool = True,
     do_norm: bool = False,
-    flow_type: Literal["made", "coupling"] = "coupling",
+    flow_type: Literal["autoregressive", "coupling"] = "coupling",
 ) -> nf.NormalizingFlow | nf.ConditionalNormalizingFlow:
-    """Return a rational quadratic spline normalising flow."""
+    """Construct a rational quadratic spline normalising flow.
 
-    # Normflows wants the activation function as a class
-    if isinstance(mlp_act, str):
-        mlp_act = get_act(mlp_act).__class__
+    Parameters
+    ----------
+    xz_dim : int
+        The dimensionality of the input and output of the flow.
+    ctxt_dim : int, optional
+        The dimensionality of the context input to the flow. By default 0.
+    num_stacks : int, optional
+        The number of coupling layers to stack. By default 3.
+    mlp_width : int, optional
+        The width of the hidden layers in the coupling network. By default 32.
+    mlp_depth : int, optional
+        The depth of the hidden layers in the coupling network. By default 2.
+    mlp_act : Callable, optional
+        The activation function to use in the coupling network. By default nn.LeakyReLU.
+    tail_bound : float, optional
+        The bound on the tails of the spline. By default 4.0.
+    dropout : float, optional
+        The dropout probability in the coupling network. By default 0.0.
+    num_bins : int, optional
+        The number of bins in the spline. By default 8.
+    do_lu : bool, optional
+        Whether to use LU decomposition in the coupling layers. By default True.
+        WARNING: This is not supported in ONNX export.
+    init_identity : bool, optional
+        Whether to initialise the coupling layers as the identity. By default True.
+        Strongly recommended for stability.
+    do_norm : bool, optional
+        Whether to use activation normalisation in the flow. By default False.
+    flow_type : str
+        The type of flow to use. By default "coupling".
+    """
+    assert flow_type in {"autoregressive", "coupling"}
 
     # Set the kwargs for the flow as expected by normflows
     kwargs = {
@@ -146,30 +186,30 @@ def rqs_flow(
         "init_identity": init_identity,
     }
 
-    # Determine the type of layers to be used in the flow
-    if flow_type == "made":
+    # For MADE we need to use the predefined autoregressive flow which means that
+    # We need permutation layers between each
+    if flow_type == "autoregressive":
         fn = nf.flows.AutoregressiveRationalQuadraticSpline
         perm = nf.flows.LULinearPermute if do_lu else nf.flows.Permute
+        kwargs["activation"] = getattr(nn, mlp_act)  # Their net needs a class
+
+    # For coupling layers we use our overloaded class and instead of permutation
+    # The mask is alternated when building each layer
     elif flow_type == "coupling":
         fn = CoupledRationalQuadraticSpline
         perm = LULinear if do_lu else None
-    else:
-        raise ValueError("Unrecognised flow type" % flow_type)
 
+    # Build the flow
     flows = []
     for i in range(num_stacks):
-        # For coupling layers we need to alternate the mask and don't need permute
+        # For coupling layers we need to alternate the mask instead of permuting
         if flow_type == "coupling":
             kwargs["reverse_mask"] = i % 2 == 1
 
-        # Add the flow
+        # Add the flow, as well as the permutation layer and normalisation if needed
         flows += [fn(**kwargs)]
-
-        # Add the permutation layer if required
         if perm is not None:
             flows += [perm(xz_dim)]
-
-        # Add the normalisation layer
         if do_norm:
             flows += [nf.flows.ActNorm(xz_dim)]
 
@@ -216,5 +256,3 @@ def prepare_for_onnx(
         except AttributeError:
             pass
     print(f"Removed cache gradients from {n_changed} modules")
-
-    return
