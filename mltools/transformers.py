@@ -378,9 +378,6 @@ class Attention(nn.Module):
             The number of attention heads, by default 1.
         dropout : float, optional
             The dropout probability, by default 0.
-        do_self_attn : bool, optional
-            Whether to optimise for self attention by using a single weight matrix,
-            by default False.
         do_rotary : bool, optional
             Whether to use rotary positional encoding, by default False.
         do_packed : bool, optional
@@ -833,7 +830,7 @@ class ClassAttentionPooling(nn.Module):
         *,
         dim: int = 128,
         ctxt_dim: int = 0,
-        num_layers: int = 2,
+        num_layers: int = 1,
         layer_config: dict | None = None,
         do_input_linear: bool = False,
         do_output_linear: bool = False,

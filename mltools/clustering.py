@@ -1,6 +1,5 @@
 """Clustering algorithms for pytorch tensors."""
 
-import numpy as np
 import torch as T
 from tqdm import tqdm, trange
 
@@ -25,7 +24,7 @@ def kmeans(
     # Use the kmeans++ algorithm to initialise the cluster centers
     if use_plusplus:
         cluster_centers = T.zeros_like(x[:num_clusters])
-        cluster_centers[0] = T.clone(x[np.random.Generator().integers(dataset_size)])
+        cluster_centers[0] = T.clone(x[0])
         for i in trange(1, num_clusters, desc="Initialising centers"):
             dist = T.cdist(x, cluster_centers[:i])
             min_dist = dist.min(dim=-1).values

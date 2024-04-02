@@ -5,9 +5,8 @@ import itertools
 import torch as T
 from torch import nn
 
-from mltools.torch_utils import zero_module
-
 from .bayesian import BayesianLinear
+from .torch_utils import zero_module
 
 
 class MLPBlock(nn.Module):
@@ -120,6 +119,8 @@ class MLPBlock(nn.Module):
             string += f"({self.ctxt_dim})"
         for b in self.layers:
             string += "->" + str(b).split("(", 1)[0]
+            if isinstance(b, nn.Linear) and self.init_zeros and b in self.layers[-4:]:
+                string += "(zero)"
         string += "->" + str(self.outp_dim)
         if self.do_res:
             string += "(add)"

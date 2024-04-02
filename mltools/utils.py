@@ -10,6 +10,8 @@ from itertools import chain, islice
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 
 def standard_job_array(
     job_name: str,
@@ -26,15 +28,25 @@ def standard_job_array(
     gpu_type: str = "",
     use_dashes: bool = True,
     extra_slurm: str = "",
+    is_grid: bool = True,
 ) -> None:
     """Save a slurm submission file for running on the baobab cluster."""
-    # Calculate the total number of jobs to perform
-    n_jobs = 1
+    # First make sure that all the options are lists
     for key, vals in opt_dict.items():
         if not isinstance(vals, list):
             opt_dict[key] = [vals]
-        n_jobs *= len(vals)
-    print(f"Generating job array with {n_jobs} subjobs")
+
+    # Calculate the total number of jobs to perform
+    # If it is a grid search, then we need all combinations, which is the product
+    if is_grid:
+        n_jobs = np.prod([len(vals) for vals in opt_dict.values()])
+    # Otherwise we just take the number of options in the first key
+    # But we check that all the options are lists of the same length
+    else:
+        n_jobs = len(next(iter(opt_dict.values())))
+        for vals in opt_dict.values():
+            if len(vals) != n_jobs:
+                raise ValueError("All options must have the same number of values")
 
     # Creating the slurm submision file
     with open(f"{job_name}.sh", "w", newline="\n", encoding="utf-8") as f:
@@ -84,10 +96,16 @@ def standard_job_array(
         run_tot = 1
         dashdash = "--" if use_dashes else ""
         for i, (opt, vals) in enumerate(opt_dict.items()):
-            f.write(f"       {dashdash}{opt}=${{{simple_keys[i]}")
-            f.write(f"[`expr ${{SLURM_ARRAY_TASK_ID}} / {run_tot} % {len(vals)}`]")
-            f.write("} \\\n")
-            run_tot *= len(vals)
+            if is_grid:
+                f.write(f"       {dashdash}{opt}=${{{simple_keys[i]}")
+                f.write(f"[`expr ${{SLURM_ARRAY_TASK_ID}} / {run_tot} % {len(vals)}`]")
+                f.write("} \\\n")
+                run_tot *= len(vals)
+            else:
+                f.write(f"       {dashdash}{opt}=${{{simple_keys[i]}")
+                f.write("[${SLURM_ARRAY_TASK_ID}]")
+                f.write("} \\\n")
+
     print(f"--saved to {job_name}.sh")
 
 
