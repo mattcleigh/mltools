@@ -17,6 +17,9 @@ from omegaconf import DictConfig, OmegaConf
 
 log = logging.getLogger(__name__)
 
+# A collection of misc resolvers for OmegaConf
+OmegaConf.register_new_resolver("int_div", lambda x, y: int(x) // int(y))
+
 
 @rank_zero_only
 def reload_original_config(
