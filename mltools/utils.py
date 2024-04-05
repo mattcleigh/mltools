@@ -87,7 +87,7 @@ def standard_job_array(
         # The command line arguments
         f.write('export XDG_RUNTIME_DIR=""\n')
 
-        # Creating the base singularity execution script
+        # Creating the base apptainer execution script
         f.write("srun apptainer exec --nv -B /srv,/home \\\n")
         f.write(f"   {image_path} \\\n")
         f.write(f"   {command} \\\n")
