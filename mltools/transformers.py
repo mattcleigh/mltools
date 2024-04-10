@@ -730,6 +730,12 @@ class Transformer(nn.Module):
         """
         return self.encode(self.project(x), **kwargs)
 
+    def set_packed(self, do_packed: bool) -> None:
+        """Set the packed attention flag."""
+        self.do_packed = do_packed
+        for layer in self.layers:
+            layer.attn.fn.do_packed = do_packed
+
     def project(self, x: T.Tensor) -> T.Tensor:
         """Project the input to the transformer dimension and add absolute encoding."""
         if self.do_input_linear:

@@ -332,6 +332,13 @@ class IterativeNormLayer(nn.Module):
         self.m2 += (d * d2).mean(dim=(0, *self.dims), keepdim=True) * m
         self.vars = (self.m2 / self.n).to(self.vars.dtype)
 
+    def reset_parameters(self) -> None:
+        """Reset the parameters of the layer."""
+        self.means.zero_()
+        self.vars.fill_(1.0)
+        self.n.zero_()
+        self.frozen.fill_(False)
+
 
 class CosineEncodingLayer(nn.Module):
     """Module for applying cosine encoding with increasing frequencies."""
