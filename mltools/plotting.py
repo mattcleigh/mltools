@@ -514,7 +514,7 @@ def plot_multi_correlations(
         if hist_kwargs[i] is not None and "color" in hist_kwargs[i]:
             color = hist_kwargs[i]["color"]
         axes[row, column].plot([], [], label=data_labels[i], color=color)
-    fig.legend(**(legend_kwargs or {}))
+    fig.legend(**(legend_kwargs or {"loc": "upper center", "fontsize": 20}))
 
     # Save the file
     if path is not None:
@@ -788,7 +788,7 @@ def plot_multi_hists(
                 if err_kwargs[data_idx] is not None and bool(err_kwargs[data_idx]):
                     e_kwargs = deepcopy(err_kwargs[data_idx])
                 else:  # By default use the same colour as the line
-                    e_kwargs = {"color": line.get_color(), "alpha": 0.2, "fill": True}
+                    e_kwargs = {"color": line.get_ec(), "alpha": 0.2, "fill": True}
 
                 # Use stairs with baseline to plot the errors
                 axes[0, ax_idx].stairs(
