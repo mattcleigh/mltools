@@ -230,7 +230,7 @@ class MLP(nn.Module):
             MLPBlock(
                 inpt_dim=h_1,
                 outp_dim=h_2,
-                ctxt_dim=self.ctxt_dim * 0,
+                ctxt_dim=self.ctxt_dim * ctxt_in_hddn,
                 num_layers=num_layers_per_block,
                 activation=act_h,
                 norm=norm,
