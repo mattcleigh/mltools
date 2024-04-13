@@ -254,11 +254,11 @@ class IterativeNormLayer(nn.Module):
         grad_setting = T.is_grad_enabled()
         T.set_grad_enabled(self.track_grad_forward and grad_setting)
 
-        # Mask the inputs and update the stats
+        # Mask the inputs
         sel_inpt = self._mask(inpt, mask)
 
-        # Only update if in training mode
-        if self.training:
+        # Update the running stats if in training mode and not frozen
+        if self.training and not self.frozen:
             self.update(sel_inpt)
 
         # Apply the mapping
@@ -293,9 +293,9 @@ class IterativeNormLayer(nn.Module):
         # Check the current shapes of the means
         cur_mean_shape = self.means.shape
 
-        # Freeze the model if we already exceed the requested stats
-        T.fill_(self.frozen, self.n >= self.max_n)
-        if self.frozen:
+        # Freeze the model if we already exceed the requested stats and return
+        if self.n >= self.max_n:
+            self.frozen.fill_(True)
             return
 
         # For first iteration, just run the fit on the batch

@@ -903,6 +903,8 @@ class ClassAttentionPooling(nn.Module):
             self.final_norm = nn.LayerNorm(self.dim)
         if self.do_output_linear:
             self.linear_out = nn.Linear(self.dim, outp_dim)
+            nn.init.trunc_normal_(self.linear_out.weight, std=0.01)
+            nn.init.constant_(self.linear_out.bias, 0)
 
     def forward(
         self, x: T.Tensor, mask: T.BoolTensor | None = None, **kwargs

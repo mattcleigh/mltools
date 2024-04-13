@@ -10,12 +10,19 @@ def kmeans(
     num_clusters: int,
     tol_per_dimension=6e-5,
     max_iter=1000,
-    use_plusplus=True,
+    use_plusplus=False,
 ) -> T.Tensor:
     """Perform kmeans and return the cluster centers."""
     # Make sure that the input is a float
     x = x.float()
     dataset_size = x.shape[0]
+
+    # Check if we can use the plusplus algorithm
+    cant_use_multi = False
+    if dataset_size > 2**24:
+        cant_use_multi = True
+        use_plusplus = False
+        print("Warning: Disabling kmeans++ for large datasets.")
 
     # Check if the number of clusters is larger than the dataset
     if num_clusters > dataset_size:
@@ -26,14 +33,13 @@ def kmeans(
         cluster_centers = T.zeros_like(x[:num_clusters])
         cluster_centers[0] = T.clone(x[0])
         for i in trange(1, num_clusters, desc="Initialising centers"):
-            dist = T.cdist(x, cluster_centers[:i])
-            min_dist = dist.min(dim=-1).values
+            min_dist = T.cdist(x, cluster_centers[:i]).min(dim=-1).values
             probs = min_dist / min_dist.sum()
             cluster_centers[i] = T.clone(x[T.multinomial(probs, 1)])
 
-    # Initialise the cluster centers by randomly sampling from the input
+    # Just step through the dataset and pick some random points
     else:
-        indices = T.multinomial(T.ones(dataset_size), num_clusters, replacement=False)
+        indices = T.arange(dataset_size)[:: dataset_size // num_clusters][:num_clusters]
         cluster_centers = T.clone(x[indices])
 
     # Iterate until convergence
@@ -55,9 +61,12 @@ def kmeans(
         # If there are empty clusters, replace them with a random input
         empty_clusters = T.isnan(cluster_means).any(dim=-1)
         if empty_clusters.any():
-            new_idx = T.multinomial(
-                T.ones(dataset_size), empty_clusters.sum(), replacement=False
-            )
+            if cant_use_multi:
+                new_idx = T.randint(0, dataset_size, (empty_clusters.sum(),))
+            else:
+                new_idx = T.multinomial(
+                    T.ones(dataset_size), empty_clusters.sum(), replacement=False
+                )
             cluster_means[empty_clusters] = T.clone(x[new_idx])
 
         # Calculate the total shift per dimension of all cluster centers
