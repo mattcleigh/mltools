@@ -37,6 +37,24 @@ def linear_warmup(
     return LambdaLR(optimizer, lambda x: min(1, x / max(1, warmup_steps)))
 
 
+def linear_warmup_exp_decay(
+    optimizer: Optimizer,
+    model: LightningModule,  # noqa: ARG001
+    warmup_steps: int = 1000,
+    half_life: int = 1000,
+    min_factor: float = 1e-4,
+) -> LambdaLR:
+    """Return a scheduler with a linear warmup and a sqrt decay."""
+
+    def fn(x):
+        if x < warmup_steps:
+            return x / max(1, warmup_steps)
+        decay = -math.log(2) / half_life
+        return max(math.exp(decay * (x - warmup_steps)), min_factor)
+
+    return LambdaLR(optimizer, fn)
+
+
 def linear_warmup_cosine_decay(
     optimizer: Optimizer,
     model: LightningModule,
