@@ -4,6 +4,7 @@ import argparse
 import json
 import math
 import operator
+import re
 from collections.abc import Generator, Iterable
 from functools import reduce
 from itertools import chain, islice
@@ -44,7 +45,10 @@ def standard_job_array(
     # But we check that all the options are lists of the same length
     else:
         n_jobs = len(next(iter(opt_dict.values())))
-        for vals in opt_dict.values():
+        for k in opt_dict:
+            vals = opt_dict[k]
+            if len(vals) == 1:
+                continue  # No need to check single length
             if len(vals) != n_jobs:
                 raise ValueError("All options must have the same number of values")
 
@@ -76,8 +80,12 @@ def standard_job_array(
         f.write(f"\n#SBATCH -a 0-{n_jobs - 1}\n\n")
 
         # Creating the bash lists of the job arguments
-        simple_keys = [str(k).replace(".", "") for k in opt_dict]
+        pattern = r"[./\\+]"
+        simple_keys = [re.sub(pattern, "", k) for k in opt_dict]
+
         for i, vals in enumerate(opt_dict.values()):
+            if len(vals) == 1:  # No need for lists if one length
+                continue
             f.write(f"{simple_keys[i]}=(")
             for v in vals:
                 f.write(" " + str(v))
@@ -96,7 +104,9 @@ def standard_job_array(
         run_tot = 1
         dashdash = "--" if use_dashes else ""
         for i, (opt, vals) in enumerate(opt_dict.items()):
-            if is_grid:
+            if len(vals) == 1:
+                f.write(f"       {dashdash}{opt}={vals[0]} \\\n")
+            elif is_grid:
                 f.write(f"       {dashdash}{opt}=${{{simple_keys[i]}")
                 f.write(f"[`expr ${{SLURM_ARRAY_TASK_ID}} / {run_tot} % {len(vals)}`]")
                 f.write("} \\\n")
