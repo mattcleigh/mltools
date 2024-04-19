@@ -780,6 +780,8 @@ class Transformer(nn.Module):
         """Get a mask which can be used for the combined register+sequence tensor."""
         if self.num_registers == 0:
             return mask
+        if mask is None:
+            return None
         shape = (mask.shape[0], self.num_registers)
         reg_mask = T.ones(shape, dtype=T.bool, device=mask.device)
         return T.cat([reg_mask, mask], dim=-1)
