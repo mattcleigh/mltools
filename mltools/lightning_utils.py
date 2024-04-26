@@ -42,7 +42,7 @@ def linear_warmup_exp_decay(
     model: LightningModule,  # noqa: ARG001
     warmup_steps: int = 1000,
     half_life: int = 1000,
-    min_factor: float = 1e-4,
+    min_factor: float = 1e-3,
 ) -> LambdaLR:
     """Return a scheduler with a linear warmup and a sqrt decay."""
 
@@ -60,6 +60,7 @@ def linear_warmup_cosine_decay(
     model: LightningModule,
     warmup_steps: int = 100,
     total_steps: int = 1000,
+    min_factor: float = 1e-3,
     warmup_ratio: float | None = None,
 ) -> LambdaLR:
     """Return a scheduler with a linear warmup and a cosine decay."""
@@ -75,7 +76,8 @@ def linear_warmup_cosine_decay(
         if step < warmup_steps:
             return step / max(1, warmup_steps)
         progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)
-        return 0.5 * (1.0 + math.cos(math.pi * progress))
+        lr = 0.5 * (1.0 + math.cos(math.pi * progress))
+        return max(min_factor, lr)
 
     # The lambda scheduler is the easiest way to define a custom scheduler
     return LambdaLR(optimizer, fn)
