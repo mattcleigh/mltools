@@ -182,5 +182,7 @@ def instantiate_collection(cfg_coll: DictConfig) -> list[Any]:
         if isinstance(cb_conf, DictConfig) and "_target_" in cb_conf:
             log.info(f"Instantiating <{cb_conf._target_}>")  # noqa: SLF001
             objs.append(hydra.utils.instantiate(cb_conf))
+        else:
+            log.info(f"Invalid config: {cb_conf}. Skipping...")
 
     return objs
