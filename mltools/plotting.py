@@ -557,6 +557,7 @@ def plot_multi_hists(
     rat_label: str | None = None,
     fig_height: int = 5,
     do_legend: bool = True,
+    ignore_nans: bool = False,
     hist_kwargs: list | None = None,
     err_kwargs: list | None = None,
     legend_kwargs: list | None = None,
@@ -614,6 +615,9 @@ def plot_multi_hists(
         Width is determined by the number of axes.
     do_legend : bool, optional
         If True, add a legend to the plot, by default True.
+    ignore_nans : bool, optional
+        If True, ignore NaNs in the data, by default False.
+        If False and NaNs are present, it will raise an error.
     hist_kwargs : list | None, optional
         List of dictionaries with keyword arguments for the plotting function,
         Will be passed to plt.stairs, by default None.
@@ -704,9 +708,14 @@ def plot_multi_hists(
         if isinstance(ax_bins, partial):
             ax_bins = ax_bins()
 
+        # The data for this axis
+        data = data_list[0][:, ax_idx]
+        if ignore_nans and np.isnan(data).any():
+            data = data[~np.isnan(data)]
+
         # If the axis bins was specified to be 'auto' or another numpy string
         if isinstance(ax_bins, str):
-            unq = np.unique(data_list[0][:, ax_idx])
+            unq = np.unique(data)
             n_unique = len(unq)
 
             # If the number of datapoints is less than 10 then use even spacing
@@ -716,10 +725,10 @@ def plot_multi_hists(
                 ax_bins = np.insert(ax_bins, 0, unq.min() + unq.min() - ax_bins[0])
 
             elif ax_bins == "quant":
-                ax_bins = quantile_bins(data_list[0][:, ax_idx])
+                ax_bins = quantile_bins(data)
 
         # Numpy function to get the bin edges, catches all other cases (int, etc)
-        ax_bins = np.histogram_bin_edges(data_list[0][:, ax_idx], bins=ax_bins)
+        ax_bins = np.histogram_bin_edges(data, bins=ax_bins)
 
         # Replace the element in the array with the edges
         bins[ax_idx] = ax_bins
@@ -733,6 +742,10 @@ def plot_multi_hists(
         for data_idx in range(n_data):
             # Get the data to plot (make a copy to avoid changing the original)
             data = np.copy(data_list[data_idx][..., ax_idx]).squeeze()
+
+            # Check for NaNs in the data
+            if ignore_nans and np.isnan(data).any():
+                data = data[~np.isnan(data)]
 
             # Clip to get overflow and underflow
             if incl_overflow:
