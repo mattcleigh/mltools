@@ -5,6 +5,15 @@ import torch.nn.functional as F
 from torch import nn
 
 
+def bce_with_label_smoothing(
+    output: T.Tensor, target: T.Tensor, smoothing: float = 0.05, **kwargs
+) -> T.Tensor:
+    """Calculate binary cross entropy with label smoothing."""
+    if smoothing > 0:
+        target = target - (target - 0.5).sign() * T.rand_like(target) * smoothing
+    return F.binary_cross_entropy_with_logits(output, target.view_as(output), **kwargs)
+
+
 def contrastive_loss(x1: T.Tensor, x2: T.Tensor, temperature: float = 0.2) -> T.Tensor:
     """Calculate standard contrastive loss between two sets of embeddings.
 

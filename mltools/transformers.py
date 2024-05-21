@@ -11,21 +11,9 @@ from flash_attn import flash_attn_varlen_qkvpacked_func
 from torch import nn
 
 from .mlp import MLP
+from .torch_utils import attach_context
 
 log = logging.getLogger(__name__)
-
-
-def attach_context(x: T.Tensor, ctxt: T.Tensor | None = None) -> T.Tensor:
-    """Concat a tensor with context which has the same or lower dimensions.
-
-    New dimensions are added at index 1
-    """
-    if ctxt is None:
-        return x
-    if (dim_diff := x.dim() - ctxt.dim()) > 0:
-        ctxt = ctxt.view(ctxt.shape[0], *dim_diff * (1,), *ctxt.shape[1:])
-        ctxt = ctxt.expand(*x.shape[:-1], -1)
-    return T.cat((x, ctxt), dim=-1)
 
 
 def merge_masks(
@@ -456,10 +444,11 @@ class Attention(nn.Module):
             return self._packed_attention(x, culens, maxlen)
 
         # input projection -> B,S,D
+        B, _S, _D = x.shape
         q, k, v = single_projection(x, kv, self.attn_in_w, self.attn_in_b)
 
         # transform tensors -> B,NH,S,HD
-        shape = (q.size(0), -1, self.num_heads, self.attn_dim)
+        shape = (B, -1, self.num_heads, self.attn_dim)
         q, k, v = (t.view(shape).transpose(1, 2).contiguous() for t in (q, k, v))
 
         # Apply rotary positional encoding on the q and k tensors
@@ -473,7 +462,7 @@ class Attention(nn.Module):
         a_out = F.scaled_dot_product_attention(q, k, v, a_mask, dropout)
 
         # recombine heads -> B,S,D
-        a_out = a_out.transpose(1, 2).contiguous().view(q.size(0), -1, self.dim)
+        a_out = a_out.transpose(1, 2).contiguous().view(B, -1, self.dim)
 
         # Mix with final linear layer -> B,S,D
         return self.attn_out(a_out)
@@ -917,7 +906,7 @@ class ClassAttentionPooling(nn.Module):
             x = self.linear_embed(x)
 
         # Expand the global token so it can be broadcasted for the whole batch
-        g = self.global_token.expand(x.shape[0], -1, self.dim)
+        g = self.global_token.expand(x.shape[0], 1, self.dim)
 
         # Apply the iterative pooling
         for layer in self.layers:
@@ -936,7 +925,7 @@ class ClassAttentionPooling(nn.Module):
 class TransformerVectorEncoder(nn.Module):
     """Combination of Encoder+ClassAttention to produce a vector given a set.
 
-    By convention we the intermediate resizing layer is given to the class attention
+    By convention the intermediate resizing layer is given to the class attention
     """
 
     def __init__(

@@ -47,13 +47,44 @@ def sum_except_batch(x: T.Tensor, num_batch_dims: int = 1) -> T.Tensor:
     return T.sum(x, dim=list(range(num_batch_dims, x.ndim)))
 
 
-def append_dims(x: T.Tensor, target_dims: int, at_front: bool = False) -> T.Tensor:
+def append_dims(x: T.Tensor, target_dims: int, dim=-1) -> T.Tensor:
     """Append dimensions of size 1 to tensor until it has target_dims."""
     if (dim_diff := target_dims - x.dim()) < 0:
         raise ValueError(f"x has more dims ({x.ndim}) than target ({target_dims})")
-    if at_front:
-        return x[(None,) * dim_diff + (...,)]
-    return x[(...,) + (None,) * dim_diff]
+
+    # If the difference is 0, then return the tensor
+    if dim_diff == 0:
+        return x
+
+    # Fast exit for appending to the end or beginning
+    if dim == -1:
+        return x[(...,) + (None,) * dim_diff]
+    if dim == 0:
+        return x[(None,) * dim_diff + (...)]
+
+    # Check if the dimension is in range
+    allow = [-x.dim() - 1, x.dim()]
+    if not allow[0] <= dim <= allow[1]:
+        raise IndexError(
+            f"Dimension out of range (expected to be in {allow} but got {dim})"
+        )
+
+    # Following only works for a positive index
+    if dim < 0:
+        dim += x.dim() + 1
+    return x.view(*x.shape[:dim], *dim_diff * (1,), *x.shape[dim:])
+
+
+def attach_context(x: T.Tensor, ctxt: T.Tensor | None = None) -> T.Tensor:
+    """Concat a tensor with context which has the same or lower dimensions.
+
+    New dimensions are added at index 1
+    """
+    if ctxt is None:
+        return x
+    ctxt = append_dims(ctxt, x.dim(), dim=1)
+    ctxt = ctxt.expand(*x.shape[:-1], -1)
+    return T.cat((x, ctxt), dim=-1)
 
 
 def dtype_lookup(dtype: Any) -> T.dtype:
