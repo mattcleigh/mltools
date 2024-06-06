@@ -1,6 +1,7 @@
 """A collection of misculaneous functions usefull for the lighting/hydra template."""
 
 import logging
+import operator
 import os
 from collections.abc import Sequence
 from pathlib import Path
@@ -19,6 +20,12 @@ log = logging.getLogger(__name__)
 
 # A collection of misc resolvers for OmegaConf
 OmegaConf.register_new_resolver("int_div", lambda x, y: int(x) // int(y))
+OmegaConf.register_new_resolver("min", min)
+OmegaConf.register_new_resolver("max", max)
+OmegaConf.register_new_resolver("if", lambda c, x, y: x if c else y)
+OmegaConf.register_new_resolver("greater", operator.gt)
+OmegaConf.register_new_resolver("less", operator.lt)
+OmegaConf.register_new_resolver("in", lambda x, y: x in y)
 
 
 @rank_zero_only

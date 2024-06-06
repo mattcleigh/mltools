@@ -32,9 +32,19 @@ def linear_warmup(
     optimizer: Optimizer,
     model: LightningModule,  # noqa: ARG001
     warmup_steps: int = 1000,
+    init_factor: float = 1e-2,
+    min_factor: float | None = None,
 ) -> LambdaLR:
     """Return a scheduler with a linear warmup."""
-    return LambdaLR(optimizer, lambda x: min(1, x / max(1, warmup_steps)))
+    # Min factor is deprecated and will be removed in the future
+    if min_factor is not None:
+        logger.warning("The min_factor argument is deprecated and will be removed")
+        init_factor = min_factor
+
+    def fn(x: int) -> float:
+        return min(1, init_factor + x * (1 - init_factor) / max(1, warmup_steps))
+
+    return LambdaLR(optimizer, fn)
 
 
 def linear_warmup_exp_decay(
@@ -42,15 +52,21 @@ def linear_warmup_exp_decay(
     model: LightningModule,  # noqa: ARG001
     warmup_steps: int = 1000,
     half_life: int = 1000,
-    min_factor: float = 1e-3,
+    final_factor: float = 1e-3,
+    init_factor: float = 1e-1,
+    min_factor: float | None = None,
 ) -> LambdaLR:
     """Return a scheduler with a linear warmup and a sqrt decay."""
+    # Min factor is deprecated and will be removed in the future
+    if min_factor is not None:
+        logger.warning("The min_factor argument is deprecated and will be removed")
+        final_factor = min_factor
 
-    def fn(x):
+    def fn(x: int) -> float:
         if x < warmup_steps:
-            return x / max(1, warmup_steps)
+            return init_factor + x * (1 - init_factor) / max(1, warmup_steps)
         decay = -math.log(2) / half_life
-        return max(math.exp(decay * (x - warmup_steps)), min_factor)
+        return max(math.exp(decay * (x - warmup_steps)), final_factor)
 
     return LambdaLR(optimizer, fn)
 
@@ -60,7 +76,8 @@ def linear_warmup_cosine_decay(
     model: LightningModule,
     warmup_steps: int = 100,
     total_steps: int = 1000,
-    min_factor: float = 1e-3,
+    final_factor: float = 1e-3,
+    init_factor: float = 1e-1,
     warmup_ratio: float | None = None,
 ) -> LambdaLR:
     """Return a scheduler with a linear warmup and a cosine decay."""
@@ -72,12 +89,12 @@ def linear_warmup_cosine_decay(
         warmup_steps = int(warmup_ratio * total_steps)
 
     # Define the actual scheduler function
-    def fn(step: int) -> float:
-        if step < warmup_steps:
-            return step / max(1, warmup_steps)
-        progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)
+    def fn(x: int) -> float:
+        if x < warmup_steps:
+            return init_factor + x * (1 - init_factor) / max(1, warmup_steps)
+        progress = (x - warmup_steps) / max(1, total_steps - warmup_steps)
         lr = 0.5 * (1.0 + math.cos(math.pi * progress))
-        return max(min_factor, lr)
+        return max(final_factor, lr)
 
     # The lambda scheduler is the easiest way to define a custom scheduler
     return LambdaLR(optimizer, fn)
