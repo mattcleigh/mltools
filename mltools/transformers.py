@@ -378,7 +378,7 @@ class Attention(nn.Module):
         # Attributes
         self.dim = dim
         self.num_heads = num_heads
-        self.ctxt_dim = ctxt_dim
+        self.ctxt_dim = ctxt_dim * 0  # TODO: Fix this
         self.attn_dim = dim // num_heads
         self.dropout = dropout
         self.do_rotary = do_rotary
@@ -404,7 +404,11 @@ class Attention(nn.Module):
         self.attn_out.reset_parameters()
 
     def _packed_attention(
-        self, x: T.Tensor, culens: T.Tensor | None, maxlen: int | None
+        self,
+        x: T.Tensor,
+        culens: T.Tensor | None,
+        maxlen: int | None,
+        causal: bool = False,
     ) -> T.Tensor:
         """Perform flash attention with the packed sequences."""
         # Perform the combined input projection
@@ -413,7 +417,9 @@ class Attention(nn.Module):
 
         # Run the flash attention backend
         dropout = self.dropout if self.training else 0.0
-        a_out = flash_attn_varlen_qkvpacked_func(qkv, culens, maxlen, dropout)
+        a_out = flash_attn_varlen_qkvpacked_func(
+            qkv, culens, maxlen, dropout, causal=causal
+        )
         a_out = a_out.contiguous().view(-1, self.dim)
 
         # Mix with final linear layer
@@ -430,6 +436,7 @@ class Attention(nn.Module):
         attn_bias: T.Tensor | None = None,
         culens: T.Tensor | None = None,
         maxlen: int | None = None,
+        causal: bool = False,
     ) -> T.Tensor:
         """Pass through the attention block."""
         # Mix in the context with the main sequence
@@ -441,7 +448,7 @@ class Attention(nn.Module):
             assert kv is None, "Packed attn only supports self attention!"
             assert attn_mask is None, "Packed attn does not support attention masks!"
             assert attn_bias is None, "Packed attn does not support attention bias!"
-            return self._packed_attention(x, culens, maxlen)
+            return self._packed_attention(x, culens, maxlen, causal)
 
         # input projection -> B,S,D
         B, _S, _D = x.shape
@@ -459,7 +466,9 @@ class Attention(nn.Module):
         kv_mask = mask if kv is None else kv_mask  # who is sending
         a_mask = merge_masks(kv_mask, attn_mask, attn_bias, q)
         dropout = self.dropout if self.training else 0.0
-        a_out = F.scaled_dot_product_attention(q, k, v, a_mask, dropout)
+        a_out = F.scaled_dot_product_attention(
+            q, k, v, a_mask, dropout, is_causal=causal
+        )
 
         # recombine heads -> B,S,D
         a_out = a_out.transpose(1, 2).contiguous().view(B, -1, self.dim)
@@ -705,9 +714,11 @@ class Transformer(nn.Module):
         if self.do_output_linear:
             self.linear_out = nn.Linear(dim, outp_dim)
         if self.num_registers:
-            self.registers = nn.Parameter(T.randn((1, self.num_registers, dim)))
+            self.registers = nn.Parameter(T.randn((1, self.num_registers, dim)) * 1e-3)
         if self.do_absolute_enc:
-            self.abs_enc = nn.Parameter(T.randn((1, max_seq_len, dim)) * 1e-3)
+            self.abs_enc = nn.Parameter(
+                T.randn((1, max_seq_len + num_registers, dim)) * 1e-3
+            )
 
     def forward(self, x: T.Tensor, **kwargs) -> T.Tensor:
         """Project and encode.
@@ -752,7 +763,14 @@ class Transformer(nn.Module):
             kwargs["culens"] = culens  # Add to the kwargs for the forward pass
             kwargs["maxlen"] = maxlen
         for layer in self.layers:
-            x = layer(x, mask=mask, ctxt=ctxt, **kwargs)
+            x = layer(
+                x,
+                mask=mask,
+                ctxt=ctxt,
+                attn_mask=attn_mask,
+                attn_bias=attn_bias,
+                **kwargs,
+            )
         if self.do_final_norm:
             x = self.final_norm(x)
         if self.do_output_linear:
