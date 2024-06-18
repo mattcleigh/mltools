@@ -144,7 +144,10 @@ def test_transformer_encoder() -> None:
 def test_transformer_decoder() -> None:
     i = get_transformer_inputs()
     x = i["x"]
+    _, S, _ = x.shape
     ctxt = i["ctxt"]
+    i["attn_mask"] = i["attn_mask"][:, :S, :S]
+    i["attn_bias"] = i["attn_bias"][:, :S, :S]
     transformer = Transformer(
         dim=x.shape[-1],
         ctxt_dim=ctxt.shape[-1],

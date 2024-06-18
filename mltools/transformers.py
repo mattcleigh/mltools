@@ -145,8 +145,7 @@ def pack(
 
     # Get the culens and maxlen variables needed by the flash attention func
     seqlens = mask.sum(dim=-1)
-    zero = T.zeros(1, dtype=seqlens.dtype, device=seqlens.device)
-    culens = T.cat([zero, T.cumsum(seqlens, dim=-1)]).to(T.int32)
+    culens = F.pad(T.cumsum(seqlens, dim=-1), (1, 0), value=0).to(T.int32)
     maxlen = seqlens.max().item()
 
     # Context info gets tricky because it may need to be repeated
@@ -199,34 +198,29 @@ def add_registers(
     mask: T.BoolTensor,
     attn_mask: T.BoolTensor | None = None,
     attn_bias: T.Tensor | None = None,
+    add_to_send: bool = False,
 ) -> tuple:
     """Add registers to the front of the input and accomidate the mask."""
     # expand the registers so they can be broadcasted for the whole batch
     reg = reg.expand(x.size(0), -1, x.shape[-1])
+    nreg = reg.shape[1]
 
     # add the registers to the FRONT of the input
     x = T.cat([reg, x], dim=-2)  # Sequence dimension
 
     # Add the mask for the registers with trues at the front
     if mask is not None:
-        reg_mask = T.ones(reg.shape[:-1], dtype=T.bool, device=mask.device)
-        mask = T.cat([reg_mask, mask], dim=-1)
+        mask = F.pad(mask, (nreg, 0), value=True)
 
     # Add the attention mask for the registers
     # The attention mask is b x recv x send
     # We are adding to the recv dimension
     if attn_mask is not None:
-        shape = list(attn_mask.shape)
-        shape[1] = reg.shape[1]
-        reg_mask = T.ones(shape, dtype=T.bool, device=attn_mask.device)
-        attn_mask = T.cat([reg_mask, attn_mask], dim=1)
+        attn_mask = F.pad(attn_mask, (nreg * add_to_send, 0, nreg, 0), value=True)
 
     # Add an attention bias of zero for the registers
     if attn_bias is not None:
-        shape = list(attn_bias.shape)
-        shape[1] = reg.shape[1]
-        reg_bias = T.zeros(shape, dtype=attn_bias.dtype, device=attn_bias.device)
-        attn_bias = T.cat([reg_bias, attn_bias], dim=1)
+        attn_bias = F.pad(attn_bias, (0, 0, nreg * add_to_send, 0, nreg, 0), value=0)
 
     return x, mask, attn_mask, attn_bias
 
@@ -751,12 +745,18 @@ class Transformer(nn.Module):
         ctxt: T.Tensor | None = None,
         attn_mask: T.BoolTensor | None = None,
         attn_bias: T.Tensor | None = None,
+        kv: T.Tensor | None = None,
         **kwargs,
     ) -> T.Tensor:
         """Pass through all layers of the transformer."""
         if self.num_registers:
             x, mask, attn_mask, attn_bias = add_registers(
-                x, self.registers, mask, attn_mask, attn_bias
+                x,
+                self.registers,
+                mask,
+                attn_mask,
+                attn_bias,
+                add_to_send=(kv is None) or self.use_decoder,
             )
         if self.do_packed:
             x, ctxt, culens, maxlen = pack(x, mask, ctxt)
@@ -769,6 +769,7 @@ class Transformer(nn.Module):
                 ctxt=ctxt,
                 attn_mask=attn_mask,
                 attn_bias=attn_bias,
+                kv=kv,
                 **kwargs,
             )
         if self.do_final_norm:
