@@ -27,6 +27,9 @@ OmegaConf.register_new_resolver("greater", operator.gt)
 OmegaConf.register_new_resolver("less", operator.lt)
 OmegaConf.register_new_resolver("in", lambda x, y: x in y)
 
+# Increase the wait time for wandb
+os.environ["WANDB__SERVICE_WAIT"] = "300"
+
 
 @rank_zero_only
 def reload_original_config(

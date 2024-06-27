@@ -16,11 +16,40 @@ from .torch_utils import attach_context
 log = logging.getLogger(__name__)
 
 
+def pos_embed(embed_dim: int, max_seq_len: int, num_registers: int = 0):
+    """Create the positional embedding for the transformer."""
+    assert embed_dim % 2 == 0
+
+    # Create the increasing frequencies for the sin and cos functions
+    omega = T.arange(embed_dim // 2, dtype=float)
+    omega /= embed_dim / 2.0
+    omega = 1.0 / 10000**omega
+
+    # Get the positions from the max sequence length
+    pos = T.arange(max_seq_len, dtype=float).reshape(-1)
+
+    # Create the matrix using the outer product of the positions and frequencies
+    out = omega.unsqueeze(0) * pos.unsqueeze(-1)  # (S, D/2)
+
+    # Embed using sin and cos functions then combine
+    emb_sin = T.sin(out)  # (S, D/2)
+    emb_cos = T.cos(out)  # (S, D/2)
+    pos_emb = T.cat([emb_sin, emb_cos], axis=1)  # (S, D)
+
+    # Add positional encoding for the registers
+    if num_registers:
+        reg_emb = T.randn((num_registers, embed_dim)) / 1000
+        pos_emb = T.cat([reg_emb, pos_emb], axis=0)
+
+    return pos_emb.unsqueeze(0).float()  # For batch dimension
+
+
 def merge_masks(
     kv_mask: T.BoolTensor | None,
     attn_mask: T.BoolTensor | None,
     attn_bias: T.Tensor | None,
     query: T.Tensor,
+    causal: bool = False,
 ) -> None | T.BoolTensor:
     """Create a full attention mask which using the padding information and bias."""
     # Create the placeholder for the full mask, None is full attention
@@ -33,6 +62,10 @@ def merge_masks(
     # If attention mask exists, combine it with the existing
     if attn_mask is not None:
         merged_mask = attn_mask if merged_mask is None else attn_mask & merged_mask
+
+    # If using a causal mask, then set the upper triangle to the pad value
+    if causal and merged_mask is not None:
+        merged_mask = merged_mask.tril()
 
     # Unsqueeze the mask to give it a dimension for num_head broadcasting
     if merged_mask is not None:
@@ -285,7 +318,7 @@ class PreNormScaledResidual(nn.Module):
     """Wraps a module with pre-norm and layerscale with a residual connection."""
 
     def __init__(
-        self, fn: nn.Module, ls_init: float | None = 1e-3, dim: int = 0
+        self, fn: nn.Module, layerscale_init: float | None = 1e-3, dim: int = 0
     ) -> None:
         """Parameters
         ----------
@@ -294,7 +327,7 @@ class PreNormScaledResidual(nn.Module):
         dim : int
             The dimension of the input and output.
             If zero we will try get it from the fn module.
-        ls_init : float | None, optional
+        layerscale_init : float | None, optional
             The initial value for the layerscale, by default 1e-5.
             If None, then no layerscale is applied.
         """
@@ -302,7 +335,11 @@ class PreNormScaledResidual(nn.Module):
         dim = dim or fn.dim
         self.fn = fn
         self.norm = nn.LayerNorm(dim)
-        self.ls = LayerScale(dim, ls_init) if ls_init is not None else nn.Identity()
+        self.ls = (
+            LayerScale(dim, layerscale_init)
+            if layerscale_init is not None
+            else nn.Identity()
+        )
 
     def forward(self, x: T.Tensor, *args, **kwargs) -> T.Tensor:
         return self.ls(self.fn(self.norm(x), *args, **kwargs)) + x
@@ -322,11 +359,10 @@ class SwiGLUNet(nn.Module):
         self.drop = nn.Dropout(dropout)
 
     def forward(self, x: T.Tensor, ctxt: T.Tensor | None = None) -> T.Tensor:
-        """Forward pass with contigous steps which allows nested tensors."""
         if self.ctxt_dim:
             x = attach_context(x, ctxt)
         x1, x2 = self.lin1(x).chunk(2, dim=-1)
-        return self.lin2(self.drop(F.silu(x1.contiguous()) * x2.contiguous()))
+        return self.lin2(self.drop(F.silu(x1) * x2))
 
 
 class Attention(nn.Module):
@@ -458,8 +494,9 @@ class Attention(nn.Module):
 
         # run attention -> B,NH,S,HD
         kv_mask = mask if kv is None else kv_mask  # who is sending
-        a_mask = merge_masks(kv_mask, attn_mask, attn_bias, q)
+        a_mask = merge_masks(kv_mask, attn_mask, attn_bias, q, causal)
         dropout = self.dropout if self.training else 0.0
+        causal = causal and a_mask is None  # More complex masks are collected in merge
         a_out = F.scaled_dot_product_attention(
             q, k, v, a_mask, dropout, is_causal=causal
         )
@@ -710,9 +747,7 @@ class Transformer(nn.Module):
         if self.num_registers:
             self.registers = nn.Parameter(T.randn((1, self.num_registers, dim)) * 1e-3)
         if self.do_absolute_enc:
-            self.abs_enc = nn.Parameter(
-                T.randn((1, max_seq_len + num_registers, dim)) * 1e-3
-            )
+            self.abs_enc = nn.Parameter(pos_embed(dim, max_seq_len, num_registers))
 
     def forward(self, x: T.Tensor, **kwargs) -> T.Tensor:
         """Project and encode.
@@ -790,9 +825,7 @@ class Transformer(nn.Module):
             return mask
         if mask is None:
             return None
-        shape = (mask.shape[0], self.num_registers)
-        reg_mask = T.ones(shape, dtype=T.bool, device=mask.device)
-        return T.cat([reg_mask, mask], dim=-1)
+        return F.pad(mask, (self.num_registers, 0), value=True)
 
 
 class CrossAttentionEncoder(Transformer):
