@@ -998,6 +998,7 @@ class TransformerVectorEncoder(nn.Module):
             inpt_dim=inpt_dim,
             ctxt_dim=ctxt_dim,
             do_input_linear=True,
+            do_output_linear=False,
             **encoder_config,
         )
         self.pool = ClassAttentionPooling(
