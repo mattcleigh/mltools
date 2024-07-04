@@ -7,9 +7,9 @@ from functools import partial
 
 import torch as T
 import torch.nn.functional as F
-from flash_attn import flash_attn_varlen_qkvpacked_func
 from torch import nn
 
+from .flash import flash_cross_attention, flash_self_attention
 from .mlp import MLP
 from .torch_utils import attach_context
 
@@ -80,81 +80,6 @@ def merge_masks(
             merged_mask = attn_bias.permute(0, 3, 1, 2)
 
     return merged_mask
-
-
-def my_scaled_dot_product_attention(
-    query: T.Tensor,
-    key: T.Tensor,
-    value: T.Tensor,
-    attn_mask: T.Tensor | None = None,
-    dropout_p: float = 0.0,
-    is_causal: bool = False,
-    scale: float | None = None,
-    attn_act: Callable | None = None,
-    pad_val: float = -float("inf"),
-) -> T.Tensor:
-    """Compute dot product attention using the given query, key, and value tensors.
-
-    Pure PyTorch implementation of the scaled dot product attention operation.
-    Note that ONNX supports Pytorch's native function since opset 14.
-
-    Parameters
-    ----------
-    query : T.Tensor
-        The query tensor.
-    key : T.Tensor
-        The key tensor.
-    value : T.Tensor
-        The value tensor.
-    attn_mask : T.Tensor | None, optional
-        The attention mask tensor, by default None.
-    dropout_p : float, optional
-        The dropout probability, by default 0.0.
-    is_causal : bool, optional
-        Whether to use causal attention, by default False.
-    scale: float | None, optional
-        The scale factor to divide the attention weights by, by default None.
-    attn_act : callable, optional
-        The attention activation function, by default softmax.
-    pad_val : float, optional
-        The padding value for the attention mask, by default -float("inf").
-
-    Returns
-    -------
-    T.Tensor
-        The result of the scaled dot product attention operation.
-    """
-    # Default to the softmax activation function
-    if attn_act is None:
-        attn_act = partial(F.softmax, dim=-1)
-
-    # Get the shapes and set the scale
-    L = query.shape[-2]
-    S = key.shape[-2]
-    scale = 1 / math.sqrt(query.size(-1)) if scale is None else scale
-
-    # Build the attention bias as a float
-    attn_bias = T.zeros(L, S, dtype=query.dtype, device=query.device)
-
-    # If using a causal mask, then set the upper triangle to the pad value
-    if is_causal:
-        assert attn_mask is None, "Causal attention does not support attention masks!"
-        attn_mask = T.ones(L, S, dtype=T.bool).tril(diagonal=0)
-        attn_bias.masked_fill_(~attn_mask, pad_val)
-
-    # If proved own attention mask, then add it to the bias
-    elif attn_mask is not None:
-        if attn_mask.dtype == T.bool:
-            attn_bias.masked_fill_(~attn_mask, pad_val)
-        else:
-            attn_bias += attn_mask
-
-    # Apply the attention operation using the mask as a bias
-    attn_weight = query @ key.transpose(-2, -1) * scale
-    attn_weight = attn_act(attn_weight + attn_bias)
-    attn_weight = T.dropout(attn_weight, dropout_p, train=True)
-
-    return attn_weight @ value
 
 
 def rotate_half(x: T.Tensor) -> T.Tensor:
@@ -256,6 +181,81 @@ def add_registers(
         attn_bias = F.pad(attn_bias, (0, 0, nreg * add_to_send, 0, nreg, 0), value=0)
 
     return x, mask, attn_mask, attn_bias
+
+
+def my_scaled_dot_product_attention(
+    query: T.Tensor,
+    key: T.Tensor,
+    value: T.Tensor,
+    attn_mask: T.Tensor | None = None,
+    dropout_p: float = 0.0,
+    is_causal: bool = False,
+    scale: float | None = None,
+    attn_act: Callable | None = None,
+    pad_val: float = -float("inf"),
+) -> T.Tensor:
+    """Compute dot product attention using the given query, key, and value tensors.
+
+    Pure PyTorch implementation of the scaled dot product attention operation.
+    Note that ONNX supports Pytorch's native function since opset 14.
+
+    Parameters
+    ----------
+    query : T.Tensor
+        The query tensor.
+    key : T.Tensor
+        The key tensor.
+    value : T.Tensor
+        The value tensor.
+    attn_mask : T.Tensor | None, optional
+        The attention mask tensor, by default None.
+    dropout_p : float, optional
+        The dropout probability, by default 0.0.
+    is_causal : bool, optional
+        Whether to use causal attention, by default False.
+    scale: float | None, optional
+        The scale factor to divide the attention weights by, by default None.
+    attn_act : callable, optional
+        The attention activation function, by default softmax.
+    pad_val : float, optional
+        The padding value for the attention mask, by default -float("inf").
+
+    Returns
+    -------
+    T.Tensor
+        The result of the scaled dot product attention operation.
+    """
+    # Default to the softmax activation function
+    if attn_act is None:
+        attn_act = partial(F.softmax, dim=-1)
+
+    # Get the shapes and set the scale
+    L = query.shape[-2]
+    S = key.shape[-2]
+    scale = 1 / math.sqrt(query.size(-1)) if scale is None else scale
+
+    # Build the attention bias as a float
+    attn_bias = T.zeros(L, S, dtype=query.dtype, device=query.device)
+
+    # If using a causal mask, then set the upper triangle to the pad value
+    if is_causal:
+        assert attn_mask is None, "Causal attention does not support attention masks!"
+        attn_mask = T.ones(L, S, dtype=T.bool).tril(diagonal=0)
+        attn_bias.masked_fill_(~attn_mask, pad_val)
+
+    # If proved own attention mask, then add it to the bias
+    elif attn_mask is not None:
+        if attn_mask.dtype == T.bool:
+            attn_bias.masked_fill_(~attn_mask, pad_val)
+        else:
+            attn_bias += attn_mask
+
+    # Apply the attention operation using the mask as a bias
+    attn_weight = query @ key.transpose(-2, -1) * scale
+    attn_weight = attn_act(attn_weight + attn_bias)
+    attn_weight = T.dropout(attn_weight, dropout_p, train=True)
+
+    return attn_weight @ value
 
 
 class RotaryEmbedding(nn.Module):
@@ -370,9 +370,6 @@ class Attention(nn.Module):
 
     Context is embedded into the sequence pre MHA as in DiffT:
      - https://arxiv.org/abs/2312.02139
-
-    If do_packed is True, then the attention is performed using the flash attention
-    backend which requires no padding
     """
 
     def __init__(
@@ -382,7 +379,6 @@ class Attention(nn.Module):
         num_heads: int = 1,
         dropout: float = 0,
         do_rotary: bool = False,
-        do_packed: bool = False,
     ) -> None:
         """Initialise the attention block.
 
@@ -398,12 +394,9 @@ class Attention(nn.Module):
             The dropout probability, by default 0.
         do_rotary : bool, optional
             Whether to use rotary positional encoding, by default False.
-        do_packed : bool, optional
-            Whether to use the packed varlen attention, by default False.
         """
         super().__init__()
         assert dim % num_heads == 0, "Dim must be divisible by the number of heads!"
-        assert not (do_packed and do_rotary), "Packed attn does not support rotary!"
 
         # Attributes
         self.dim = dim
@@ -412,7 +405,6 @@ class Attention(nn.Module):
         self.attn_dim = dim // num_heads
         self.dropout = dropout
         self.do_rotary = do_rotary
-        self.do_packed = do_packed
 
         # Better parallelism for self-attention when using parameters directly
         self.attn_in_w = nn.Parameter(T.empty(3 * dim, dim))  # weights
@@ -433,28 +425,6 @@ class Attention(nn.Module):
         nn.init.constant_(self.attn_in_b, 0.0)
         self.attn_out.reset_parameters()
 
-    def _packed_attention(
-        self,
-        x: T.Tensor,
-        culens: T.Tensor | None,
-        maxlen: int | None,
-        causal: bool = False,
-    ) -> T.Tensor:
-        """Perform flash attention with the packed sequences."""
-        # Perform the combined input projection
-        qkv = F.linear(x, self.attn_in_w, self.attn_in_b)
-        qkv = qkv.view(-1, 3, self.num_heads, self.attn_dim)
-
-        # Run the flash attention backend
-        dropout = self.dropout if self.training else 0.0
-        a_out = flash_attn_varlen_qkvpacked_func(
-            qkv, culens, maxlen, dropout, causal=causal
-        )
-        a_out = a_out.contiguous().view(-1, self.dim)
-
-        # Mix with final linear layer
-        return self.attn_out(a_out)
-
     def forward(
         self,
         x: T.Tensor,
@@ -467,44 +437,71 @@ class Attention(nn.Module):
         culens: T.Tensor | None = None,
         maxlen: int | None = None,
         causal: bool = False,
+        kv_culens: T.Tensor | None = None,
+        kv_maxlen: int | None = None,
     ) -> T.Tensor:
         """Pass through the attention block."""
+        drop = self.dropout if self.training else 0.0
+
         # Mix in the context with the main sequence
         if self.ctxt_dim:
             x = self.ctxt_mixer(attach_context(x, ctxt))
 
-        # Perform the flash attention with the packed sequences
-        if self.do_packed:
-            assert kv is None, "Packed attn only supports self attention!"
+        # If providing the input with culens and maxlen, we assume packed attention
+        if culens is not None and maxlen is not None:
             assert attn_mask is None, "Packed attn does not support attention masks!"
             assert attn_bias is None, "Packed attn does not support attention bias!"
-            return self._packed_attention(x, culens, maxlen, causal)
+            assert not self.do_rotary, "Packed attn does not support rotary emb!"
 
-        # input projection -> B,S,D
-        B, _S, _D = x.shape
-        q, k, v = single_projection(x, kv, self.attn_in_w, self.attn_in_b)
+            if kv is None:
+                a_out = flash_self_attention(
+                    x,
+                    culens,
+                    maxlen,
+                    drop,
+                    causal,
+                    self.attn_in_w,
+                    self.attn_in_b,
+                    self.num_heads,
+                )
 
-        # transform tensors -> B,NH,S,HD
-        shape = (B, -1, self.num_heads, self.attn_dim)
-        q, k, v = (t.view(shape).transpose(1, 2).contiguous() for t in (q, k, v))
+            else:
+                a_out = flash_cross_attention(
+                    x,
+                    culens,
+                    maxlen,
+                    kv,
+                    kv_culens,
+                    kv_maxlen,
+                    drop,
+                    causal,
+                    self.attn_in_w,
+                    self.attn_in_b,
+                    self.num_heads,
+                )
 
-        # Apply rotary positional encoding on the q and k tensors
-        if self.do_rotary:
-            q, k = self.rotary(q, k)
+        # Standard attention with masks and biases
+        else:
+            B, _S, _D = x.shape
+            q, k, v = single_projection(x, kv, self.attn_in_w, self.attn_in_b)
 
-        # run attention -> B,NH,S,HD
-        kv_mask = mask if kv is None else kv_mask  # who is sending
-        a_mask = merge_masks(kv_mask, attn_mask, attn_bias, q, causal)
-        dropout = self.dropout if self.training else 0.0
-        causal = causal and a_mask is None  # More complex masks are collected in merge
-        a_out = F.scaled_dot_product_attention(
-            q, k, v, a_mask, dropout, is_causal=causal
-        )
+            # transform tensors -> B,NH,S,HD
+            shape = (B, -1, self.num_heads, self.attn_dim)
+            q, k, v = (t.view(shape).transpose(1, 2).contiguous() for t in (q, k, v))
 
-        # recombine heads -> B,S,D
-        a_out = a_out.transpose(1, 2).contiguous().view(B, -1, self.dim)
+            # Apply rotary positional encoding on the q and k tensors
+            if self.do_rotary:
+                q, k = self.rotary(q, k)
 
-        # Mix with final linear layer -> B,S,D
+            # run attention -> B,NH,S,HD
+            kv_mask = mask if kv is None else kv_mask  # who is sending?
+            a_mask = merge_masks(kv_mask, attn_mask, attn_bias, q, causal)
+            c = causal and a_mask is None  # a_mask will at least incl causal
+            a_out = F.scaled_dot_product_attention(q, k, v, a_mask, drop, is_causal=c)
+
+            # recombine heads -> B,S,D
+            a_out = a_out.transpose(1, 2).contiguous().view(B, -1, self.dim)
+
         return self.attn_out(a_out)
 
 
@@ -520,7 +517,6 @@ class EncoderBlock(nn.Module):
         dropout: float = 0,
         do_rotary: bool = False,
         layerscale_init: float | None = 1e-3,
-        do_packed: bool = False,
     ) -> None:
         """Initialise the encoder block.
 
@@ -543,8 +539,6 @@ class EncoderBlock(nn.Module):
         layerscale_init : float | None, optional
             The initial value for the layerscale, by default 1e-3
             If None, then no layerscale is applied
-        do_packed : bool, optional
-            Whether to use the packed varlen attention, by default False
         """
         super().__init__()
 
@@ -554,7 +548,7 @@ class EncoderBlock(nn.Module):
 
         # Submodules
         self.attn = PreNormScaledResidual(
-            Attention(dim, ctxt_dim, num_heads, dropout, do_rotary, do_packed),
+            Attention(dim, ctxt_dim, num_heads, dropout, do_rotary),
             layerscale_init,
         )
         self.ff = PreNormScaledResidual(
@@ -579,7 +573,6 @@ class DecoderBlock(nn.Module):
         dropout: float = 0,
         do_rotary: bool = False,
         layerscale_init: float | None = 1e-3,
-        do_packed: bool = False,
     ) -> None:
         """Initialise the decoder block.
 
@@ -602,11 +595,8 @@ class DecoderBlock(nn.Module):
         layerscale_init : float | None, optional
             The initial value for the layerscale, by default 1e-3
             If None, then no layerscale is applied
-        do_packed : bool, optional
-            Check that the user did not try to use packed attention, by default False
         """
         super().__init__()
-        assert not do_packed, "Packed attention is not supported in the decoder!"
 
         # Attributes
         self.dim = dim
@@ -668,6 +658,7 @@ class Transformer(nn.Module):
         outp_dim: None | int = None,
         use_decoder: bool = False,
         do_packed: bool = False,
+        unpack_output: bool = True,
     ) -> None:
         """Parameters
         ----------
@@ -703,6 +694,8 @@ class Transformer(nn.Module):
             Whether to use the decoder blocks, by default False.
         do_packed : bool, optional
             Whether to use the packed varlen attention, by default False.
+        unpack_output : bool, optional
+            Whether to unpack the output, by default True.
         layer_config : dict | None, optional
             The configuration for the encoder/decoder blocks, by default None.
         """
@@ -729,12 +722,12 @@ class Transformer(nn.Module):
         self.outp_dim = outp_dim if do_output_linear else dim
         self.use_decoder = use_decoder
         self.do_packed = do_packed
+        self.unpack_output = unpack_output
 
         # Base repeated transformer layers
         lyr = DecoderBlock if use_decoder else EncoderBlock
         self.layers = nn.ModuleList([
-            lyr(dim, ctxt_dim, do_packed=do_packed, **layer_config)
-            for _ in range(num_layers)
+            lyr(dim, ctxt_dim, **layer_config) for _ in range(num_layers)
         ])
 
         # Optional layers and features
@@ -759,12 +752,6 @@ class Transformer(nn.Module):
         """
         return self.encode(self.project(x), **kwargs)
 
-    def set_packed(self, do_packed: bool) -> None:
-        """Set the packed attention flag."""
-        self.do_packed = do_packed
-        for layer in self.layers:
-            layer.attn.fn.do_packed = do_packed
-
     def project(self, x: T.Tensor) -> T.Tensor:
         """Project the input to the transformer dimension and add absolute encoding."""
         if self.do_input_linear:
@@ -781,6 +768,7 @@ class Transformer(nn.Module):
         attn_mask: T.BoolTensor | None = None,
         attn_bias: T.Tensor | None = None,
         kv: T.Tensor | None = None,
+        kv_mask: T.BoolTensor | None = None,
         **kwargs,
     ) -> T.Tensor:
         """Pass through all layers of the transformer."""
@@ -797,6 +785,10 @@ class Transformer(nn.Module):
             x, ctxt, culens, maxlen = pack(x, mask, ctxt)
             kwargs["culens"] = culens  # Add to the kwargs for the forward pass
             kwargs["maxlen"] = maxlen
+            if kv is not None:
+                kv, _, kv_culens, kv_maxlen = pack(kv, kv_mask, None)
+                kwargs["kv_culens"] = kv_culens
+                kwargs["kv_maxlen"] = kv_maxlen
         for layer in self.layers:
             x = layer(
                 x,
@@ -805,21 +797,22 @@ class Transformer(nn.Module):
                 attn_mask=attn_mask,
                 attn_bias=attn_bias,
                 kv=kv,
+                kv_mask=kv_mask,
                 **kwargs,
             )
         if self.do_final_norm:
             x = self.final_norm(x)
         if self.do_output_linear:
             x = self.linear_out(x)
-        if self.do_packed:
-            x = unpack(x, mask)
+        if self.do_packed:  # and self.unpack_output: TODO Uncomment, bkwd compat
+            return unpack(x, mask)
         return x
 
     def remove_registers(self, x: T.Tensor) -> T.Tensor:
         """Remove the registers from the front of the input."""
         return x[:, : self.num_registers], x[:, self.num_registers :]
 
-    def get_combined_mask(self, mask: T.BoolTensor) -> T.BoolTensor:
+    def get_combined_mask(self, mask: T.BoolTensor | None) -> T.BoolTensor:
         """Get a mask which can be used for the combined register+sequence tensor."""
         if self.num_registers == 0:
             return mask
