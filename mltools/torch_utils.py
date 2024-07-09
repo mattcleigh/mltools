@@ -17,6 +17,35 @@ from torch.utils.data.dataloader import default_collate
 from .schedulers import CyclicWithWarmup, LinearWarmupRootDecay, WarmupToConstant
 
 
+def gradient_norm(model) -> float:
+    """Return the total norm of the gradients of a model.
+
+    The strange logic is to avoid upscaling the norm when using mixed precision.
+    """
+    total_norm = 0
+    for p in model.parameters():
+        if p.grad is not None:
+            grad_data = p.grad.detach().data.square().sum()
+            if total_norm == 0:
+                total_norm = grad_data
+            else:
+                total_norm += grad_data
+    if total_norm == 0:
+        return 0
+    return total_norm.sqrt().item()
+
+
+def get_submodules(module: nn.Module, depth: int = 1, prefix="") -> list:
+    """Return a list of all of the base modules in a network."""
+    modules = []
+    if depth == 0 or not list(module.children()):
+        return [(prefix, module)]
+    for n, child in module.named_children():
+        subname = prefix + ("." if prefix else "") + n
+        modules.extend(get_submodules(child, depth - 1, subname))
+    return modules
+
+
 def zero_module(module: nn.Module) -> nn.Module:
     """Zero out the parameters of a module and return it."""
     for p in module.parameters():
@@ -113,12 +142,12 @@ class GradsOff:
 
 def rms(tens: T.Tensor, dim: int = 0) -> T.Tensor:
     """Return RMS of a tensor along a dimension."""
-    return tens.pow(2).mean(dim=dim).sqrt()
+    return tens.square().mean(dim=dim).sqrt()
 
 
 def rmse(x: T.Tensor, y: T.Tensor, dim: int = 0) -> T.Tensor:
     """Return RMSE without using torch's warning filled mseloss method."""
-    return (x - y).pow(2).mean(dim=dim).sqrt()
+    return (x - y).square().mean(dim=dim).sqrt()
 
 
 def base_modules(module: nn.Module) -> list:
