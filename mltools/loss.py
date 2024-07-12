@@ -5,6 +5,48 @@ import torch.nn.functional as F
 from torch import nn
 
 
+@T.compile
+def sigmoid_focal_loss(
+    inputs: T.Tensor,
+    targets: T.Tensor,
+    gamma: float = 2,
+    pos_weight: float = 1,
+    reduction: str = "mean",
+) -> T.Tensor:
+    """Focal loss for imbalanced binary classification.
+
+    Parameters
+    ----------
+    inputs : T.Tensor
+        The input tensor from the model
+    targets : T.Tensor
+        The target tensor for the model
+    gamma : float, optional
+        The gamma value for the focal loss, by default 2
+    pos_weight : float, optional
+        The positive class weight, by default 1
+    reduction : str, optional
+        The reduction method for the loss, by default "mean"
+    """
+    inputs = inputs.float()
+    targets = targets.float()
+
+    p = T.sigmoid(inputs)
+    ce_loss = F.binary_cross_entropy_with_logits(inputs, targets)
+    p_t = p * targets + (1 - p) * (1 - targets)
+    loss = ce_loss * ((1 - p_t) ** gamma)
+
+    if pos_weight != 1:
+        weight = 1 + (pos_weight - 1) * targets
+        loss = weight * loss
+
+    if reduction == "mean":
+        return loss.mean()
+    if reduction == "sum":
+        return loss.sum()
+    return loss
+
+
 def bce_with_label_smoothing(
     output: T.Tensor, target: T.Tensor, smoothing: float = 0.05, **kwargs
 ) -> T.Tensor:
@@ -12,6 +54,18 @@ def bce_with_label_smoothing(
     if smoothing > 0:
         target = target - (target - 0.5).sign() * T.rand_like(target) * smoothing
     return F.binary_cross_entropy_with_logits(output, target.view_as(output), **kwargs)
+
+
+class FocalLoss(nn.Module):
+    """Focal loss for imbalanced binary classification."""
+
+    def __init__(self, gamma: float = 2, pos_weight: float = 1) -> None:
+        super().__init__()
+        self.gamma = gamma
+        self.pos_weight = pos_weight
+
+    def forward(self, inputs: T.Tensor, targets: T.Tensor) -> T.Tensor:
+        return sigmoid_focal_loss(inputs, targets, self.gamma, self.pos_weight)
 
 
 def contrastive_loss(x1: T.Tensor, x2: T.Tensor, temperature: float = 0.2) -> T.Tensor:

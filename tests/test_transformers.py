@@ -1,7 +1,9 @@
+import pytest
 import torch as T
 from torch import nn
 from torch.nn.functional import scaled_dot_product_attention
 
+from mltools.torch_utils import move_dev
 from mltools.transformers import (
     Attention,
     ClassAttentionPooling,
@@ -139,6 +141,35 @@ def test_transformer_encoder() -> None:
     )
     out = transformer(**i)
     assert out.shape == (2, 7, 4)
+
+
+def test_flash_transformer() -> None:
+    if not T.cuda.is_available():
+        pytest.skip("CUDA not available")
+    i = get_transformer_inputs()
+    del i["attn_bias"]
+    del i["attn_mask"]
+    transformer = Transformer(
+        dim=i["x"].shape[-1],
+        ctxt_dim=i["ctxt"].shape[-1],
+        num_layers=2,
+        num_registers=2,
+        layer_config={
+            "ff_mult": 2,
+            "num_heads": 2,
+        },
+    )
+
+    transformer = transformer.to("cuda")
+    i = move_dev(i, "cuda")
+
+    with T.autocast("cuda", enabled=True):
+        out1 = transformer(**i)
+        mask = transformer.get_combined_mask(i["mask"])
+        out1 *= mask.unsqueeze(-1)
+        transformer.do_packed = True
+        out2 = transformer(**i)
+        T.testing.assert_close(out1, out2)
 
 
 def test_transformer_decoder() -> None:

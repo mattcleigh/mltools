@@ -3,13 +3,31 @@
 import logging
 import math
 
-from lightning import LightningModule
+from pytorch_lightning import Callback, LightningModule, Trainer
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LambdaLR
 
-from .torch_utils import get_sched
+from .torch_utils import get_sched, get_submodules, gradient_norm
 
 logger = logging.getLogger(__name__)
+
+
+class LogGradNorm(Callback):
+    """Logs the gradient norm."""
+
+    def __init__(self, logging_interval: int = 1, depth: int = 0):
+        self.logging_interval = logging_interval
+        self.depth = depth
+
+    def on_before_optimizer_step(
+        self, _trainer: Trainer, pl_module: LightningModule, _optimizer: Optimizer
+    ):
+        if pl_module.global_step % self.logging_interval == 0:
+            sub_modules = get_submodules(pl_module, self.depth)
+            for subname, module in sub_modules:
+                grad = gradient_norm(module)
+                if grad > 0:
+                    self.log("grad/" + subname, gradient_norm(module))
 
 
 def get_max_steps(model: LightningModule) -> int:
