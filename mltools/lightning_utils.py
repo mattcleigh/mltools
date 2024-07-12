@@ -143,11 +143,18 @@ def standard_optim_sched(model: LightningModule) -> dict:
     }
 
 
-def simple_optim_sched(model: LightningModule) -> dict:
+def simple_optim_sched(model: LightningModule, modules: list | None = None) -> dict:
     """Configure the optimizers and learning rate sheduler."""
-    opt = model.hparams.optimizer(filter(lambda p: p.requires_grad, model.parameters()))
-    scheduler = {
-        "scheduler": model.hparams.scheduler(optimizer=opt, model=model),
-        "interval": "step",
-    }
-    return [opt], [scheduler]
+    if modules is None:
+        modules = [model]
+    opts = []
+    scheds = []
+    for m in modules:
+        opt = model.hparams.optimizer(filter(lambda p: p.requires_grad, m.parameters()))
+        sched = {
+            "scheduler": model.hparams.scheduler(optimizer=opt, model=model),
+            "interval": "step",
+        }
+        opts.append(opt)
+        scheds.append(sched)
+    return opts, scheds
