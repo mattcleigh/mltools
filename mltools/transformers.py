@@ -781,11 +781,11 @@ class Transformer(nn.Module):
                 attn_bias,
                 add_to_send=(kv is None) or self.use_decoder,
             )
-        if self.do_packed:
+        if self.do_packed and "culens" not in kwargs:
             x, ctxt, culens, maxlen = pack(x, mask, ctxt)
             kwargs["culens"] = culens  # Add to the kwargs for the forward pass
             kwargs["maxlen"] = maxlen
-            if kv is not None:
+            if kv is not None and "kv_culens" not in kwargs:
                 kv, _, kv_culens, kv_maxlen = pack(kv, kv_mask, None)
                 kwargs["kv_culens"] = kv_culens
                 kwargs["kv_maxlen"] = kv_maxlen
@@ -804,9 +804,9 @@ class Transformer(nn.Module):
             x = self.final_norm(x)
         if self.do_output_linear:
             x = self.linear_out(x)
-        if self.do_packed:  # and self.unpack_output: TODO Uncomment, bkwd compat
+        if self.do_packed and self.unpack_output:
             return unpack(x, mask)
-        return x
+        return x, culens, maxlen
 
     def remove_registers(self, x: T.Tensor) -> T.Tensor:
         """Remove the registers from the front of the input."""
@@ -879,6 +879,7 @@ class ClassAttentionPooling(nn.Module):
         do_final_norm: bool = False,
         outp_dim: int | None = None,
         inpt_dim: int | None = None,
+        do_packed: bool = False,
     ) -> None:
         """Initialise the class attention pooling.
 
@@ -906,6 +907,8 @@ class ClassAttentionPooling(nn.Module):
         outp_dim : None | int, optional
             The output dimension, by default None.
             If None, then will be set to dim.
+        do_packed: bool, optional
+            Whether to use the packed varlen attention, by default False.
         """
         super().__init__()
 
@@ -922,6 +925,7 @@ class ClassAttentionPooling(nn.Module):
         self.do_final_norm = do_final_norm
         self.outp_dim = outp_dim if do_output_linear else dim
         self.inpt_dim = inpt_dim if do_input_linear else dim
+        self.do_packed = do_packed
 
         # The learnable global token
         self.global_token = nn.Parameter(T.randn((1, 1, self.dim)))
@@ -950,13 +954,23 @@ class ClassAttentionPooling(nn.Module):
         if self.do_input_linear:
             x = self.linear_embed(x)
 
-        # Expand the global token so it can be broadcasted for the whole batch
-        g = self.global_token.expand(x.shape[0], 1, self.dim)
+        if self.do_packed:
+            culens = kwargs["culens"]
+            maxlen = kwargs["maxlen"]
+            B = culens.size(0) - 1
+            g = self.global_token.squeeze(1).expand(B, self.dim)
+            kwargs["culens"] = T.arange(B + 1, device=culens.device, dtype=culens.dtype)
+            kwargs["maxlen"] = 1
+            kwargs["kv_culens"] = culens
+            kwargs["kv_maxlen"] = maxlen
+            for layer in self.layers:
+                g = layer(g, kv=x, kv_mask=mask, **kwargs)
 
-        # Apply the iterative pooling
-        for layer in self.layers:
-            g = layer(g, kv=x, kv_mask=mask, **kwargs)
-        g.squeeze_(-2)  # Pop out the sequence dimension
+        else:
+            g = self.global_token.expand(x.shape[0], 1, self.dim)
+            for layer in self.layers:
+                g = layer(g, kv=x, kv_mask=mask, **kwargs)
+            g.squeeze_(-2)  # Pop out the sequence dimension
 
         # Optional final layers
         if self.do_final_norm:
@@ -981,6 +995,7 @@ class TransformerVectorEncoder(nn.Module):
         outp_dim: int = 128,
         encoder_config: dict | None = None,
         classattention_config: dict | None = None,
+        do_packed: bool = False,
     ) -> None:
         super().__init__()
 
@@ -992,6 +1007,7 @@ class TransformerVectorEncoder(nn.Module):
         self.inpt_dim = inpt_dim
         self.ctxt_dim = ctxt_dim
         self.outp_dim = outp_dim
+        self.do_packed = do_packed
 
         # Modules
         self.encoder = Transformer(
@@ -1010,7 +1026,24 @@ class TransformerVectorEncoder(nn.Module):
             **classattention_config,
         )
 
-    def forward(self, x: T.Tensor, mask: T.Tensor, **kwargs) -> T.Tensor:
+        # We want this entire setup to be packed for optimised training
+        if do_packed:
+            self.encoder.do_packed = True
+            self.encoder.unpack_output = False
+            self.pool.do_packed = True
+
+    def set_packed(self, do_packed: bool) -> None:
+        """Set the packed attribute of the encoder and pooling layers."""
+        self.do_packed = do_packed
+        self.encoder.do_packed = do_packed
+        self.pool.do_packed = do_packed
+
+    def forward(
+        self, x: T.Tensor, mask: T.Tensor, ctxt: T.Tensor | None = None, **kwargs
+    ) -> T.Tensor:
+        if self.do_packed:
+            enc, culens, maxlen = self.encoder(x, mask=mask, ctxt=ctxt, **kwargs)
+            return self.pool(enc, mask=mask, ctxt=ctxt, culens=culens, maxlen=maxlen)
         enc = self.encoder(x, mask=mask, **kwargs)
         mask = self.encoder.get_combined_mask(mask)  # Might have gained registers
         return self.pool(enc, mask=mask, **kwargs)
