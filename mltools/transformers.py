@@ -3,6 +3,7 @@
 import logging
 import math
 from collections.abc import Callable
+from copy import deepcopy
 from functools import partial
 
 import torch as T
@@ -910,7 +911,10 @@ class ClassAttentionPooling(nn.Module):
         super().__init__()
 
         # Defaults
-        layer_config = layer_config or {}
+        layer_config = deepcopy(layer_config) or {}
+
+        # LayerScale should be turned off for class attention pooling!
+        layer_config["layerscale_init"] = None
 
         # Attributes
         self.dim = dim

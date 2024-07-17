@@ -5,7 +5,7 @@ import math
 
 from pytorch_lightning import Callback, LightningModule, Trainer
 from torch.optim import Optimizer
-from torch.optim.lr_scheduler import LambdaLR
+from torch.optim.lr_scheduler import LambdaLR, OneCycleLR
 
 from .torch_utils import get_sched, get_submodules, gradient_norm
 
@@ -118,6 +118,17 @@ def linear_warmup_cosine_decay(
     return LambdaLR(optimizer, fn)
 
 
+def one_cycle(
+    model: LightningModule,
+    optimizer: Optimizer,
+    total_steps: int = 1000,
+    **kwargs,
+) -> OneCycleLR:
+    """Get the learning rate scheduler."""
+    total_steps = get_max_steps(model) or total_steps
+    return OneCycleLR(optimizer, **kwargs, total_steps=total_steps)
+
+
 def standard_optim_sched(model: LightningModule) -> dict:
     """Configure the optimizers and learning rate sheduler.
 
@@ -143,16 +154,29 @@ def standard_optim_sched(model: LightningModule) -> dict:
     }
 
 
-def simple_optim_sched(model: LightningModule, modules: list | None = None) -> dict:
+def simple_optim_sched(model: LightningModule) -> dict:
     """Configure the optimizers and learning rate sheduler."""
-    if modules is None:
-        modules = [model]
+    opt = model.hparams.optimizer(filter(lambda p: p.requires_grad, model.parameters()))
+    scheduler = {
+        "scheduler": model.hparams.scheduler(optimizer=opt, model=model),
+        "interval": "step",
+    }
+    return [opt], [scheduler]
+
+
+def multi_optim_sched(model: LightningModule, modules: list) -> dict:
+    """Configure multiple optimizers and learning rate sheduler."""
+    opt_params = model.hparams.optimizer
+    sched_params = model.hparams.scheduler
+    assert len(modules) == len(opt_params) == len(sched_params)
     opts = []
     scheds = []
-    for m in modules:
-        opt = model.hparams.optimizer(filter(lambda p: p.requires_grad, m.parameters()))
+    for module, opt_param, sched_param in zip(
+        modules, opt_params, sched_params, strict=False
+    ):
+        opt = opt_param(filter(lambda p: p.requires_grad, module.parameters()))
         sched = {
-            "scheduler": model.hparams.scheduler(optimizer=opt, model=model),
+            "scheduler": sched_param(optimizer=opt, model=model),
             "interval": "step",
         }
         opts.append(opt)
