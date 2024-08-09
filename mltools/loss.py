@@ -31,8 +31,8 @@ def sigmoid_focal_loss(
     inputs = inputs.float()
     targets = targets.float()
 
+    ce_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
     p = T.sigmoid(inputs)
-    ce_loss = F.binary_cross_entropy_with_logits(inputs, targets)
     p_t = p * targets + (1 - p) * (1 - targets)
     loss = ce_loss * ((1 - p_t) ** gamma)
 
@@ -59,13 +59,18 @@ def bce_with_label_smoothing(
 class FocalLoss(nn.Module):
     """Focal loss for imbalanced binary classification."""
 
-    def __init__(self, gamma: float = 2, pos_weight: float = 1) -> None:
+    def __init__(
+        self, gamma: float = 2, pos_weight: float = 1, reduction: str = "mean"
+    ) -> None:
         super().__init__()
         self.gamma = gamma
         self.pos_weight = pos_weight
+        self.reduction = reduction
 
     def forward(self, inputs: T.Tensor, targets: T.Tensor) -> T.Tensor:
-        return sigmoid_focal_loss(inputs, targets, self.gamma, self.pos_weight)
+        return sigmoid_focal_loss(
+            inputs, targets, self.gamma, self.pos_weight, self.reduction
+        )
 
 
 def contrastive_loss(x1: T.Tensor, x2: T.Tensor, temperature: float = 0.2) -> T.Tensor:

@@ -71,6 +71,12 @@ def reset_params(layer: nn.Module) -> None:
         layer.reset_parameters()
 
 
+def occupancy(probs: T.Tensor, dim: int = -1):
+    """Return the number of unique argmax values given a probability tensor."""
+    num_dims = probs.shape[dim]
+    return T.unique(T.argmax(probs, dim=-1)).size(0) / num_dims
+
+
 def sum_except_batch(x: T.Tensor, num_batch_dims: int = 1) -> T.Tensor:
     """Sum all elements of x except for the first num_batch_dims dimensions."""
     return T.sum(x, dim=list(range(num_batch_dims, x.ndim)))

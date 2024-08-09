@@ -70,7 +70,7 @@ class IterativeNormLayer(nn.Module):
         means: T.Tensor | None = None,
         variances: T.Tensor | None = None,
         n: int = 0,
-        max_n: int = 1_00_000,
+        max_n: int = 100_000,
         dims: tuple | int = (),
         track_grad_forward: bool = True,
         track_grad_reverse: bool = False,
