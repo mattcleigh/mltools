@@ -5,7 +5,7 @@ import math
 
 from pytorch_lightning import Callback, LightningModule, Trainer
 from torch.optim import Optimizer
-from torch.optim.lr_scheduler import LambdaLR
+from torch.optim.lr_scheduler import LambdaLR, OneCycleLR
 
 from .torch_utils import get_sched, get_submodules, gradient_norm
 
@@ -51,13 +51,8 @@ def linear_warmup(
     model: LightningModule,  # noqa: ARG001
     warmup_steps: int = 1000,
     init_factor: float = 1e-2,
-    min_factor: float | None = None,
 ) -> LambdaLR:
     """Return a scheduler with a linear warmup."""
-    # Min factor is deprecated and will be removed in the future
-    if min_factor is not None:
-        logger.warning("The min_factor argument is deprecated and will be removed")
-        init_factor = min_factor
 
     def fn(x: int) -> float:
         return min(1, init_factor + x * (1 - init_factor) / max(1, warmup_steps))
@@ -72,13 +67,8 @@ def linear_warmup_exp_decay(
     half_life: int = 1000,
     final_factor: float = 1e-3,
     init_factor: float = 1e-1,
-    min_factor: float | None = None,
 ) -> LambdaLR:
     """Return a scheduler with a linear warmup and a sqrt decay."""
-    # Min factor is deprecated and will be removed in the future
-    if min_factor is not None:
-        logger.warning("The min_factor argument is deprecated and will be removed")
-        final_factor = min_factor
 
     def fn(x: int) -> float:
         if x < warmup_steps:
@@ -116,6 +106,22 @@ def linear_warmup_cosine_decay(
 
     # The lambda scheduler is the easiest way to define a custom scheduler
     return LambdaLR(optimizer, fn)
+
+
+def one_cycle(
+    model: LightningModule,
+    optimizer: Optimizer,
+    total_steps: int = 1000,
+    **kwargs,
+) -> OneCycleLR:
+    """Get the learning rate scheduler."""
+    total_steps = get_max_steps(model) or total_steps
+    return OneCycleLR(
+        optimizer,
+        **kwargs,
+        total_steps=total_steps,
+        max_lr=optimizer.param_groups[0]["lr"],
+    )
 
 
 def standard_optim_sched(model: LightningModule) -> dict:

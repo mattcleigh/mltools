@@ -54,11 +54,13 @@ def reload_original_config(
     if set_ckpt_path:
         try:
             orig_cfg.ckpt_path = str(
-                sorted(
+                max(
                     Path(path).glob(f"checkpoints/{ckpt_flag}"),
                     key=os.path.getmtime,
-                )[-1]
+                )
             )
+
+            log.info(f"Setting checkpoint path to {orig_cfg.ckpt_path}")
 
             if set_wandb_resume:
                 log.info("Attempting to set the same WandB ID to continue logging run")

@@ -208,7 +208,6 @@ def plot_corr_heatmaps(
         The size of the figure in inches. (default: (6, 5))
     do_pearson : bool, optional
         Whether to calculate and display the Pearson correlation coefficient.
-
     return_fig : bool, optional
         Whether to return the figure object.
     return_img : bool, optional
@@ -836,7 +835,9 @@ def plot_multi_hists(
                 # Add arrows for values outside the ratio limits
                 if rat_ylim is not None:
                     mid_bins = (ax_bins[1:] + ax_bins[:-1]) / 2
-                    ymin, ymax = tuple(*rat_ylim)  # Convert to tuple incase list
+                    if not isinstance(rat_ylim, tuple):
+                        rat_ylim = tuple(*rat_ylim)
+                    ymin, ymax = rat_ylim  # Convert to tuple incase list
                     arrow_height = 0.02 * (ymax - ymin)
 
                     # Values above the limits

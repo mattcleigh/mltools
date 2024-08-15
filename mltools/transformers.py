@@ -318,7 +318,11 @@ class PreNormScaledResidual(nn.Module):
     """Wraps a module with pre-norm and layerscale with a residual connection."""
 
     def __init__(
-        self, fn: nn.Module, layerscale_init: float | None = 1e-3, dim: int = 0
+        self,
+        fn: nn.Module,
+        layerscale_init: float | None = 1e-3,
+        pre_norm: bool = True,
+        dim: int = 0,
     ) -> None:
         """Parameters
         ----------
@@ -334,7 +338,7 @@ class PreNormScaledResidual(nn.Module):
         super().__init__()
         dim = dim or fn.dim
         self.fn = fn
-        self.norm = nn.LayerNorm(dim)
+        self.norm = nn.LayerNorm(dim) if pre_norm else nn.Identity()
         self.ls = (
             LayerScale(dim, layerscale_init)
             if layerscale_init is not None
@@ -517,6 +521,7 @@ class EncoderBlock(nn.Module):
         dropout: float = 0,
         do_rotary: bool = False,
         layerscale_init: float | None = 1e-3,
+        pre_norm: bool = True,
     ) -> None:
         """Initialise the encoder block.
 
@@ -539,6 +544,8 @@ class EncoderBlock(nn.Module):
         layerscale_init : float | None, optional
             The initial value for the layerscale, by default 1e-3
             If None, then no layerscale is applied
+        pre_norm : bool, optional
+            Whether to use pre-norm residual connections, by default True
         """
         super().__init__()
 
@@ -550,10 +557,12 @@ class EncoderBlock(nn.Module):
         self.attn = PreNormScaledResidual(
             Attention(dim, ctxt_dim, num_heads, dropout, do_rotary),
             layerscale_init,
+            pre_norm,
         )
         self.ff = PreNormScaledResidual(
             SwiGLUNet(dim, ff_mult * dim, ctxt_dim, dropout),
             layerscale_init,
+            pre_norm,
         )
 
     def forward(self, x: T.Tensor, ctxt: T.Tensor | None = None, **kwargs) -> T.Tensor:
@@ -804,9 +813,11 @@ class Transformer(nn.Module):
             x = self.final_norm(x)
         if self.do_output_linear:
             x = self.linear_out(x)
-        if self.do_packed and self.unpack_output:
-            return unpack(x, mask)
-        return x, culens, maxlen
+        if self.do_packed:
+            if self.unpack_output:
+                return unpack(x, mask)
+            return x, culens, maxlen
+        return x
 
     def remove_registers(self, x: T.Tensor) -> T.Tensor:
         """Remove the registers from the front of the input."""
@@ -932,7 +943,7 @@ class ClassAttentionPooling(nn.Module):
 
         # The cross attention pooling layers
         self.layers = nn.ModuleList([
-            EncoderBlock(self.dim, ctxt_dim, **self.layer_config)
+            EncoderBlock(self.dim, ctxt_dim, pre_norm=False, **self.layer_config)
             for _ in range(num_layers)
         ])
 
@@ -943,8 +954,6 @@ class ClassAttentionPooling(nn.Module):
             self.final_norm = nn.LayerNorm(self.dim)
         if self.do_output_linear:
             self.linear_out = nn.Linear(self.dim, outp_dim)
-            nn.init.trunc_normal_(self.linear_out.weight, std=0.01)
-            nn.init.constant_(self.linear_out.bias, 0)
 
     def forward(
         self, x: T.Tensor, mask: T.BoolTensor | None = None, **kwargs
@@ -1027,16 +1036,14 @@ class TransformerVectorEncoder(nn.Module):
         )
 
         # We want this entire setup to be packed for optimised training
-        if do_packed:
-            self.encoder.do_packed = True
-            self.encoder.unpack_output = False
-            self.pool.do_packed = True
+        self.set_packed(do_packed)
 
     def set_packed(self, do_packed: bool) -> None:
         """Set the packed attribute of the encoder and pooling layers."""
         self.do_packed = do_packed
         self.encoder.do_packed = do_packed
         self.pool.do_packed = do_packed
+        self.encoder.unpack_output = not do_packed
 
     def forward(
         self, x: T.Tensor, mask: T.Tensor, ctxt: T.Tensor | None = None, **kwargs

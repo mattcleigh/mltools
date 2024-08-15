@@ -90,8 +90,9 @@ class CoupledRationalQuadraticSpline(nf.flows.Flow):
                 num_blocks=num_blocks,
                 act_h=activation,
                 dropout=dropout_probability,
+                ctxt_in_inpt=False,
                 ctxt_in_hddn=True,
-                ctxt_in_inpt=True,
+                ctxt_in_outp=True,
             )
 
             # For the identity inits with a spline they must follow predefined values
