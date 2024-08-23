@@ -517,11 +517,13 @@ class EncoderBlock(nn.Module):
         dim: int,
         ctxt_dim: int = 0,
         ff_mult: int = 2,
+        ff_dropout: float = 0,
+        attn_dropout: float = 0,
         num_heads: int = 8,
-        dropout: float = 0,
         do_rotary: bool = False,
         layerscale_init: float | None = 1e-3,
         pre_norm: bool = True,
+        dropout: float = 0,
     ) -> None:
         """Initialise the encoder block.
 
@@ -536,9 +538,10 @@ class EncoderBlock(nn.Module):
             The multiplier for the feedforward network, by default 2
         num_heads : int, optional
             The number of attention heads, by default 8
-        dropout : float, optional
-            The dropout probability, by default 0
-            Used in both the attention and feedforward submodules
+        ff_dropout : float, optional
+            The dropout probability used in the ff network, by default 0
+        attn_dropout : float, optional
+            The dropout probability used in the attention network, by default 0
         do_rotary : bool, optional
             Whether to use rotary positional encoding, by default False
         layerscale_init : float | None, optional
@@ -546,21 +549,29 @@ class EncoderBlock(nn.Module):
             If None, then no layerscale is applied
         pre_norm : bool, optional
             Whether to use pre-norm residual connections, by default True
+        dropout : float, optional
+            (Deprecated) The dropout probability, by default 0
+            In favour of dropping this and using the specific dropout values for
+            each submodule
         """
         super().__init__()
 
         # Attributes
         self.dim = dim
         self.num_heads = num_heads
+        if dropout:
+            log.warning("The dropout parameter is deprecated and will be removed!")
+            ff_dropout = dropout
+            attn_dropout = dropout
 
         # Submodules
         self.attn = PreNormScaledResidual(
-            Attention(dim, ctxt_dim, num_heads, dropout, do_rotary),
+            Attention(dim, ctxt_dim, num_heads, attn_dropout, do_rotary),
             layerscale_init,
             pre_norm,
         )
         self.ff = PreNormScaledResidual(
-            SwiGLUNet(dim, ff_mult * dim, ctxt_dim, dropout),
+            SwiGLUNet(dim, ff_mult * dim, ctxt_dim, ff_dropout),
             layerscale_init,
             pre_norm,
         )
