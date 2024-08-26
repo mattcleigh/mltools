@@ -11,7 +11,7 @@ from torch import nn
 
 from .flash import flash_cross_attention, flash_self_attention
 from .mlp import MLP
-from .torch_utils import attach_context
+from .torch_utils import append_dims, attach_context
 
 log = logging.getLogger(__name__)
 
@@ -258,6 +258,43 @@ def my_scaled_dot_product_attention(
     return attn_weight @ value
 
 
+class Identity(nn.Module):
+    """Simple identity module that can take any number of arguments."""
+
+    def __init__(self, *_args, **_kwargs) -> None:
+        super().__init__()
+
+    def forward(self, x: T.Tensor, *_args, **_kwargs) -> T.Tensor:
+        return x
+
+
+class ContextMixer(nn.Module):
+    """Injects context information into the token embeddings using th DiffT method."""
+
+    def __init__(self, dim: int, ctxt_dim: int) -> None:
+        super().__init__()
+        self.layer = nn.Linear(dim + ctxt_dim, dim)
+
+    def forward(self, x: T.Tensor, ctxt: T.Tensor) -> T.Tensor:
+        """Apply conditioning to inputs."""
+        x = attach_context(x, ctxt)
+        return self.layer(x)
+
+
+class RMSNorm(nn.Module):
+    """Root Mean Square Normalisation layer."""
+
+    def __init__(self, dim: int) -> None:
+        super().__init__()
+        self.dim = dim
+        self.scale = nn.Parameter(T.ones(dim))
+        self.const = dim ** (-0.5)
+
+    def forward(self, x: T.Tensor) -> T.Tensor:
+        norm = T.linalg.norm(x, dim=-1, keepdim=True)
+        return x * self.scale / (norm * self.const + 1e-6)
+
+
 class RotaryEmbedding(nn.Module):
     """Applies rotary positional embedding for relative encoding."""
 
@@ -314,7 +351,7 @@ class LayerScale(nn.Module):
         return x * self.gamma
 
 
-class PreNormScaledResidual(nn.Module):
+class Residual(nn.Module):
     """Wraps a module with pre-norm and layerscale with a residual connection."""
 
     def __init__(
@@ -322,64 +359,70 @@ class PreNormScaledResidual(nn.Module):
         fn: nn.Module,
         layerscale_init: float | None = 1e-3,
         pre_norm: bool = True,
+        ctxt_dim: int = 0,
         dim: int = 0,
     ) -> None:
         """Parameters
         ----------
         fn : nn.Module
             The module to wrap. Must be non-resizing.
-        dim : int
-            The dimension of the input and output.
-            If zero we will try get it from the fn module.
         layerscale_init : float | None, optional
             The initial value for the layerscale, by default 1e-5.
             If None, then no layerscale is applied.
+        pre_norm: bool, optional
+            Whether to use pre-norm residual connections, by default True.
+        ctxt_dim : int, optional
+            The dimension of the context, by default 0.
+        dim : int
+            The dimension of the input and output.
+            If zero we will try get it from the fn module.
         """
         super().__init__()
         dim = dim or fn.dim
         self.fn = fn
-        self.norm = nn.LayerNorm(dim) if pre_norm else nn.Identity()
-        self.ls = (
-            LayerScale(dim, layerscale_init)
-            if layerscale_init is not None
-            else nn.Identity()
-        )
+        self.norm = Identity()
+        self.ctxt_mixer = Identity()
+        self.ls = Identity()
 
-    def forward(self, x: T.Tensor, *args, **kwargs) -> T.Tensor:
-        return self.ls(self.fn(self.norm(x), *args, **kwargs)) + x
+        # Optional layers
+        if pre_norm:
+            self.norm = nn.LayerNorm(dim)
+        if ctxt_dim:
+            self.ctxt_mixer = ContextMixer(dim, ctxt_dim)
+        if layerscale_init is not None:
+            self.ls = LayerScale(dim, layerscale_init)
+
+    def forward(
+        self, x: T.Tensor, *args, ctxt: T.Tensor | None = None, **kwargs
+    ) -> T.Tensor:
+        tmp = self.norm(x)
+        tmp = self.ctxt_mixer(tmp, ctxt)
+        tmp = self.fn(tmp, *args, **kwargs)
+        tmp = self.ls(tmp)
+        return tmp + x
 
 
 class SwiGLUNet(nn.Module):
     """Simple gated bilinear feedfoward network with the Swish activation."""
 
-    def __init__(
-        self, dim: int, hddn_dim: int, ctxt_dim: int = 0, dropout: float = 0.0
-    ) -> None:
+    def __init__(self, dim: int, hddn_dim: int, dropout: float = 0.0) -> None:
         super().__init__()
         self.dim = dim  # Usefull for wrapping the module
-        self.ctxt_dim = ctxt_dim
-        self.lin1 = nn.Linear(dim + ctxt_dim, 2 * hddn_dim)
+        self.lin1 = nn.Linear(dim, 2 * hddn_dim)
         self.lin2 = nn.Linear(hddn_dim, dim)
         self.drop = nn.Dropout(dropout)
 
-    def forward(self, x: T.Tensor, ctxt: T.Tensor | None = None) -> T.Tensor:
-        if self.ctxt_dim:
-            x = attach_context(x, ctxt)
+    def forward(self, x: T.Tensor) -> T.Tensor:
         x1, x2 = self.lin1(x).chunk(2, dim=-1)
         return self.lin2(self.drop(F.silu(x1) * x2))
 
 
 class Attention(nn.Module):
-    """Basic multiheaded attention block.
-
-    Context is embedded into the sequence pre MHA as in DiffT:
-     - https://arxiv.org/abs/2312.02139
-    """
+    """Basic multiheaded attention block."""
 
     def __init__(
         self,
         dim: int,
-        ctxt_dim: int = 0,
         num_heads: int = 1,
         dropout: float = 0,
         do_rotary: bool = False,
@@ -390,8 +433,6 @@ class Attention(nn.Module):
         ----------
         dim : int
             The dimension of the input and output.
-        ctxt_dim : int, optional
-            The dimension of the context, by default 0.
         num_heads : int, optional
             The number of attention heads, by default 1.
         dropout : float, optional
@@ -405,7 +446,6 @@ class Attention(nn.Module):
         # Attributes
         self.dim = dim
         self.num_heads = num_heads
-        self.ctxt_dim = ctxt_dim * 0  # TODO: Fix this
         self.attn_dim = dim // num_heads
         self.dropout = dropout
         self.do_rotary = do_rotary
@@ -418,8 +458,6 @@ class Attention(nn.Module):
         # Optional extra layers
         if self.do_rotary:
             self.rotary = RotaryEmbedding(dim)
-        if self.ctxt_dim:
-            self.ctxt_mixer = nn.Linear(ctxt_dim + dim, dim)
 
         self.reset_parameters()
 
@@ -435,7 +473,6 @@ class Attention(nn.Module):
         mask: T.BoolTensor | None = None,
         kv: T.Tensor | None = None,
         kv_mask: T.BoolTensor | None = None,
-        ctxt: T.Tensor | None = None,
         attn_mask: T.BoolTensor | None = None,
         attn_bias: T.Tensor | None = None,
         culens: T.Tensor | None = None,
@@ -446,10 +483,6 @@ class Attention(nn.Module):
     ) -> T.Tensor:
         """Pass through the attention block."""
         drop = self.dropout if self.training else 0.0
-
-        # Mix in the context with the main sequence
-        if self.ctxt_dim:
-            x = self.ctxt_mixer(attach_context(x, ctxt))
 
         # If providing the input with culens and maxlen, we assume packed attention
         if culens is not None and maxlen is not None:
@@ -565,15 +598,17 @@ class EncoderBlock(nn.Module):
             attn_dropout = dropout
 
         # Submodules
-        self.attn = PreNormScaledResidual(
-            Attention(dim, ctxt_dim, num_heads, attn_dropout, do_rotary),
+        self.attn = Residual(
+            Attention(dim, num_heads, attn_dropout, do_rotary),
             layerscale_init,
             pre_norm,
+            ctxt_dim,
         )
-        self.ff = PreNormScaledResidual(
-            SwiGLUNet(dim, ff_mult * dim, ctxt_dim, ff_dropout),
+        self.ff = Residual(
+            SwiGLUNet(dim, ff_mult * dim, ff_dropout),
             layerscale_init,
             pre_norm,
+            ctxt_dim,
         )
 
     def forward(self, x: T.Tensor, ctxt: T.Tensor | None = None, **kwargs) -> T.Tensor:
@@ -623,16 +658,16 @@ class DecoderBlock(nn.Module):
         self.num_heads = num_heads
 
         # Submodules
-        self.self_attn = PreNormScaledResidual(
-            Attention(dim, ctxt_dim, num_heads, dropout, do_rotary),
+        self.self_attn = Residual(
+            Attention(dim, num_heads, dropout, do_rotary),
             layerscale_init,
         )
 
-        self.cross_attn = PreNormScaledResidual(
-            Attention(dim, ctxt_dim, num_heads, dropout),
+        self.cross_attn = Residual(
+            Attention(dim, num_heads, dropout),
             layerscale_init,
         )
-        self.ff = PreNormScaledResidual(
+        self.ff = Residual(
             SwiGLUNet(dim, ff_mult * dim, ctxt_dim, dropout), layerscale_init
         )
 

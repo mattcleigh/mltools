@@ -9,7 +9,7 @@ from mltools.transformers import (
     ClassAttentionPooling,
     CrossAttentionEncoder,
     LayerScale,
-    PreNormScaledResidual,
+    Residual,
     Transformer,
     TransformerVectorEncoder,
     merge_masks,
@@ -85,7 +85,7 @@ def test_prenomscaledresidual() -> None:
     ls_init = 1e-3
     x = T.randn(2, dim)
     fn = nn.Linear(dim, dim)
-    layer = PreNormScaledResidual(fn, ls_init, dim)
+    layer = Residual(fn, ls_init, dim)
     out = layer(x)
     expected = x + ls_init * fn(layer.norm(x))
     assert T.allclose(out, expected)
