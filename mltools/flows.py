@@ -6,6 +6,7 @@ from typing import Any, Literal
 import normflows as nf
 import numpy as np
 import torch as T
+from normflows.distributions.base import BaseDistribution, DiagGaussian
 from normflows.flows.neural_spline.coupling import PiecewiseRationalQuadraticCoupling
 from normflows.utils.masks import create_alternating_binary_mask
 from normflows.utils.splines import DEFAULT_MIN_DERIVATIVE
@@ -13,6 +14,43 @@ from torch import nn
 
 from .mlp import MLP
 from .torch_utils import base_modules
+
+
+class Uniform(BaseDistribution):
+    """Multivariate uniform distribution.
+
+    Needed because default normflows doesnt save low and high as buffers, leading to
+    mistakes when using a GPU.
+    """
+
+    def __init__(self, shape, low=-1.0, high=1.0):
+        super().__init__()
+        if isinstance(shape, int):
+            shape = (shape,)
+        if isinstance(shape, list):
+            shape = tuple(shape)
+        self.shape = shape
+        self.d = np.prod(shape)
+        self.register_buffer("low", T.tensor(low))
+        self.register_buffer("high", T.tensor(high))
+        self.log_prob_val = -self.d * np.log(self.high - self.low)
+
+    def forward(self, num_samples=1, context=None) -> tuple:  # noqa: ARG002
+        eps = T.rand(
+            (num_samples, *self.shape),
+            dtype=self.low.dtype,
+            device=self.low.device,
+        )
+        z = self.low + (self.high - self.low) * eps
+        log_p = T.full((z.shape[0],), self.log_prob_val, device=z.device)
+        return z, log_p
+
+    def log_prob(self, z, context=None) -> T.Tensor:  # noqa: ARG002
+        log_p = T.full((z.shape[0],), self.log_prob_val, device=z.device)
+        out_range = (z < self.low) | (z > self.high)
+        ind_inf = T.any(out_range.view(z.shape[0], -1), dim=-1)
+        log_p[ind_inf] = -T.inf
+        return log_p
 
 
 def zero_flat(z: T.Tensor) -> T.Tensor:
@@ -133,7 +171,7 @@ class CoupledRationalQuadraticSpline(nf.flows.Flow):
             num_bins=num_bins,
             tails=tails,
             tail_bound=tail_bound,
-            apply_unconditional_transform=True,
+            apply_unconditional_transform=False,
             # This allows the non-transformed values to still be modified by a spline
         )
 
@@ -249,9 +287,9 @@ def rqs_flow(
 
     # Set base distribuiton
     if base_dist == "gaussian":
-        q0 = nf.distributions.DiagGaussian(xz_dim, trainable=False)
+        q0 = DiagGaussian(xz_dim, trainable=False)
     elif base_dist == "uniform":
-        q0 = nf.distributions.Uniform(xz_dim)
+        q0 = Uniform(xz_dim)
 
     # Return the full flow
     if ctxt_dim:
