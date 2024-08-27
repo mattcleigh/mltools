@@ -15,6 +15,10 @@ from .mlp import MLP
 from .torch_utils import base_modules
 
 
+def zero_flat(z: T.Tensor) -> T.Tensor:
+    return T.zeros(z.shape[0], dtype=z.dtype, device=z.device)
+
+
 class PermuteEvenOdd(nf.flows.Flow):
     """Permutation features along the channel dimension swapping even and odd values."""
 
@@ -25,11 +29,10 @@ class PermuteEvenOdd(nf.flows.Flow):
         z1 = z[:, 0::2]
         z2 = z[:, 1::2]
         z = T.stack((z2, z1), dim=2).view(z.shape[0], -1)
-        log_det = T.zeros(z.shape[0], device=z.device)
-        return z, log_det
+        return z, zero_flat(z)
 
     def inverse(self, z, context=None) -> tuple:
-        return self.forward(z, context)
+        return self.forward(z, context), zero_flat(z)
 
 
 class LULinear(nf.flows.Flow):
@@ -55,6 +58,25 @@ class LULinear(nf.flows.Flow):
     def inverse(self, z, context=None) -> tuple:
         z, log_det = self.linear(z, context=context)
         return z, log_det.view(-1)
+
+
+class Tanh(nf.flows.Flow):
+    """Invertible tanh transformation.
+
+    No liklihood contribution.
+    """
+
+    def __init__(self, prescale: float = 1.0):
+        super().__init__()
+        self.prescale = prescale
+
+    def forward(self, z, context=None) -> tuple[T.Tensor, T.Tensor]:
+        z = T.tanh(z * self.prescale)
+        return z, zero_flat(z)
+
+    def inverse(self, z, context=None) -> tuple:
+        z = T.atanh(z) / self.prescale
+        return z, zero_flat(z)
 
 
 class CoupledRationalQuadraticSpline(nf.flows.Flow):
@@ -92,7 +114,7 @@ class CoupledRationalQuadraticSpline(nf.flows.Flow):
                 dropout=dropout_probability,
                 ctxt_in_inpt=False,
                 ctxt_in_hddn=True,
-                ctxt_in_outp=True,
+                ctxt_in_outp=False,
             )
 
             # For the identity inits with a spline they must follow predefined values
@@ -136,7 +158,9 @@ def rqs_flow(
     num_bins: int = 8,
     do_lu: bool = True,
     init_identity: bool = True,
+    tanh_prescale: float | None = None,
     do_norm: bool = False,
+    base_dist: Literal["gaussian", "uniform"] = "gaussian",
     flow_type: Literal["autoregressive", "coupling"] = "coupling",
 ) -> nf.NormalizingFlow | nf.ConditionalNormalizingFlow:
     """Construct a rational quadratic spline normalising flow.
@@ -167,8 +191,12 @@ def rqs_flow(
     init_identity : bool, optional
         Whether to initialise the coupling layers as the identity. By default True.
         Strongly recommended for stability.
+    tanh_prescale : float, optional
+        Whether to prescale the input with a tanh function. By default None.
     do_norm : bool, optional
         Whether to use activation normalisation in the flow. By default False.
+    base_dist : str, optional
+        The base distribution to use. By default "gaussian".
     flow_type : str
         The type of flow to use. By default "coupling".
     """
@@ -202,6 +230,11 @@ def rqs_flow(
 
     # Build the flow
     flows = []
+
+    # Initial prescaling layers
+    if tanh_prescale is not None:
+        flows += [Tanh(prescale=tanh_prescale)]
+
     for i in range(num_stacks):
         # For coupling layers we need to alternate the mask instead of permuting
         if flow_type == "coupling":
@@ -215,7 +248,10 @@ def rqs_flow(
             flows += [nf.flows.ActNorm(xz_dim)]
 
     # Set base distribuiton
-    q0 = nf.distributions.DiagGaussian(xz_dim, trainable=False)
+    if base_dist == "gaussian":
+        q0 = nf.distributions.DiagGaussian(xz_dim, trainable=False)
+    elif base_dist == "uniform":
+        q0 = nf.distributions.Uniform(xz_dim)
 
     # Return the full flow
     if ctxt_dim:
