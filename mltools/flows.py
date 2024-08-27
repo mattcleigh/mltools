@@ -70,11 +70,11 @@ class Tanh(nf.flows.Flow):
         super().__init__()
         self.prescale = prescale
 
-    def forward(self, z, context=None) -> tuple[T.Tensor, T.Tensor]:
+    def forward(self, z, context=None) -> tuple[T.Tensor, T.Tensor]:  # noqa: ARG002
         z = T.tanh(z * self.prescale)
         return z, zero_flat(z)
 
-    def inverse(self, z, context=None) -> tuple:
+    def inverse(self, z, context=None) -> tuple:  # noqa: ARG002
         z = T.atanh(z) / self.prescale
         return z, zero_flat(z)
 
