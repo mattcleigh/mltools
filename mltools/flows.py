@@ -63,14 +63,16 @@ class PermuteEvenOdd(nf.flows.Flow):
     def __init__(self) -> None:
         super().__init__()
 
-    def forward(self, z, context=None) -> tuple:  # noqa: ARG002
+    def _permute(self, z: T.Tensor) -> T.Tensor:
         z1 = z[:, 0::2]
         z2 = z[:, 1::2]
-        z = T.stack((z2, z1), dim=2).view(z.shape[0], -1)
-        return z, zero_flat(z)
+        return T.stack((z2, z1), dim=2).view(z.shape[0], -1)
 
-    def inverse(self, z, context=None) -> tuple:
-        return self.forward(z, context), zero_flat(z)
+    def forward(self, z, context=None) -> tuple:  # noqa: ARG002
+        return self._permute(z), zero_flat(z)
+
+    def inverse(self, z, context=None) -> tuple:  # noqa: ARG002
+        return self._permute(z), zero_flat(z)
 
 
 class LULinear(nf.flows.Flow):

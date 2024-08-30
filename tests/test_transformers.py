@@ -85,7 +85,7 @@ def test_prenomscaledresidual() -> None:
     ls_init = 1e-3
     x = T.randn(2, dim)
     fn = nn.Linear(dim, dim)
-    layer = PreNormScaledResidual(fn, ls_init, dim)
+    layer = PreNormScaledResidual(fn, ls_init, pre_norm=True, dim=dim)
     out = layer(x)
     expected = x + ls_init * fn(layer.norm(x))
     assert T.allclose(out, expected)
@@ -243,6 +243,7 @@ def test_trasformervector_encoder() -> None:
         ctxt_dim=ctxt.shape[-1],
         encoder_config={
             "num_layers": 1,
+            "dim": 16,
             "layer_config": {
                 "ff_mult": 2,
                 "num_heads": 2,
@@ -250,6 +251,7 @@ def test_trasformervector_encoder() -> None:
         },
         classattention_config={
             "num_layers": 1,
+            "dim": 8,
             "layer_config": {
                 "ff_mult": 2,
                 "num_heads": 2,

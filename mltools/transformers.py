@@ -1056,12 +1056,10 @@ class TransformerVectorEncoder(nn.Module):
         self.pool.do_packed = do_packed
         self.encoder.unpack_output = not do_packed
 
-    def forward(
-        self, x: T.Tensor, mask: T.Tensor, ctxt: T.Tensor | None = None, **kwargs
-    ) -> T.Tensor:
+    def forward(self, x: T.Tensor, mask: T.Tensor, **kwargs) -> T.Tensor:
         if self.do_packed:
-            enc, culens, maxlen = self.encoder(x, mask=mask, ctxt=ctxt, **kwargs)
-            return self.pool(enc, mask=mask, ctxt=ctxt, culens=culens, maxlen=maxlen)
+            enc, culens, maxlen = self.encoder(x, mask=mask, **kwargs)
+            return self.pool(enc, mask=mask, culens=culens, maxlen=maxlen)
         enc = self.encoder(x, mask=mask, **kwargs)
         mask = self.encoder.get_combined_mask(mask)  # Might have gained registers
         return self.pool(enc, mask=mask, **kwargs)
