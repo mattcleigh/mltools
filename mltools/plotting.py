@@ -376,6 +376,7 @@ def plot_multi_correlations(
     bins: list | None = None,
     fig_scale: float = 1,
     n_kde_points: int = 50,
+    levels: int = 3,
     do_err: bool = True,
     do_norm: bool = True,
     hist_kwargs: list | None = None,
@@ -403,6 +404,8 @@ def plot_multi_correlations(
         Scaling factor for the figure size, by default 1.
     n_kde_points : int, optional
         Number of points for the KDE plot, by default 50.
+    levels : int, optional
+        Number of levels for the KDE plot, by default 3.
     do_err : bool, optional
         If True, add error bars to the histogram, by default True.
     do_norm : bool, optional
@@ -494,7 +497,7 @@ def plot_multi_correlations(
                         y=d[:, row],
                         ax=axes[row, column],
                         alpha=0.4,
-                        levels=3,
+                        levels=levels,
                         color=color,
                         fill=True,
                         clip=[x_bounds, y_bounds],

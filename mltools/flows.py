@@ -42,12 +42,12 @@ class Uniform(BaseDistribution):
             device=self.low.device,
         )
         z = self.low + (self.high - self.low) * eps
-        log_p = T.full((z.shape[0],), self.log_prob_val, device=z.device)
+        log_p = T.full((num_samples,), self.log_prob_val, device=z.device)
         return z, log_p
 
     def log_prob(self, z, context=None) -> T.Tensor:  # noqa: ARG002
         log_p = T.full((z.shape[0],), self.log_prob_val, device=z.device)
-        out_range = (z < self.low) | (z > self.high)
+        out_range = (z < self.low) | (self.high < z)
         ind_inf = T.any(out_range.view(z.shape[0], -1), dim=-1)
         log_p[ind_inf] = -T.inf
         return log_p
@@ -102,6 +102,7 @@ class Tanh(nf.flows.Flow):
     """Invertible tanh transformation.
 
     No liklihood contribution.
+    FORWARD IN NORMFLOWS IS Z -> X!!!
     """
 
     def __init__(self, prescale: float = 1.0):
@@ -109,11 +110,11 @@ class Tanh(nf.flows.Flow):
         self.prescale = prescale
 
     def forward(self, z, context=None) -> tuple[T.Tensor, T.Tensor]:  # noqa: ARG002
-        z = T.tanh(z * self.prescale)
+        z = T.atanh(z) / self.prescale
         return z, zero_flat(z)
 
     def inverse(self, z, context=None) -> tuple:  # noqa: ARG002
-        z = T.atanh(z) / self.prescale
+        z = T.tanh(z * self.prescale)
         return z, zero_flat(z)
 
 
@@ -152,7 +153,7 @@ class CoupledRationalQuadraticSpline(nf.flows.Flow):
                 dropout=dropout_probability,
                 ctxt_in_inpt=False,
                 ctxt_in_hddn=True,
-                ctxt_in_outp=False,
+                ctxt_in_outp=True,  # Want to set this to false in the future
             )
 
             # For the identity inits with a spline they must follow predefined values
@@ -171,7 +172,7 @@ class CoupledRationalQuadraticSpline(nf.flows.Flow):
             num_bins=num_bins,
             tails=tails,
             tail_bound=tail_bound,
-            apply_unconditional_transform=False,
+            apply_unconditional_transform=True,
             # This allows the non-transformed values to still be modified by a spline
         )
 
@@ -269,10 +270,6 @@ def rqs_flow(
     # Build the flow
     flows = []
 
-    # Initial prescaling layers
-    if tanh_prescale is not None:
-        flows += [Tanh(prescale=tanh_prescale)]
-
     for i in range(num_stacks):
         # For coupling layers we need to alternate the mask instead of permuting
         if flow_type == "coupling":
@@ -284,6 +281,10 @@ def rqs_flow(
             flows += [perm(xz_dim)]
         if do_norm:
             flows += [nf.flows.ActNorm(xz_dim)]
+
+    # Initial prescaling layers
+    if tanh_prescale is not None:
+        flows += [Tanh(prescale=tanh_prescale)]
 
     # Set base distribuiton
     if base_dist == "gaussian":
