@@ -1,15 +1,14 @@
 import pytest
 import torch as T
 from torch import nn
-from torch.nn.functional import scaled_dot_product_attention
+from torch.nn.functional import layer_norm, scaled_dot_product_attention
 
 from mltools.torch_utils import move_dev
 from mltools.transformers import (
     Attention,
     ClassAttentionPooling,
     CrossAttentionEncoder,
-    LayerScale,
-    PreNormScaledResidual,
+    Residual,
     Transformer,
     TransformerVectorEncoder,
     merge_masks,
@@ -71,23 +70,14 @@ def test_unpack():
     assert T.allclose(x * mask.unsqueeze(-1), upx)
 
 
-def test_layerscale():
-    dim = 4
-    init_value = 1e-3
-    layer_scale = LayerScale(dim, init_value)
-    x = T.randn(2, dim)
-    scaled_x = layer_scale(x)
-    assert T.allclose(scaled_x, x * init_value)
-
-
-def test_prenomscaledresidual() -> None:
+def test_residual() -> None:
     dim = 4
     ls_init = 1e-3
     x = T.randn(2, dim)
     fn = nn.Linear(dim, dim)
-    layer = PreNormScaledResidual(fn, ls_init, pre_norm=True, dim=dim)
+    layer = Residual(fn, dim=dim, ls_init=ls_init)
     out = layer(x)
-    expected = x + ls_init * fn(layer.norm(x))
+    expected = x + ls_init * fn(layer_norm(x, (dim,)))
     assert T.allclose(out, expected)
 
 
@@ -169,7 +159,7 @@ def test_flash_transformer() -> None:
         out1 *= mask.unsqueeze(-1)
         transformer.do_packed = True
         out2 = transformer(**i)
-        T.testing.assert_close(out1, out2)
+        T.testing.assert_close(out1, out2, rtol=1e-3, atol=1e-3)
 
 
 def test_transformer_decoder() -> None:

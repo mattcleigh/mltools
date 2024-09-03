@@ -11,7 +11,7 @@ from torch import nn
 
 from .flash import flash_cross_attention, flash_self_attention
 from .mlp import MLP
-from .torch_utils import attach_context
+from .torch_utils import append_dims
 
 log = logging.getLogger(__name__)
 
@@ -82,15 +82,19 @@ def merge_masks(
     return merged_mask
 
 
-def rotate_half(x: T.Tensor) -> T.Tensor:
-    """Split a tensor in two to and swaps the order."""
-    x1, x2 = x.chunk(2, dim=-1)
-    return T.cat((-x2, x1), dim=-1)
+def precompute_freqs_cis(x=T.Tensor, theta: float = 10000.0):
+    _B, S, D = x.shape
+    t = T.arange(S, device=x.device, dtype=T.float32)
+    freqs = 1.0 / (theta ** (T.arange(0, D, 2).float() / D))
+    freqs = T.outer(t, freqs)
+    return T.polar(T.ones_like(freqs), freqs)
 
 
-def apply_rotary_pos_emb(x: T.Tensor, cos: T.Tensor, sin: T.Tensor) -> T.Tensor:
-    """Apply rotary positional embedding for relative encoding."""
-    return (x * cos) + (rotate_half(x) * sin)
+def rope(x: T.Tensor, freqs_cis: T.Tensor) -> T.Tensor:
+    B, S, D = x.shape
+    q = T.view_as_complex(x.float().reshape(B, S, D // 2, 2))
+    q = T.view_as_real(q * freqs_cis)
+    return q.view_as(x).type_as(x)
 
 
 def pack(
@@ -258,71 +262,67 @@ def my_scaled_dot_product_attention(
     return attn_weight @ value
 
 
+class Identity(nn.Module):
+    """Simple identity module that can take any number of arguments."""
+
+    def __init__(self, *_args, **_kwargs) -> None:
+        super().__init__()
+
+    def forward(self, x: T.Tensor, *_args, **_kwargs) -> T.Tensor:
+        return x
+
+
+class RMSNorm(nn.Module):
+    """Root Mean Square Normalisation layer."""
+
+    def __init__(self, dim: int) -> None:
+        super().__init__()
+        self.dim = dim
+        self.scale = nn.Parameter(T.ones(dim))
+        self.const = dim ** (-0.5)
+
+    def forward(self, x: T.Tensor) -> T.Tensor:
+        norm = T.linalg.norm(x.float(), dim=-1, keepdim=True)
+        return x * self.scale / (norm * self.const + 1e-8).to(x.dtype)
+
+
 class RotaryEmbedding(nn.Module):
     """Applies rotary positional embedding for relative encoding."""
 
-    def __init__(self, dim: int, max_pos: int = 10_000):
+    def __init__(self, dim: int, theta: int = 10_000):
         super().__init__()
         self.dim = dim
+        self.theta = theta
+        self.register_buffer("freqs_cis", T.empty(0))
 
-        # Register the scales as a buffer
-        scales = 1.0 / (max_pos ** (T.arange(0, dim, 2).float() / dim))
-        self.register_buffer("scales", scales)
-
-        # Cache certain information to speed up training and inference
-        self._seq_len_cached = None
-        self._cos_cached = None
-        self._sin_cached = None
-
-    def _update_cos_sin_tables(self, x: T.Tensor) -> None:
-        seq_len = x.shape[-2]
-
-        # Reset the tables only if the sequence length / device / dtype has changed
-        if (
-            seq_len == self._seq_len_cached
-            and self._cos_cached.device == x.device
-            and self._cos_cached.dtype == x.dtype
-        ):
-            return
-
-        # Generate the the frequencies used for the sin cosine embedding
-        seq = T.arange(seq_len, device=x.device, dtype=T.float32)
-        freqs = T.outer(seq, self.scales)
-        emb = T.cat((freqs, freqs), dim=-1)
-
-        # Set the cached attributes to the new variables
-        self._seq_len_cached = seq_len
-        self._cos_cached = emb.cos()[None, None, :, :].to(x.dtype)
-        self._sin_cached = emb.sin()[None, None, :, :].to(x.dtype)
+    def _update_freqs_cis(self, x: T.Tensor) -> None:
+        """Reset the tables buffer if the sequence / device has changed."""
+        new_len = x.shape[1] != self.freqs_cis.shape[0]
+        new_device = x.device != self.freqs_cis.device
+        if new_len or new_device:
+            self.freqs_cis = precompute_freqs_cis(x, self.theta)
 
     def forward(self, q: T.Tensor, k: T.Tensor) -> tuple[T.Tensor, T.Tensor]:
-        return (
-            apply_rotary_pos_emb(q, self._cos_cached, self._sin_cached),
-            apply_rotary_pos_emb(k, self._cos_cached, self._sin_cached),
-        )
+        self._update_freqs_cis(q)
+        q = rope(q, self.freqs_cis)
+        self._update_freqs_cis(k)
+        k = rope(k, self.freqs_cis)
+        return q, k
 
 
-class LayerScale(nn.Module):
-    """Applies the LayerScale operation from the Cait vision transformer."""
+class Residual(nn.Module):
+    """Wraps a module with a normalisation layer, residual connection and gating.
 
-    def __init__(self, dim: int, init_value: float = 1e-3) -> None:
-        super().__init__()
-        assert dim > 0, "The dimension must be greater than zero!"
-        self.gamma = nn.Parameter(init_value * T.ones(dim))
-
-    def forward(self, x: T.Tensor) -> T.Tensor:
-        return x * self.gamma
-
-
-class PreNormScaledResidual(nn.Module):
-    """Wraps a module with pre-norm and layerscale with a residual connection."""
+    The scale, shift and gate can be determined by a context tensor.
+    Otherwise it is simply the LayerNorm weight+bias and LayerScale
+    """
 
     def __init__(
         self,
         fn: nn.Module,
-        layerscale_init: float | None = 1e-3,
-        pre_norm: bool = True,
         dim: int = 0,
+        ctxt_dim: int = 0,
+        ls_init: float | None = 1.0,
     ) -> None:
         """Parameters
         ----------
@@ -331,58 +331,73 @@ class PreNormScaledResidual(nn.Module):
         dim : int
             The dimension of the input and output.
             If zero we will try get it from the fn module.
-        layerscale_init : float | None, optional
-            The initial value for the layerscale, by default 1e-5.
-            If None, then no layerscale is applied.
+        ctxt_dim : int, optional
+            The dimension of the context, by default 0.
+            Used in the modulator to determine the scale, shift and gate.
+        ls_init : float | None, optional
+            The initial value for the gate, by default 1.0.
         """
         super().__init__()
-        dim = dim or fn.dim
+        self.dim = dim or fn.dim
         self.fn = fn
-        self.norm = nn.LayerNorm(dim) if pre_norm else nn.Identity()
-        self.ls = (
-            LayerScale(dim, layerscale_init)
-            if layerscale_init is not None
-            else nn.Identity()
-        )
+        self.ctxt_dim = ctxt_dim
+        self.ls_init = ls_init
+        if ctxt_dim:
+            self.norm = nn.LayerNorm(dim, elementwise_affine=False)
+            self.ctxt_layer = nn.Sequential(nn.SiLU(), nn.Linear(ctxt_dim, dim * 3))
+        else:
+            self.norm = nn.LayerNorm(dim)  # Scale and shift are in here (faster)
+            self.gate = nn.Parameter(T.empty(dim))  # LayerScale
+        self.reset_parameters()
 
-    def forward(self, x: T.Tensor, *args, **kwargs) -> T.Tensor:
-        return self.ls(self.fn(self.norm(x), *args, **kwargs)) + x
+    def reset_parameters(self) -> None:
+        """Reset the parameters of the module."""
+        if not self.ctxt_dim:
+            nn.init.constant_(self.gate, self.ls_init)
+
+    def forward(
+        self,
+        x: T.Tensor,
+        *args,
+        ctxt: T.Tensor | None = None,
+        **kwargs,
+    ) -> T.Tensor:
+        if self.ctxt_dim:
+            ctxt_out = self.ctxt_layer(ctxt)
+            ctxt_out = append_dims(ctxt_out, x.dim(), dim=1)
+            scale, shift, gate = ctxt_out.chunk(3, dim=-1)
+            tmp = self.norm(x) * (scale + 1) + shift
+        else:
+            gate = self.gate
+            tmp = self.norm(x)  # Scale and shift applied internally (faster)
+        return x + self.fn(tmp, *args, **kwargs) * gate
 
 
 class SwiGLUNet(nn.Module):
     """Simple gated bilinear feedfoward network with the Swish activation."""
 
-    def __init__(
-        self, dim: int, hddn_dim: int, ctxt_dim: int = 0, dropout: float = 0.0
-    ) -> None:
+    def __init__(self, dim: int, hddn_dim: int, dropout: float = 0.0) -> None:
         super().__init__()
         self.dim = dim  # Usefull for wrapping the module
-        self.ctxt_dim = ctxt_dim
-        self.lin1 = nn.Linear(dim + ctxt_dim, 2 * hddn_dim)
+        self.lin1 = nn.Linear(dim, 2 * hddn_dim)
         self.lin2 = nn.Linear(hddn_dim, dim)
         self.drop = nn.Dropout(dropout)
 
-    def forward(self, x: T.Tensor, ctxt: T.Tensor | None = None) -> T.Tensor:
-        if self.ctxt_dim:
-            x = attach_context(x, ctxt)
+    def forward(self, x: T.Tensor) -> T.Tensor:
         x1, x2 = self.lin1(x).chunk(2, dim=-1)
         return self.lin2(self.drop(F.silu(x1) * x2))
 
 
 class Attention(nn.Module):
-    """Basic multiheaded attention block.
-
-    Context is embedded into the sequence pre MHA as in DiffT:
-     - https://arxiv.org/abs/2312.02139
-    """
+    """Basic multiheaded attention block."""
 
     def __init__(
         self,
         dim: int,
-        ctxt_dim: int = 0,
         num_heads: int = 1,
         dropout: float = 0,
         do_rotary: bool = False,
+        qk_norm: bool = False,
     ) -> None:
         """Initialise the attention block.
 
@@ -390,14 +405,14 @@ class Attention(nn.Module):
         ----------
         dim : int
             The dimension of the input and output.
-        ctxt_dim : int, optional
-            The dimension of the context, by default 0.
         num_heads : int, optional
             The number of attention heads, by default 1.
         dropout : float, optional
             The dropout probability, by default 0.
         do_rotary : bool, optional
             Whether to use rotary positional encoding, by default False.
+        qk_norm : bool, optional
+            Whether to use RMSNorm on the query and key, by default False.
         """
         super().__init__()
         assert dim % num_heads == 0, "Dim must be divisible by the number of heads!"
@@ -405,10 +420,10 @@ class Attention(nn.Module):
         # Attributes
         self.dim = dim
         self.num_heads = num_heads
-        self.ctxt_dim = ctxt_dim * 0  # TODO: Fix this
         self.attn_dim = dim // num_heads
         self.dropout = dropout
         self.do_rotary = do_rotary
+        self.qk_norm = qk_norm
 
         # Better parallelism for self-attention when using parameters directly
         self.attn_in_w = nn.Parameter(T.empty(3 * dim, dim))  # weights
@@ -418,8 +433,9 @@ class Attention(nn.Module):
         # Optional extra layers
         if self.do_rotary:
             self.rotary = RotaryEmbedding(dim)
-        if self.ctxt_dim:
-            self.ctxt_mixer = nn.Linear(ctxt_dim + dim, dim)
+        if self.qk_norm:
+            self.q_norm = RMSNorm(dim)
+            self.k_norm = RMSNorm(dim)
 
         self.reset_parameters()
 
@@ -435,7 +451,6 @@ class Attention(nn.Module):
         mask: T.BoolTensor | None = None,
         kv: T.Tensor | None = None,
         kv_mask: T.BoolTensor | None = None,
-        ctxt: T.Tensor | None = None,
         attn_mask: T.BoolTensor | None = None,
         attn_bias: T.Tensor | None = None,
         culens: T.Tensor | None = None,
@@ -447,15 +462,12 @@ class Attention(nn.Module):
         """Pass through the attention block."""
         drop = self.dropout if self.training else 0.0
 
-        # Mix in the context with the main sequence
-        if self.ctxt_dim:
-            x = self.ctxt_mixer(attach_context(x, ctxt))
-
         # If providing the input with culens and maxlen, we assume packed attention
         if culens is not None and maxlen is not None:
             assert attn_mask is None, "Packed attn does not support attention masks!"
             assert attn_bias is None, "Packed attn does not support attention bias!"
             assert not self.do_rotary, "Packed attn does not support rotary emb!"
+            assert not self.qk_norm, "Packed attn does not support qk norm!"
 
             if kv is None:
                 a_out = flash_self_attention(
@@ -489,6 +501,11 @@ class Attention(nn.Module):
             B, _S, _D = x.shape
             q, k, v = single_projection(x, kv, self.attn_in_w, self.attn_in_b)
 
+            # Apply RMSNorm to the query and key tensors
+            if self.qk_norm:
+                q = self.q_norm(q)
+                k = self.k_norm(k)
+
             # transform tensors -> B,NH,S,HD
             shape = (B, -1, self.num_heads, self.attn_dim)
             q, k, v = (t.view(shape).transpose(1, 2).contiguous() for t in (q, k, v))
@@ -521,9 +538,7 @@ class EncoderBlock(nn.Module):
         attn_dropout: float = 0,
         num_heads: int = 8,
         do_rotary: bool = False,
-        layerscale_init: float | None = 1e-3,
-        pre_norm: bool = True,
-        dropout: float = 0,
+        ls_init: float | None = 1,
     ) -> None:
         """Initialise the encoder block.
 
@@ -544,40 +559,24 @@ class EncoderBlock(nn.Module):
             The dropout probability used in the attention network, by default 0
         do_rotary : bool, optional
             Whether to use rotary positional encoding, by default False
-        layerscale_init : float | None, optional
-            The initial value for the layerscale, by default 1e-3
+        ls_init : float | None, optional
+            The initial value for the layerscale, by default 1
             If None, then no layerscale is applied
-        pre_norm : bool, optional
-            Whether to use pre-norm residual connections, by default True
-        dropout : float, optional
-            (Deprecated) The dropout probability, by default 0
-            In favour of dropping this and using the specific dropout values for
-            each submodule
         """
         super().__init__()
-
-        # Attributes
         self.dim = dim
         self.num_heads = num_heads
-        if dropout:
-            log.warning("The dropout parameter is deprecated and will be removed!")
-            ff_dropout = dropout
-            attn_dropout = dropout
 
         # Submodules
-        self.attn = PreNormScaledResidual(
-            Attention(dim, ctxt_dim, num_heads, attn_dropout, do_rotary),
-            layerscale_init,
-            pre_norm,
-        )
-        self.ff = PreNormScaledResidual(
-            SwiGLUNet(dim, ff_mult * dim, ctxt_dim, ff_dropout),
-            layerscale_init,
-            pre_norm,
-        )
+        attn = Attention(dim, num_heads, attn_dropout, do_rotary)
+        ff = SwiGLUNet(dim, ff_mult * dim, ff_dropout)
+
+        # Residual blocks
+        self.res_attn = Residual(attn, dim, ctxt_dim, ls_init)
+        self.ff = Residual(ff, dim, ctxt_dim, ls_init)
 
     def forward(self, x: T.Tensor, ctxt: T.Tensor | None = None, **kwargs) -> T.Tensor:
-        x = self.attn(x, ctxt=ctxt, **kwargs)
+        x = self.res_attn(x, ctxt=ctxt, **kwargs)
         return self.ff(x, ctxt=ctxt)
 
 
@@ -589,52 +588,26 @@ class DecoderBlock(nn.Module):
         dim: int,
         ctxt_dim: int = 0,
         ff_mult: int = 2,
+        ff_dropout: float = 0,
+        attn_dropout: float = 0,
         num_heads: int = 8,
-        dropout: float = 0,
         do_rotary: bool = False,
-        layerscale_init: float | None = 1e-3,
+        ls_init: float | None = 1,
     ) -> None:
-        """Initialise the decoder block.
-
-        Parameters
-        ----------
-        dim : int
-            The dimension of of the block
-        ctxt_dim : int, optional
-            The dimension of the context, by default 0
-            Used in both the attention and feedforward submodules
-        ff_mult : int, optional
-            The multiplier for the feedforward network, by default 2
-        num_heads : int, optional
-            The number of attention heads, by default 8
-        dropout : float, optional
-            The dropout probability, by default 0
-            Used in both the attention and feedforward submodules
-        do_rotary : bool, optional
-            Whether to use rotary positional encoding, by default False
-        layerscale_init : float | None, optional
-            The initial value for the layerscale, by default 1e-3
-            If None, then no layerscale is applied
-        """
+        """Initialise the decoder block."""
         super().__init__()
-
-        # Attributes
         self.dim = dim
         self.num_heads = num_heads
 
         # Submodules
-        self.self_attn = PreNormScaledResidual(
-            Attention(dim, ctxt_dim, num_heads, dropout, do_rotary),
-            layerscale_init,
-        )
+        s_attn = Attention(dim, num_heads, attn_dropout, do_rotary)
+        c_attn = Attention(dim, num_heads, attn_dropout)
+        ff = SwiGLUNet(dim, ff_mult * dim, ff_dropout)
 
-        self.cross_attn = PreNormScaledResidual(
-            Attention(dim, ctxt_dim, num_heads, dropout),
-            layerscale_init,
-        )
-        self.ff = PreNormScaledResidual(
-            SwiGLUNet(dim, ff_mult * dim, ctxt_dim, dropout), layerscale_init
-        )
+        # Residual blocks
+        self.s_attn = Residual(s_attn, dim, ctxt_dim, ls_init)
+        self.c_attn = Residual(c_attn, dim, ctxt_dim, ls_init)
+        self.ff = Residual(ff, dim, ctxt_dim, ls_init)
 
     def forward(
         self,
@@ -648,9 +621,9 @@ class DecoderBlock(nn.Module):
         attn_bias: T.Tensor | None = None,
     ) -> T.Tensor:
         """Pass through the decoder block."""
-        x = self.self_attn(x, mask, None, None, ctxt, attn_mask, attn_bias)
-        x = self.cross_attn(x, mask, kv, kv_mask, ctxt, None, None)
-        return self.ff(x, ctxt)
+        x = self.s_attn(x, mask, None, None, attn_mask, attn_bias, ctxt=ctxt)
+        x = self.c_attn(x, mask, kv, kv_mask, None, None, ctxt=ctxt)
+        return self.ff(x, ctxt=ctxt)
 
 
 class Transformer(nn.Module):
@@ -768,7 +741,6 @@ class Transformer(nn.Module):
         Why are these seperate?
         - Added flexibility for doing something to the inputs (replacing with null)
           once they are projected into the transformer dimension.
-        - Normal usage should just use this combined method
         """
         return self.encode(self.project(x), **kwargs)
 
@@ -954,7 +926,7 @@ class ClassAttentionPooling(nn.Module):
 
         # The cross attention pooling layers
         self.layers = nn.ModuleList([
-            EncoderBlock(self.dim, ctxt_dim, pre_norm=False, **self.layer_config)
+            EncoderBlock(self.dim, ctxt_dim, **self.layer_config)
             for _ in range(num_layers)
         ])
 
