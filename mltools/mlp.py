@@ -150,7 +150,7 @@ class MLP(nn.Module):
         do_res: bool = False,
         ctxt_in_inpt: bool = True,
         ctxt_in_hddn: bool = False,
-        ctxt_in_out: bool = False,
+        ctxt_in_outp: bool = False,
         do_bayesian: bool = False,
         init_zeros: bool = False,
     ) -> None:
@@ -189,7 +189,7 @@ class MLP(nn.Module):
             If to inject context into the input layer, by default True
         ctxt_in_hddn : bool, optional
             If to inject context into each hidden layer, by default False
-        ctxt_in_out : bool, optional
+        ctxt_in_outp : bool, optional
             If to inject context into the output layer, by default False
         do_bayesian : bool, optional
             If to use bayesian linear layers, by default False
@@ -199,7 +199,7 @@ class MLP(nn.Module):
         super().__init__()
 
         # Check that the context is used somewhere
-        if ctxt_dim and not ctxt_in_inpt and not ctxt_in_hddn and not ctxt_in_out:
+        if ctxt_dim and not ctxt_in_inpt and not ctxt_in_hddn and not ctxt_in_outp:
             raise ValueError("Network has context inputs but nowhere to use them!")
 
         # Attributes
@@ -249,7 +249,7 @@ class MLP(nn.Module):
         self.output_block = MLPBlock(
             inpt_dim=self.hddn_dim[-1],
             outp_dim=self.outp_dim,
-            ctxt_dim=self.ctxt_dim * ctxt_in_out,
+            ctxt_dim=self.ctxt_dim * ctxt_in_outp,
             activation=act_o,
             do_bayesian=do_bayesian,
             norm=norm if norm_on_output else None,
@@ -277,7 +277,7 @@ class MLP(nn.Module):
         inputs = self.input_block(inputs, ctxt)
         for h_block in self.hidden_blocks:
             inputs = h_block(inputs, ctxt)
-        return self.output_block(inputs)
+        return self.output_block(inputs, ctxt)
 
     def __repr__(self):
         string = ""

@@ -53,11 +53,6 @@ def test_coupled_rational_quadratic_spline():
     assert T.allclose(z, z_restored, atol=1e-3)  # Don't be too strict
 
 
-flow_type = "coupling"
-do_lu = True
-ctxt_dim = 0
-
-
 # Test rqs_flow function
 @pytest.mark.parametrize("flow_type", ["coupling", "autoregressive"])
 @pytest.mark.parametrize("do_lu", [True, False])

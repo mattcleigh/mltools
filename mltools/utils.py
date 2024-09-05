@@ -20,11 +20,11 @@ def standard_job_array(
     image_path: str,
     command: str,
     log_dir: str,
-    n_gpus: int,
-    n_cpus: int,
-    time_hrs: int,
-    mem_gb: int,
     opt_dict: dict,
+    n_gpus: int = 0,
+    n_cpus: int = 1,
+    time_hrs: int = 1,
+    mem_gb: int = 4,
     vram_per_gpu: int = 0,
     gpu_type: str = "",
     use_dashes: bool = True,
@@ -44,12 +44,11 @@ def standard_job_array(
     # Otherwise we just take the number of options in the first key
     # But we check that all the options are lists of the same length
     else:
-        n_jobs = len(next(iter(opt_dict.values())))
-        for k in opt_dict:
-            vals = opt_dict[k]
-            if len(vals) == 1:
+        n_jobs = max(len(v) for v in opt_dict.values())
+        for v in opt_dict.values():
+            if len(v) == 1:
                 continue  # No need to check single length
-            if len(vals) != n_jobs:
+            if len(v) != n_jobs:
                 raise ValueError("All options must have the same number of values")
 
     # Creating the slurm submision file

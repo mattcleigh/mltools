@@ -6,6 +6,7 @@ from typing import Any, Literal
 import normflows as nf
 import numpy as np
 import torch as T
+from normflows.distributions.base import BaseDistribution, DiagGaussian
 from normflows.flows.neural_spline.coupling import PiecewiseRationalQuadraticCoupling
 from normflows.utils.masks import create_alternating_binary_mask
 from normflows.utils.splines import DEFAULT_MIN_DERIVATIVE
@@ -15,21 +16,63 @@ from .mlp import MLP
 from .torch_utils import base_modules
 
 
+class Uniform(BaseDistribution):
+    """Multivariate uniform distribution.
+
+    Needed because default normflows doesnt save low and high as buffers, leading to
+    mistakes when using a GPU.
+    """
+
+    def __init__(self, shape, low=-1.0, high=1.0):
+        super().__init__()
+        if isinstance(shape, int):
+            shape = (shape,)
+        if isinstance(shape, list):
+            shape = tuple(shape)
+        self.shape = shape
+        self.d = np.prod(shape)
+        self.register_buffer("low", T.tensor(low))
+        self.register_buffer("high", T.tensor(high))
+        self.log_prob_val = -self.d * np.log(self.high - self.low)
+
+    def forward(self, num_samples=1, context=None) -> tuple:  # noqa: ARG002
+        eps = T.rand(
+            (num_samples, *self.shape),
+            dtype=self.low.dtype,
+            device=self.low.device,
+        )
+        z = self.low + (self.high - self.low) * eps
+        log_p = T.full((num_samples,), self.log_prob_val, device=z.device)
+        return z, log_p
+
+    def log_prob(self, z, context=None) -> T.Tensor:  # noqa: ARG002
+        log_p = T.full((z.shape[0],), self.log_prob_val, device=z.device)
+        out_range = (z < self.low) | (self.high < z)
+        ind_inf = T.any(out_range.view(z.shape[0], -1), dim=-1)
+        log_p[ind_inf] = -T.inf
+        return log_p
+
+
+def zero_flat(z: T.Tensor) -> T.Tensor:
+    return T.zeros(z.shape[0], dtype=z.dtype, device=z.device)
+
+
 class PermuteEvenOdd(nf.flows.Flow):
     """Permutation features along the channel dimension swapping even and odd values."""
 
     def __init__(self) -> None:
         super().__init__()
 
-    def forward(self, z, context=None) -> tuple:  # noqa: ARG002
+    def _permute(self, z: T.Tensor) -> T.Tensor:
         z1 = z[:, 0::2]
         z2 = z[:, 1::2]
-        z = T.stack((z2, z1), dim=2).view(z.shape[0], -1)
-        log_det = T.zeros(z.shape[0], device=z.device)
-        return z, log_det
+        return T.stack((z2, z1), dim=2).view(z.shape[0], -1)
 
-    def inverse(self, z, context=None) -> tuple:
-        return self.forward(z, context)
+    def forward(self, z, context=None) -> tuple:  # noqa: ARG002
+        return self._permute(z), zero_flat(z)
+
+    def inverse(self, z, context=None) -> tuple:  # noqa: ARG002
+        return self._permute(z), zero_flat(z)
 
 
 class LULinear(nf.flows.Flow):
@@ -55,6 +98,26 @@ class LULinear(nf.flows.Flow):
     def inverse(self, z, context=None) -> tuple:
         z, log_det = self.linear(z, context=context)
         return z, log_det.view(-1)
+
+
+class Tanh(nf.flows.Flow):
+    """Invertible tanh transformation.
+
+    No liklihood contribution.
+    FORWARD IN NORMFLOWS IS Z -> X!!!
+    """
+
+    def __init__(self, prescale: float = 1.0):
+        super().__init__()
+        self.prescale = prescale
+
+    def forward(self, z, context=None) -> tuple[T.Tensor, T.Tensor]:  # noqa: ARG002
+        z = T.atanh(z) / self.prescale
+        return z, zero_flat(z)
+
+    def inverse(self, z, context=None) -> tuple:  # noqa: ARG002
+        z = T.tanh(z * self.prescale)
+        return z, zero_flat(z)
 
 
 class CoupledRationalQuadraticSpline(nf.flows.Flow):
@@ -90,8 +153,9 @@ class CoupledRationalQuadraticSpline(nf.flows.Flow):
                 num_blocks=num_blocks,
                 act_h=activation,
                 dropout=dropout_probability,
+                ctxt_in_inpt=False,
                 ctxt_in_hddn=True,
-                ctxt_in_inpt=True,
+                ctxt_in_outp=True,  # Want to set this to false in the future
             )
 
             # For the identity inits with a spline they must follow predefined values
@@ -135,7 +199,9 @@ def rqs_flow(
     num_bins: int = 8,
     do_lu: bool = True,
     init_identity: bool = True,
+    tanh_prescale: float | None = None,
     do_norm: bool = False,
+    base_dist: Literal["gaussian", "uniform"] = "gaussian",
     flow_type: Literal["autoregressive", "coupling"] = "coupling",
 ) -> nf.NormalizingFlow | nf.ConditionalNormalizingFlow:
     """Construct a rational quadratic spline normalising flow.
@@ -166,8 +232,12 @@ def rqs_flow(
     init_identity : bool, optional
         Whether to initialise the coupling layers as the identity. By default True.
         Strongly recommended for stability.
+    tanh_prescale : float, optional
+        Whether to prescale the input with a tanh function. By default None.
     do_norm : bool, optional
         Whether to use activation normalisation in the flow. By default False.
+    base_dist : str, optional
+        The base distribution to use. By default "gaussian".
     flow_type : str
         The type of flow to use. By default "coupling".
     """
@@ -201,6 +271,7 @@ def rqs_flow(
 
     # Build the flow
     flows = []
+
     for i in range(num_stacks):
         # For coupling layers we need to alternate the mask instead of permuting
         if flow_type == "coupling":
@@ -213,8 +284,15 @@ def rqs_flow(
         if do_norm:
             flows += [nf.flows.ActNorm(xz_dim)]
 
+    # Initial prescaling layers
+    if tanh_prescale is not None:
+        flows += [Tanh(prescale=tanh_prescale)]
+
     # Set base distribuiton
-    q0 = nf.distributions.DiagGaussian(xz_dim, trainable=False)
+    if base_dist == "gaussian":
+        q0 = DiagGaussian(xz_dim, trainable=False)
+    elif base_dist == "uniform":
+        q0 = Uniform(xz_dim)
 
     # Return the full flow
     if ctxt_dim:
