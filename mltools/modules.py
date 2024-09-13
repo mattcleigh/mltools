@@ -406,7 +406,7 @@ class CosineEncodingLayer(nn.Module):
         elif scheme == "pow":
             freqs = 2**freqs
         elif scheme == "linear":
-            freqs = freqs + 1
+            freqs += 1
         else:
             raise ValueError(f"Unrecognised frequency scaling: {scheme}")
         self.register_buffer("freqs", freqs)

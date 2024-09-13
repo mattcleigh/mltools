@@ -620,10 +620,11 @@ class DecoderBlock(nn.Module):
         kv_mask: T.BoolTensor | None = None,
         attn_mask: T.Tensor | None = None,
         attn_bias: T.Tensor | None = None,
+        **kwargs,
     ) -> T.Tensor:
         """Pass through the decoder block."""
-        x = self.s_attn(x, mask, None, None, attn_mask, attn_bias, ctxt=ctxt)
-        x = self.c_attn(x, mask, kv, kv_mask, None, None, ctxt=ctxt)
+        x = self.s_attn(x, mask, None, None, attn_mask, attn_bias, ctxt=ctxt, **kwargs)
+        x = self.c_attn(x, mask, kv, kv_mask, None, None, ctxt=ctxt, **kwargs)
         return self.ff(x, ctxt=ctxt)
 
 
@@ -696,7 +697,6 @@ class Transformer(nn.Module):
         super().__init__()
 
         # Check the inputs
-        assert not (use_decoder and do_packed), "Packed only supports encoder blocks!"
         assert not (do_absolute_enc and max_seq_len == 0), "Define max_seq_len!"
 
         # Safe Defaults
@@ -911,7 +911,7 @@ class ClassAttentionPooling(nn.Module):
         layer_config = deepcopy(layer_config) or {}
 
         # LayerScale should be turned off for class attention pooling!
-        layer_config["layerscale_init"] = None
+        layer_config["ls_init"] = None
 
         # Attributes
         self.dim = dim
