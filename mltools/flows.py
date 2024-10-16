@@ -248,7 +248,7 @@ def rqs_flow(
         "num_input_channels": xz_dim,
         "num_blocks": mlp_depth,
         "num_hidden_channels": mlp_width,
-        "num_context_channels": ctxt_dim if ctxt_dim else None,
+        "num_context_channels": ctxt_dim or None,
         "num_bins": num_bins,
         "tail_bound": tail_bound,
         "activation": mlp_act,

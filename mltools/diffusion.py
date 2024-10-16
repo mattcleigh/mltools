@@ -10,6 +10,24 @@ from tqdm import trange
 from .torch_utils import GradsOff, append_dims
 
 
+def cfm_vals(
+    x0: T.Tensor,
+    do_sigmoid: bool = True,
+    time_embedding: nn.Module | None = None,
+) -> tuple:
+    """Calculate the values needed for continuous flow matching."""
+    if do_sigmoid:  # Time values: Batch x 1
+        t = T.sigmoid(T.randn(x0.shape[0], 1, device=x0.device))
+    else:
+        t = T.rand(x0.shape[0], 1, device=x0.device)
+    ctxt_t = time_embedding(t) if time_embedding is not None else t
+    t = append_dims(t, x0.ndim)
+    x1 = T.randn_like(x0)
+    xt = (1 - t) * x0 + t * x1
+    v = x1 - x0
+    return xt, v, t, x1, ctxt_t
+
+
 def c_values(sigmas: T.Tensor) -> tuple:
     """Calculate the Karras C values.
 

@@ -16,11 +16,6 @@ def unison_shuffled_copies(*args) -> tuple:
     tuple
         A tuple of shuffled copies of the input arrays.
 
-    Raises
-    ------
-    AssertionError
-        If the input arrays do not have the same length along the first axis.
-
     Examples
     --------
     >>> a = np.array([1, 2, 3])

@@ -319,11 +319,6 @@ def add_hist(
         Additional keyword arguments to pass to the errorbar function, by default None.
     do_err : bool, optional
         Whether to include errorbars, by default True.
-
-    Returns
-    -------
-    None
-        The function only has side effects.
     """
     # Compute the histogram
     hist, _ = np.histogram(data, bins)
