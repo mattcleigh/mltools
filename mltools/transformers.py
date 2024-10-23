@@ -1088,8 +1088,8 @@ class WrappedTransformer(nn.Module):
             **node_embd_config,
         )
         self.outp_embd = MLP(
-            inpt_dim=self.dim,
-            outp_dim=self.transformer.outp_dim,
+            inpt_dim=self.transformer.outp_dim,
+            outp_dim=self.outp_dim,
             ctxt_dim=self.ctxt_out,
             **outp_embd_config,
         )
