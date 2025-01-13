@@ -87,11 +87,11 @@ def append_dims(x: T.Tensor, target_dims: int, dim=-1) -> T.Tensor:
     if (dim_diff := target_dims - x.dim()) < 0:
         raise ValueError(f"x has more dims ({x.ndim}) than target ({target_dims})")
 
-    # If the difference is 0, then return the tensor
+    # Fast exit conditions
     if dim_diff == 0:
         return x
-
-    # Fast exit for appending to the end or beginning
+    if dim_diff == 1:
+        return x.unsqueeze(dim)
     if dim == -1:
         return x[(...,) + (None,) * dim_diff]
     if dim == 0:

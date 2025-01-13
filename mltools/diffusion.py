@@ -10,7 +10,8 @@ from tqdm import trange
 from .torch_utils import GradsOff, append_dims
 
 
-def cfm_vals(
+@T.no_grad()
+def cfm_values(
     x0: T.Tensor,
     do_sigmoid: bool = True,
     time_embedding: nn.Module | None = None,

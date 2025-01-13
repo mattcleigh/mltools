@@ -11,7 +11,7 @@ class GRF(Function):
     """A gradient reversal function.
 
     - The forward pass is the identity function
-    - The backward pass multiplies the upstream gradients by -1
+    - The backward pass multiplies the upstream gradients by -alpha
     """
 
     @staticmethod
@@ -340,35 +340,31 @@ class IterativeNormLayer(nn.Module):
         self.frozen.fill_(False)
 
 
-class CosineEncodingLayer(nn.Module):
+class CosineEncoding(nn.Module):
     """Module for applying cosine encoding with increasing frequencies."""
 
     def __init__(
         self,
         *,
-        inpt_dim: int,
-        encoding_dim: int,
+        outp_dim: int,
         scheme: str = "exp",
-        min_value: float | list | T.Tensor = 0.0,
-        max_value: float | list | T.Tensor = 1.0,
+        min_value: float = 0.0,
+        max_value: float = 1.0,
         do_sin: bool = False,
     ) -> None:
         """Parameters
         ----------
-        inpt_dim : int
-            The dimension of the input tensor.
         encoding_dim : int
             The dimension of the encoding tensor.
         scheme : str, optional
             The frequency scaling scheme to use. Options are "exponential" or "linear".
             Default is "exponential".
-        min_value : float | list | T.Tensor, optional
+        min_value : float, optional
             The minimum value for the input tensor. Default is 0.0.
-        max_value : float | list | T.Tensor, optional
+        max_value : float, optional
             The maximum value for the input tensor. Default is 1.0.
         do_sin : bool, optional
-            If True, applies both sine and cosine transformations to the input tensor.
-            Default is False.
+            Whether to include the sine component. Default is False.
 
         Raises
         ------
@@ -376,31 +372,19 @@ class CosineEncodingLayer(nn.Module):
             If an unrecognised frequency scaling scheme is provided.
         """
         super().__init__()
-
-        # Check that the output dim is compatible with cos/sin
         if do_sin:
-            assert encoding_dim % 2 == 0
+            assert outp_dim % 2 == 0, "If using cos+sin, output dim must be even!"
 
         # Attributes
-        self.scheme = scheme
         self.do_sin = do_sin
-        self.inpt_dim = inpt_dim
-        self.encoding_dim = encoding_dim
-        self.outp_dim = encoding_dim * inpt_dim
-
-        # Convert the min and max to tensors
-        if not isinstance(min_value, T.Tensor):
-            min_value = T.tensor(min_value)
-        if not isinstance(max_value, T.Tensor):
-            max_value = T.tensor(max_value)
-
-        # Store the min and max values as buffers
-        self.register_buffer("min_value", min_value)
-        self.register_buffer("max_value", max_value)
+        self.outp_dim = outp_dim
+        self.register_buffer("min_value", T.tensor(min_value))
+        self.register_buffer("max_value", T.tensor(max_value))
+        self.register_buffer("range", self.max_value - self.min_value)
 
         # Create the frequencies to use
-        freq_dim = encoding_dim // 2 if do_sin else encoding_dim
-        freqs = T.arange(freq_dim).float().unsqueeze(-1)
+        freq_dim = outp_dim // 2 if do_sin else outp_dim
+        freqs = T.arange(freq_dim).float()
         if scheme in {"exp", "exponential"}:
             freqs = T.exp(freqs)
         elif scheme == "pow":
@@ -413,38 +397,20 @@ class CosineEncodingLayer(nn.Module):
 
     def _check_bounds(self, x: T.Tensor) -> None:
         """Throw a warning if the input to the layer will yeild degenerate outputs."""
-        # Check to see if the inputs are within the bounds
-        if T.any(x > (self.max_value + 1e-4)):
-            print("Warning! Passing values to CosineEncodingLayer encoding above max!")
-        if T.any(x < (self.min_value - 1e-4)):
-            print("Warning! Passing values to CosineEncodingLayer encoding below min!")
+        if T.any(x > (self.max_value + 1e-6)):
+            print("Warning! Passing values to CosineEncoding encoding above max!")
+        if T.any(x < (self.min_value - 1e-6)):
+            print("Warning! Passing values to CosineEncoding encoding below min!")
 
     def forward(self, x: T.Tensor) -> T.Tensor:
         """Encode the final dimension of x with sines and cosines."""
         self._check_bounds(x)
-
-        # Check if an unsqueeze is necc
-        if x.shape[-1] != self.inpt_dim:
-            if self.inpt_dim == 1:
-                x = x.unsqueeze(-1)
-            else:
-                raise ValueError(
-                    f"Incompatible shapes for encoding: {x.shape[-1]}, {self.inpt_dim}"
-                )
-
-        # Scale the inputs between 0 and pi
-        x = (x - self.min_value) * math.pi / (self.max_value - self.min_value)
-
-        # Apply with the frequencies which broadcasts all inputs
-        x = (x.unsqueeze(-2) * self.freqs).flatten(start_dim=-2)
-
-        # Return either the sin/cosine transformations
-        if self.do_sin:
-            return T.cat([x.cos(), x.sin()], dim=-1)
-        return x.cos()
+        x = (x - self.min_value) * math.pi / self.range  # Scale to [0, PI]
+        x = x.unsqueeze(-1) * self.freqs  # Expand final dimension to multiple freq vec
+        return T.cat([x.cos(), x.sin()], dim=-1) if self.do_sin else x.cos()
 
     def __str__(self) -> str:
         return self.__repr__()
 
     def __repr__(self) -> str:
-        return f"CosineEncodingLayer({self.inpt_dim}, {self.encoding_dim})"
+        return f"CosineEncoding({self.outp_dim})"
