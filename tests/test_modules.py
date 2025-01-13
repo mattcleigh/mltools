@@ -1,7 +1,7 @@
 import pytest
 import torch as T
 
-from mltools.modules import GRL, CosineEncodingLayer, IterativeNormLayer
+from mltools.modules import GRL, CosineEncoding, IterativeNormLayer
 
 
 def test_GRL_forward():
@@ -62,12 +62,23 @@ def test_IterativeNormLayer_forward_reverse():
 @pytest.mark.parametrize("scheme", ["exp", "pow", "linear"])
 @pytest.mark.parametrize("do_sin", [True, False])
 def test_cosine_encoding_layer(scheme, do_sin):
-    layer = CosineEncodingLayer(
-        inpt_dim=4,
-        encoding_dim=8,
+    layer = CosineEncoding(
+        outp_dim=4,
         scheme=scheme,
         do_sin=do_sin,
     )
-    inpt = T.rand(10, 4)
-    output = layer(inpt)
-    assert output.shape == (10, 4 * 8)
+    x = T.rand(10, 3)
+    output = layer(x)
+    assert output.shape == (10, 3, 4)
+
+
+if __name__ == "__main__":
+    test_GRL_forward()
+    test_GRL_backward()
+    test_IterativeNormLayer_fit()
+    test_IterativeNormLayer_forward()
+    test_IterativeNormLayer_forward_reverse()
+    test_cosine_encoding_layer("exp", True)
+    test_cosine_encoding_layer("pow", False)
+    test_cosine_encoding_layer("linear", True)
+    print("All tests passed!")
