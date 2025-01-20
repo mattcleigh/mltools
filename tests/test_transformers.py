@@ -51,7 +51,7 @@ def test_pack():
     x = i["x"]
     mask = i["mask"]
     txt = i["ctxt"]
-    px, pctxt, culens, maxlen = pack(x, mask, txt)
+    px, culens, maxlen, pctxt = pack(x, mask, txt)
     assert T.allclose(x[mask], px)
     assert pctxt.shape == px.shape
     assert maxlen == mask.sum(-1).max()
@@ -72,10 +72,14 @@ def test_residual() -> None:
     dim = 4
     x = T.randn(2, dim)
     fn = nn.Linear(dim, dim)
-    layer = Residual(fn, dim=dim)
+    fn.dim = dim
+    layer = Residual(fn)
+
+    layer.gate.data.fill_(0.0)
     out = layer(x)
     assert T.allclose(out, x)
-    layer.gate.data += 1
+
+    layer.gate.data.fill_(1.0)
     out = layer(x)
     assert T.allclose(out, x + fn(layer_norm(x, (dim,))))
 
@@ -87,6 +91,7 @@ def get_attn_models(dim, num_heads) -> tuple:
     attn.attn_in.bias = torch_attn.in_proj_bias
     attn.attn_out.weight = torch_attn.out_proj.weight
     attn.attn_out.bias = torch_attn.out_proj.bias
+    attn.final_norm = nn.Identity()  # Torch attention does not have a final norm
     return attn, torch_attn
 
 

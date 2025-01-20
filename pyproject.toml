@@ -1,6 +1,6 @@
 [project]
 name = "mltools"
-version = "0.6"
+version = "0.7"
 description = "Collection of useful ml related tools and functions"
 license = {text = "MIT"}
 requires-python = ">=3.10,<3.12"

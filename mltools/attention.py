@@ -12,6 +12,14 @@ from flash_attn import (
 from torch import nn
 
 
+def apply_rope(x: T.Tensor, freqs_cis: T.Tensor) -> T.Tensor:
+    """Rotate the input tensor using the precomputed frequencies."""
+    out = x.reshape(*x.shape[:-1], x.shape[-1] // 2)
+    out = T.view_as_complex(out.float())
+    out = T.view_as_real(out * freqs_cis)
+    return out.view_as(x).type_as(x)
+
+
 def merge_masks(
     kv_mask: T.BoolTensor | None,
     attn_mask: T.BoolTensor | None,
@@ -52,17 +60,20 @@ def merge_masks(
 
 def standard_attention(
     x: T.Tensor,
-    kv: T.Tensor | None,
-    mask: T.Tensor | None,
-    kv_mask: T.Tensor | None,
-    attn_mask: T.Tensor | None,
-    attn_bias: T.Tensor | None,
-    drop: float,
-    causal: bool,
+    *,
     num_heads: int,
     linear: nn.Linear,
-    rotary: nn.Module | None,
+    kv: T.Tensor | None = None,
+    mask: T.Tensor | None = None,
+    kv_mask: T.Tensor | None = None,
+    attn_mask: T.Tensor | None = None,
+    attn_bias: T.Tensor | None = None,
+    drop: float = 0.0,
+    causal: bool = False,
     qk_norm: nn.Module | None,
+    rope_freqs: T.Tensor | None = None,
+    kv_rope_freqs: T.Tensor | None = None,
+    **_,  # To allow for consistent API
 ) -> T.Tensor:
     """Standard multi-head attention function using pytorch backend."""
     B, S, D = x.shape
@@ -84,14 +95,16 @@ def standard_attention(
         k, v = F.linear(kv, w_kv, b_kv).chunk(2, dim=-1)
 
         # reshaping -> B,NH,S,HD
-        shape = (B, -1, NH, HD)  # -1 as kv can have different length
-        q, k, v = (t.view(shape).transpose(1, 2).contiguous() for t in (q, k, v))
+        q = q.view(B, -1, NH, HD).transpose(1, 2).contiguous()
+        k = k.view(B, -1, NH, HD).transpose(1, 2).contiguous()
+        v = v.view(B, -1, NH, HD).transpose(1, 2).contiguous()
 
     # Apply the optional operations on the query and key tensors
+    if rope_freqs is not None:
+        q = apply_rope(q, rope_freqs)
+        k = apply_rope(k, kv_rope_freqs if kv_rope_freqs is not None else rope_freqs)
     if qk_norm is not None:
         q, k = qk_norm(q, k)
-    if rotary is not None:
-        q, k = rotary(q, k)
 
     # run attention -> B,NH,S,HD
     kv_mask = mask if kv is None else kv_mask  # who is sending? CA or SA?
@@ -105,13 +118,15 @@ def standard_attention(
 
 def flash_self_attention(
     x: T.Tensor,
+    *,
     culens: T.Tensor,
     maxlen: int,
-    drop: float,
-    causal: bool,
     num_heads: int,
     linear: nn.Linear,
-    qk_norm: nn.Module | None,
+    drop: float = 0.0,
+    causal: bool = False,
+    qk_norm: nn.Module | None = None,
+    **_,  # To allow for consistent API
 ) -> T.Tensor:
     """Optimized self-attention for variable sized sets using the flash backend."""
     BS, D = x.shape
@@ -122,47 +137,45 @@ def flash_self_attention(
         )
     else:
         q, k, v = qkv.unbind(1)
-        q, k = qk_norm(q, k)
+        q, v = qk_norm(q, v)
         attn = flash_attn_varlen_func(
             q, k, v, culens, culens, maxlen, maxlen, drop, causal=causal
         )
-
     return attn.contiguous().view(BS, D)
 
 
 def flash_cross_attention(
     x: T.Tensor,
+    *,
     culens: T.Tensor,
     maxlen: int,
     kv: T.Tensor,
     kv_culens: T.Tensor,
     kv_maxlen: int,
-    drop: float,
-    causal: bool,
     num_heads: int,
     linear: nn.Linear,
-    qk_norm: nn.Module | None,
+    drop: float = 0.0,
+    qk_norm: nn.Module | None = None,
+    **_,  # To allow for consistent API
 ) -> T.Tensor:
     """Optimized cross-attention for variable sized sets using the flash backend."""
     BS, D = x.shape
     HD = D // num_heads
-
     weight, bias = linear.weight, linear.bias
     w_q, w_kv = weight.split([D, D * 2])
     b_q, b_kv = bias.split([D, D * 2]) if bias is not None else (None, None)
-
     q = F.linear(x, w_q, b_q).view(-1, num_heads, HD)
     kv = F.linear(kv, w_kv, b_kv).view(-1, 2, num_heads, HD)
 
     if qk_norm is None:
         attn = flash_attn_varlen_kvpacked_func(
-            q, kv, culens, kv_culens, maxlen, kv_maxlen, drop, causal=causal
+            q, kv, culens, kv_culens, maxlen, kv_maxlen, drop
         )
     else:
         k, v = kv.unbind(1)
         q, k = qk_norm(q, k)
         attn = flash_attn_varlen_func(
-            q, k, v, culens, kv_culens, maxlen, kv_maxlen, drop, causal=causal
+            q, k, v, culens, kv_culens, maxlen, kv_maxlen, drop
         )
     return attn.contiguous().view(BS, D)
 

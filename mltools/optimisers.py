@@ -1,5 +1,6 @@
 """Custom optimisers for PyTorch."""
 
+import logging
 from collections import defaultdict
 from collections.abc import Callable, Iterable
 from functools import partial
@@ -7,6 +8,46 @@ from typing import Any
 
 import torch as T
 from torch.optim import Optimizer
+
+log = logging.getLogger(__name__)
+
+
+class AdamWS(T.optim.AdamW):
+    """AdamW optimizer where weight decay is only applied to matrices."""
+
+    def __init__(self, params: Iterable | dict, weight_decay: float = 1e-2, **kwargs):
+        params = list(params)
+        if isinstance(params[0], tuple):
+            params = [x for _, x in params]
+        decay_params = [p for p in params if p.dim() >= 2]
+        nodecay_params = [p for p in params if p.dim() < 2]
+
+        # Hardcoded! Need to make this more general!
+        # We dont want weight decay to apply to positional encoding or registers!
+        # Right now we manually move them accross...
+        decay_params2 = []
+        for dp in decay_params:
+            if any(x in dp.name for x in ["registers", "abs_enc"]):
+                nodecay_params.append(dp)
+            else:
+                decay_params2.append(dp)
+        log.info(
+            "AdamWS: Manually deactivating weight decay for "
+            f"{len(decay_params) - len(decay_params2)} parameters."
+        )
+        decay_params = decay_params2
+
+        num_decay_params = sum(p.numel() for p in decay_params)
+        num_nodecay_params = sum(p.numel() for p in nodecay_params)
+        log.info(
+            f"AdamWS: Applying weight decay {weight_decay} to {num_decay_params} "
+            f"parameters, and 0.0 to {num_nodecay_params} parameters."
+        )
+        optim_groups = [
+            {"params": decay_params, "weight_decay": weight_decay},
+            {"params": nodecay_params, "weight_decay": 0.0},
+        ]
+        super().__init__(optim_groups, **kwargs)
 
 
 class Lookahead(Optimizer):

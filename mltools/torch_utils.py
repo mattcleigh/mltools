@@ -2,6 +2,7 @@
 
 import contextlib
 import os
+import re
 from collections.abc import Callable, Iterable
 from contextlib import contextmanager
 from typing import Any
@@ -15,6 +16,40 @@ from torch.utils.data import Dataset, Subset, random_split
 from torch.utils.data.dataloader import default_collate
 
 from .schedulers import CyclicWithWarmup, LinearWarmupRootDecay, WarmupToConstant
+
+
+def get_activations(
+    model: nn.Module,
+    activation_dict: dict,
+    regex: list | None = None,
+    types: list | None = None,
+) -> list:
+    """Create hooks for storing the output activations of layers in a model."""
+    hooks = []
+
+    def hook(name) -> callable:
+        def forward_hook(_module: nn.Module, _input: T.Tensor, output: T.Tensor):
+            activation_dict[name] = output.detach().std().cpu().item()
+
+        return forward_hook
+
+    for n, m in model.named_modules():
+        passed = False
+        if regex is not None and any(re.match(r, n) for r in regex):
+            passed = True
+        if types is not None and any(isinstance(m, t) for t in types):
+            passed = True
+        if passed:
+            h = m.register_forward_hook(hook(n))
+            hooks.append(h)
+
+    return hooks
+
+
+def remove_hooks(hooks: list) -> None:
+    """Remove a list of hooks."""
+    for hook in hooks:
+        hook.remove()
 
 
 def gradient_norm(model) -> float:
@@ -75,11 +110,6 @@ def occupancy(probs: T.Tensor, dim: int = -1):
     """Return the number of unique argmax values given a probability tensor."""
     num_dims = probs.shape[dim]
     return T.unique(T.argmax(probs, dim=-1)).size(0) / num_dims
-
-
-def sum_except_batch(x: T.Tensor, num_batch_dims: int = 1) -> T.Tensor:
-    """Sum all elements of x except for the first num_batch_dims dimensions."""
-    return T.sum(x, dim=list(range(num_batch_dims, x.ndim)))
 
 
 def append_dims(x: T.Tensor, target_dims: int, dim=-1) -> T.Tensor:
@@ -146,18 +176,13 @@ class GradsOff:
         self.model.requires_grad_(True)
 
 
-def rms(tens: T.Tensor, dim: int = 0) -> T.Tensor:
-    """Return RMS of a tensor along a dimension."""
-    return tens.square().mean(dim=dim).sqrt()
-
-
-def rmse(x: T.Tensor, y: T.Tensor, dim: int = 0) -> T.Tensor:
-    """Return RMSE without using torch's warning filled mseloss method."""
-    return (x - y).square().mean(dim=dim).sqrt()
-
-
 def base_modules(module: nn.Module) -> list:
-    """Return a list of all of the base modules in a network."""
+    """Return a list of all of the base modules in a network.
+
+    Different to both children() and modules().
+    Children() returns all of the direct children of a module.
+    Modules() returns all of the modules in a network, including all intermediates.
+    """
     total = []
     children = list(module.children())
     if not children:
@@ -436,9 +461,7 @@ def ema_param_sync(source: nn.Module, target: nn.Module, ema_decay: float) -> No
     for s_params, t_params in zip(
         source.parameters(), target.parameters(), strict=False
     ):
-        t_params.data.copy_(
-            ema_decay * t_params.data + (1.0 - ema_decay) * s_params.data
-        )
+        t_params.data.copy_(t_params.data.lerp_(s_params.data, 1 - ema_decay))
 
 
 def masked_mean(x: T.Tensor, mask: T.BoolTensor, dim: int = -1) -> T.Tensor:

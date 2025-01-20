@@ -1,15 +1,38 @@
 """Some classes to describe transformer architectures."""
 
 import logging
+import math
+from typing import Any
 
 import torch as T
 import torch.nn.functional as F
 from torch import nn
 
-from .attention import flash_cross_attention, flash_self_attention, standard_attention
+from .attention import (
+    flash_cross_attention,
+    flash_self_attention,
+    standard_attention,
+)
 from .torch_utils import append_dims
 
 log = logging.getLogger(__name__)
+
+# A list of all the keyword arguments that are supported by the attention functions
+ATTN_KWARGS = [
+    "ctxt",
+    "kv",
+    "mask",
+    "kv_mask",
+    "attn_mask",
+    "attn_bias",
+    "causal",
+    "rope_freqs",
+    "kv_rope_freqs",
+    "culens",
+    "maxlen",
+    "kv_culens",
+    "kv_maxlen",
+]
 
 
 def pos_embed(embed_dim: int, max_seq_len: int):
@@ -35,36 +58,27 @@ def pos_embed(embed_dim: int, max_seq_len: int):
     return pos_emb.unsqueeze(0).float()  # For batch dimension
 
 
-def precompute_freqs_cis(x: T.Tensor, theta: float = 10000.0):
+def calc_rope_freqs(x: T.Tensor, num_heads: int, theta: float = 10000.0) -> T.Tensor:
     """Precompute the frequencies for the rotary positional encoding."""
     _B, S, D = x.shape
+    HD = D // num_heads
+    freqs = 1.0 / (theta ** (T.arange(0, HD, 2, device=x.device).float() / HD))
     t = T.arange(S, device=x.device, dtype=T.float32)
-    freqs = 1.0 / (theta ** (T.arange(0, D, 2).float() / D))
     freqs = T.outer(t, freqs)
     return T.polar(T.ones_like(freqs), freqs)
 
 
-def rope(x: T.Tensor, freqs_cis: T.Tensor) -> T.Tensor:
-    """Rotate the input tensor using the precomputed frequencies."""
-    B, S, D = x.shape
-    q = T.view_as_complex(x.float().reshape(B, S, D // 2, 2))
-    q = T.view_as_real(q * freqs_cis)
-    return q.view_as(x).type_as(x)
-
-
 def pack(
     x: T.Tensor,
-    mask: T.Tensor | None = None,
+    mask: T.BoolTensor,
     ctxt: T.Tensor | None = None,
-) -> T.Tensor:
+):
     """Undo all padding and compress the sequence."""
-    if mask is None:
-        log.warning("Packing without a mask is not recommended!")
-        mask = T.ones(x.shape[:-1], dtype=T.bool, device=x.device)
+    assert mask is not None, "Mask is required to pack the sequence!"
 
     # Get the culens and maxlen variables needed by the flash attention func
     seqlens = mask.sum(dim=-1)
-    culens = F.pad(T.cumsum(seqlens, dim=-1), (1, 0), value=0).to(T.int32)
+    culens = F.pad(T.cumsum(seqlens, dim=-1), (1, 0), value=0).int()
     maxlen = seqlens.max().item()
 
     # Context info gets tricky because it may need to be repeated
@@ -74,7 +88,8 @@ def pack(
             ctxt = ctxt.expand(*x.shape[:-1], -1)
         ctxt = ctxt[mask]
 
-    return x[mask], ctxt, culens, maxlen
+    # Replace x with its compressed version
+    return x[mask], culens, maxlen, ctxt
 
 
 def unpack(x: T.Tensor, mask: T.BoolTensor) -> T.Tensor:
@@ -84,13 +99,18 @@ def unpack(x: T.Tensor, mask: T.BoolTensor) -> T.Tensor:
     return out
 
 
+def rms_norm(x, dim: int | tuple = -1, eps: float = 1e-6) -> T.Tensor:
+    """Normalise the vector to have unit variance."""
+    n = T.linalg.vector_norm(x.float(), dim=dim, keepdim=True, dtype=T.float32)
+    n = T.add(eps, n, alpha=math.sqrt(n.numel() / x.numel()))
+    return x / n.to(x.dtype)
+
+
 def add_registers(
     x: T.Tensor,
     reg: T.Tensor,
-    mask: T.BoolTensor,
-    attn_mask: T.BoolTensor | None = None,
-    attn_bias: T.Tensor | None = None,
     add_to_both: bool = False,
+    **kwargs,
 ) -> tuple:
     """Add registers to the front of the input and accomidate the mask.
 
@@ -107,71 +127,59 @@ def add_registers(
     x = T.cat([reg, x], dim=-2)  # Sequence dimension
 
     # Add the mask for the registers with trues at the front
+    mask = kwargs.get("mask")
     if mask is not None:
         mask = F.pad(mask, (nreg, 0), value=True)
+        kwargs["mask"] = mask
 
     # Add the attention mask for the registers
     # The attention mask is b x recv x send
     # We are adding to the recv dimension ONLY!!!
+    attn_mask = kwargs.get("attn_mask")
     if attn_mask is not None:
         attn_mask = F.pad(attn_mask, (nreg * add_to_both, 0, nreg, 0), value=True)
+        kwargs["attn_mask"] = attn_mask
 
     # Add an attention bias of zero for the registers
+    attn_bias = kwargs.get("attn_bias")
     if attn_bias is not None:
         attn_bias = F.pad(attn_bias, (0, 0, nreg * add_to_both, 0, nreg, 0), value=0)
+        kwargs["attn_bias"] = attn_bias
 
-    return x, mask, attn_mask, attn_bias
+    return x, kwargs
+
+
+class Identity(nn.Module):
+    """Like nn.Identity but with kwargs in forward method."""
+
+    def __init__(self, *_args, **_kwargs) -> None:
+        super().__init__()
+
+    def forward(self, x, **_kwargs) -> Any:
+        return x
 
 
 class RMSNorm(nn.Module):
     """Root Mean Square Normalisation layer."""
 
-    def __init__(self, dim: int) -> None:
+    def __init__(self, dim: int, elementwise_affine: bool = False) -> None:
         super().__init__()
-        self.dim = dim
-        self.scale = nn.Parameter(T.ones(dim))
-        self.const = dim ** (-0.5)
+        self.weight = nn.Parameter(T.ones(dim)) if elementwise_affine else 1
 
     def forward(self, x: T.Tensor) -> T.Tensor:
-        norm = T.linalg.norm(x.float(), dim=-1, keepdim=True)
-        return x * self.scale / (norm * self.const + 1e-8).to(x.dtype)
+        return rms_norm(x) * self.weight
 
 
 class QKNorm(nn.Module):
-    """Combines the normalisation of the query and key tensors."""
+    """Wrap both the query and key normalisation layers."""
 
     def __init__(self, dim: int) -> None:
         super().__init__()
-        self.dim = dim
         self.q_norm = RMSNorm(dim)
         self.k_norm = RMSNorm(dim)
 
-    def forward(self, q: T.Tensor, k: T.Tensor) -> tuple[T.Tensor, T.Tensor]:
+    def forward(self, q: T.Tensor, k: T.Tensor) -> tuple:
         return self.q_norm(q), self.k_norm(k)
-
-
-class RotaryEmbedding(nn.Module):
-    """Applies rotary positional embedding for relative encoding."""
-
-    def __init__(self, dim: int, theta: int = 10_000):
-        super().__init__()
-        self.dim = dim
-        self.theta = theta
-        self.register_buffer("freqs_cis", T.empty(0))
-
-    def _update_freqs_cis(self, x: T.Tensor) -> None:
-        """Reset the tables buffer if the sequence / device has changed."""
-        new_len = x.shape[1] != self.freqs_cis.shape[0]
-        new_device = x.device != self.freqs_cis.device
-        if new_len or new_device:
-            self.freqs_cis = precompute_freqs_cis(x, self.theta)
-
-    def forward(self, q: T.Tensor, k: T.Tensor) -> tuple[T.Tensor, T.Tensor]:
-        self._update_freqs_cis(q)
-        q = rope(q, self.freqs_cis)
-        self._update_freqs_cis(k)
-        k = rope(k, self.freqs_cis)
-        return q, k
 
 
 class Residual(nn.Module):
@@ -184,38 +192,34 @@ class Residual(nn.Module):
     def __init__(
         self,
         fn: nn.Module,
-        dim: int = 0,
         ctxt_dim: int = 0,
     ) -> None:
         """Parameters
         ----------
         fn : nn.Module
             The module to wrap. Must be non-resizing.
-        dim : int
-            The dimension of the input and output.
-            If zero we will try get it from the fn module.
         ctxt_dim : int, optional
             The dimension of the context, by default 0.
             Used in the modulator to determine the scale, shift and gate.
         """
         super().__init__()
-        self.dim = dim or fn.dim
+        assert hasattr(fn, "dim"), "Module in residual layer must have a dim attribute!"
+        self.dim = fn.dim
         self.fn = fn
         self.ctxt_dim = ctxt_dim
-        self.norm = nn.LayerNorm(dim, elementwise_affine=False)
+        self.norm = nn.LayerNorm(self.dim, elementwise_affine=False)
         if ctxt_dim:
-            self.ctxt_layer = nn.Linear(ctxt_dim, 3 * dim)
+            self.ctxt_layer = nn.Linear(ctxt_dim, 3 * self.dim)
         else:
-            self.gate = nn.Parameter(T.empty(dim))  # LayerScale with zero init
+            self.gate = nn.Parameter(T.ones(self.dim))
         self.reset_parameters()
 
     def reset_parameters(self) -> None:
-        """Reset the parameters of the module."""
         if self.ctxt_dim:
-            nn.init.constant_(self.ctxt_layer.bias, 0)
-            nn.init.uniform_(self.ctxt_layer.weight, 0)
+            self.ctxt_layer.weight.data.zero_()
+            self.ctxt_layer.bias.data.zero_()
         else:
-            nn.init.constant_(self.gate, 0)
+            self.gate.data.fill_(0.05)
 
     def __repr__(self) -> str:
         return f"Res-{self.fn}"
@@ -260,7 +264,6 @@ class Attention(nn.Module):
         dim: int,
         num_heads: int = 1,
         dropout: float = 0,
-        do_rotary: bool = False,
         do_qknorm: bool = False,
     ) -> None:
         """Initialise the attention block.
@@ -273,29 +276,21 @@ class Attention(nn.Module):
             The number of attention heads, by default 1.
         dropout : float, optional
             The dropout probability, by default 0.
-        do_rotary : bool, optional
-            Whether to use rotary positional encoding, by default False.
+        do_scale : bool, optional
+            Have a learnable scale for the attention operation, by default True.
         do_qknorm : bool, optional
             Whether to use RMSNorm on the query and key, by default False.
         """
         super().__init__()
         assert dim % num_heads == 0, "Dim must be divisible by the number of heads!"
-
-        # Attributes
         self.dim = dim
         self.num_heads = num_heads
-        self.attn_dim = dim // num_heads
         self.dropout = dropout
-        self.do_rotary = do_rotary
         self.do_qknorm = do_qknorm
-
-        # Better parallelism for self-attention when using parameters directly
         self.attn_in = nn.Linear(dim, 3 * dim)
         self.attn_out = nn.Linear(dim, dim)
-
-        # Optional extra layers
-        self.rotary = RotaryEmbedding(dim) if do_rotary else None
-        self.qk_norm = QKNorm(self.attn_dim) if do_qknorm else None
+        self.final_norm = nn.LayerNorm(dim)
+        self.qk_norm = QKNorm(dim) if do_qknorm else None
         self.reset_parameters()
 
     def reset_parameters(self) -> None:
@@ -305,73 +300,35 @@ class Attention(nn.Module):
         nn.init.constant_(self.attn_in.bias, 0)
         nn.init.constant_(self.attn_out.bias, 0)
 
-    def forward(
-        self,
-        x: T.Tensor,
-        mask: T.BoolTensor | None = None,
-        kv: T.Tensor | None = None,
-        kv_mask: T.BoolTensor | None = None,
-        attn_mask: T.BoolTensor | None = None,
-        attn_bias: T.Tensor | None = None,
-        culens: T.Tensor | None = None,
-        maxlen: int | None = None,
-        causal: bool = False,
-        kv_culens: T.Tensor | None = None,
-        kv_maxlen: int | None = None,
-    ) -> T.Tensor:
+    def _get_attn_fn(self, **kwargs) -> tuple:
+        """Work out which attention function to use based on the inputs."""
+        has_culens = kwargs.get("culens") is not None
+        has_maxlen = kwargs.get("maxlen") is not None
+        has_kv = kwargs.get("kv") is not None
+        if has_culens and has_maxlen:
+            has_ropes = kwargs.get("rope_freqs") is not None
+            attn_mask = kwargs.get("attn_mask") is not None
+            attn_bias = kwargs.get("attn_bias") is not None
+            assert not attn_mask, "Packed attn does not support attention masks!"
+            assert not attn_bias, "Packed attn does not support attention bias!"
+            assert not has_ropes, "Packed attn does not support rotary encoding!"
+            if has_kv:
+                return flash_cross_attention
+            return flash_self_attention
+        return standard_attention
+
+    def forward(self, x: T.Tensor, **kwargs) -> T.Tensor:
         """Dispatch to the appropriate attention function based on the inputs."""
-        drop = self.dropout if self.training else 0.0
-
-        # If providing the input with culens and maxlen, we assume packed attention
-        if culens is not None and maxlen is not None:
-            assert attn_mask is None, "Packed attn does not support attention masks!"
-            assert attn_bias is None, "Packed attn does not support attention bias!"
-            assert not self.do_rotary, "Packed attn does not support rotary emb!"
-
-            if kv is None:
-                a_out = flash_self_attention(
-                    x,
-                    culens,
-                    maxlen,
-                    drop,
-                    causal,
-                    self.num_heads,
-                    self.attn_in,
-                    self.qk_norm,
-                )
-
-            else:
-                a_out = flash_cross_attention(
-                    x,
-                    culens,
-                    maxlen,
-                    kv,
-                    kv_culens,
-                    kv_maxlen,
-                    drop,
-                    causal,
-                    self.num_heads,
-                    self.attn_in,
-                    self.qk_norm,
-                )
-
-        # Standard attention with masks and biases
-        else:
-            a_out = standard_attention(
-                x,
-                kv,
-                mask,
-                kv_mask,
-                attn_mask,
-                attn_bias,
-                drop,
-                causal,
-                self.num_heads,
-                self.attn_in,
-                self.rotary,
-                self.qk_norm,
-            )
-
+        attn_fn = self._get_attn_fn(**kwargs)
+        a_out = attn_fn(
+            x,
+            linear=self.attn_in,
+            num_heads=self.num_heads,
+            drop=self.dropout if self.training else 0.0,
+            qk_norm=self.qk_norm,
+            **kwargs,
+        )
+        a_out = self.final_norm(a_out)
         return self.attn_out(a_out)
 
 
@@ -403,13 +360,11 @@ class EncoderBlock(nn.Module):
         self.dim = dim
         attn_config = attn_config or {}
         ff_config = ff_config or {}
-
-        # Residual blocks
-        self.attn = Residual(Attention(dim, **attn_config), dim, ctxt_dim)
-        self.ff = Residual(SwiGLUNet(dim, **ff_config), dim, ctxt_dim)
+        self.sa = Residual(Attention(dim, **attn_config), ctxt_dim)
+        self.ff = Residual(SwiGLUNet(dim, **ff_config), ctxt_dim)
 
     def forward(self, x: T.Tensor, ctxt: T.Tensor | None = None, **kwargs) -> T.Tensor:
-        x = self.attn(x, ctxt=ctxt, **kwargs)
+        x = self.sa(x, ctxt=ctxt, **kwargs)
         return self.ff(x, ctxt=ctxt)
 
 
@@ -446,29 +401,29 @@ class DecoderBlock(nn.Module):
         attn_config = attn_config or {}
         ff_config = ff_config or {}
         self.ca_first = ca_first
-        self.sa = Residual(Attention(dim, **attn_config), dim, ctxt_dim)
-        self.ca = Residual(Attention(dim, **attn_config), dim, ctxt_dim)
-        self.ff = Residual(SwiGLUNet(dim, **ff_config), dim, ctxt_dim)
+        self.sa = Residual(Attention(dim, **attn_config), ctxt_dim)
+        self.ca = Residual(Attention(dim, **attn_config), ctxt_dim)
+        self.ff = Residual(SwiGLUNet(dim, **ff_config), ctxt_dim)
 
     def forward(
         self,
         x: T.Tensor,
-        *,  # Indicates that kv is a required but keyword argument
+        *,
         kv: T.Tensor,
-        mask: T.BoolTensor | None = None,
         ctxt: T.Tensor | None = None,
-        kv_mask: T.BoolTensor | None = None,
-        attn_mask: T.Tensor | None = None,
+        attn_mask: T.BoolTensor | None = None,
         attn_bias: T.Tensor | None = None,
         **kwargs,
     ) -> T.Tensor:
         """Pass through the decoder block."""
+        ca_kwargs = {"kv": kv, "attn_mask": None, "attn_bias": None}
+        sa_kwargs = {"kv": None, "attn_mask": attn_mask, "attn_bias": attn_bias}
         if self.ca_first:
-            x = self.ca(x, mask, kv, kv_mask, None, None, ctxt=ctxt, **kwargs)
-            x = self.sa(x, mask, None, None, attn_mask, attn_bias, ctxt=ctxt, **kwargs)
+            x = self.ca(x, ctxt=ctxt, **ca_kwargs, **kwargs)
+            x = self.sa(x, ctxt=ctxt, **sa_kwargs, **kwargs)
         else:
-            x = self.sa(x, mask, None, None, attn_mask, attn_bias, ctxt=ctxt, **kwargs)
-            x = self.ca(x, mask, kv, kv_mask, None, None, ctxt=ctxt, **kwargs)
+            x = self.sa(x, ctxt=ctxt, **sa_kwargs, **kwargs)
+            x = self.ca(x, ctxt=ctxt, **ca_kwargs, **kwargs)
         return self.ff(x, ctxt=ctxt)
 
 
@@ -484,167 +439,130 @@ class Transformer(nn.Module):
         *,
         dim: int = 128,
         ctxt_dim: int = 0,
+        inpt_dim: int = 0,
+        outp_dim: int = 0,
         num_layers: int = 6,
         max_seq_len: int = 0,
         num_registers: int = 0,
-        do_input_linear: bool = False,
-        do_output_linear: bool = False,
-        do_absolute_enc: bool = False,
-        do_final_norm: bool = False,
-        layer_config: dict | None = None,
-        inpt_dim: None | int = None,
-        outp_dim: None | int = None,
+        pos_enc: str = "none",
         use_decoder: bool = False,
         pack_inputs: bool = False,
         unpack_output: bool = True,
+        layer_config: dict | None = None,
     ) -> None:
         """Parameters
         ----------
         dim : int, optional
-            The dimension of the model, by default 128.
+            Dimension of the model (default is 128).
         ctxt_dim : int, optional
-            The dimension of the context, by default 0.
+            Context dimension (default is 0).
+        inpt_dim : int, optional
+            Input dimension (default is 0).
+        outp_dim : int, optional
+            Output dimension (default is 0).
         num_layers : int, optional
-            The number of layers in the transformer, by default 6.
+            Number of layers in the transformer (default is 6).
         max_seq_len : int, optional
-            The maximum sequence length, by default 0.
-            Needed for absolute positional encoding.
+            Maximum sequence length for absolute encoding (default is 0).
         num_registers : int, optional
-            The number of registers to add to the input, by default 0.
-        do_input_linear : bool, optional
-            Whether to add an input linear layer, by default False.
-            Will decouple the input dimension from the transformer dimension.
-        do_output_linear : bool, optional
-            Whether to add an output linear layer, by default False.
-            Will decouple the output dimension from the transformer dimension.
-        do_absolute_enc : bool, optional
-            Whether to add absolute encoding, by default False.
-            Must provide max_seq_len if True.
-        do_final_norm : bool, optional
-            Whether to add a final layer norm, by default False.
-        inpt_dim : None | int, optional
-            The input dimension, by default None.
-            If None, then will be set to dim.
-        outp_dim : None | int, optional
-            The output dimension, by default None.
-            If None, then will be set to dim.
+            Number of registers (default is 0).
+        pos_enc : str, optional
+            Type of positional encoding to use (default is "none").
         use_decoder : bool, optional
-            Whether to use the decoder blocks, by default False.
+            Whether to use the transformer as a decoder (default is False).
         pack_inputs : bool, optional
-            Whether to pack the inputs for optimised training on varlen sequences.
+            Whether to pack inputs (default is False).
         unpack_output : bool, optional
-            If using packed inputs, whether to unpack all outputs, by default True.
-        layer_config : dict | None, optional
-            The configuration for the encoder/decoder blocks, by default None.
+            Whether to unpack output (default is True).
+        layer_config : dict, optional
+            Configuration dictionary for the layers (default is None).
         """
         super().__init__()
-        assert not (do_absolute_enc and max_seq_len == 0), "Define max_seq_len!"
+        assert pos_enc in {"none", "abs", "rotary"}, "Invalid positional encoding!"
+        assert not (pos_enc == "abs" and max_seq_len == 0), "Maxlen required for abs!"
         layer_config = layer_config or {}
-
         self.dim = dim
         self.ctxt_dim = ctxt_dim
-        self.num_registers = num_registers
+        self.inpt_dim = inpt_dim or dim
+        self.outp_dim = outp_dim or dim
         self.num_layers = num_layers
-        self.do_final_norm = do_final_norm
-        self.do_input_linear = do_input_linear
-        self.do_output_linear = do_output_linear
-        self.do_absolute_enc = do_absolute_enc
-        self.layer_config = layer_config
-        self.inpt_dim = inpt_dim if do_input_linear else dim
-        self.outp_dim = outp_dim if do_output_linear else dim
+        self.max_seq_len = max_seq_len
+        self.num_registers = num_registers
+        self.pos_enc = pos_enc
         self.use_decoder = use_decoder
         self.pack_inputs = pack_inputs
         self.unpack_output = unpack_output
 
         # Base repeated transformer layers
-        lyr = DecoderBlock if use_decoder else EncoderBlock
+        layer = DecoderBlock if use_decoder else EncoderBlock
         self.layers = nn.ModuleList([
-            lyr(dim, ctxt_dim, **layer_config) for _ in range(num_layers)
+            layer(dim, ctxt_dim, **layer_config) for _ in range(num_layers)
         ])
+        self.num_heads = self.layers[0].sa.fn.num_heads
 
-        # Optional layers and features
-        if self.do_input_linear:
-            self.linear_embed = nn.Linear(inpt_dim, dim)
-        if self.do_final_norm:
-            self.final_norm = nn.LayerNorm(dim)
-        if self.do_output_linear:
-            self.linear_out = nn.Linear(dim, outp_dim)
+        # Output norm and linear layer
+        self.final_norm = nn.LayerNorm(dim)
+        self.linear_out = nn.Linear(dim, self.outp_dim)
+
+        # Optional features
+        if self.inpt_dim != self.dim:
+            self.linear_in = nn.Linear(self.inpt_dim, self.dim)
         if self.num_registers:
-            self.registers = nn.Parameter(T.randn((1, self.num_registers, dim)) * 1e-3)
-        if self.do_absolute_enc:
-            self.abs_enc = nn.Parameter(pos_embed(dim, max_seq_len, num_registers))
+            self.registers = nn.Parameter(T.randn((self.num_registers, dim)) * 1e-3)
+        if self.pos_enc == "abs":
+            self.abs_enc = nn.Parameter(T.randn((max_seq_len, dim)) * 1e-3)
 
     def forward(self, x: T.Tensor, **kwargs) -> T.Tensor:
-        """Project and encode.
-
-        Why are these seperate?
-        - Added flexibility for doing something to the inputs (replacing with null)
-          once they are projected into the transformer dimension.
-        """
-        return self.encode(self.project(x), **kwargs)
-
-    def project(self, x: T.Tensor) -> T.Tensor:
-        """Project the input to the transformer dimension and add absolute encoding."""
-        if self.do_input_linear:
-            x = self.linear_embed(x)
-        if self.do_absolute_enc:
-            x = x + self.abs_enc[:, : x.shape[-2], :]  # Trims to the sequence length
-        return x
-
-    def encode(
-        self,
-        x: T.Tensor,
-        mask: T.BoolTensor | None = None,
-        ctxt: T.Tensor | None = None,
-        attn_mask: T.BoolTensor | None = None,
-        attn_bias: T.Tensor | None = None,
-        kv: T.Tensor | None = None,
-        kv_mask: T.BoolTensor | None = None,
-        **kwargs,
-    ) -> T.Tensor:
         """Pass through all layers of the transformer."""
         assert not (
             self.num_registers and "culens" in kwargs
         ), "Cannot add registers to inputs which are already packed!"
+
+        # Project the inputs if there is a size mismatch
+        if self.inpt_dim != self.dim:
+            x = self.linear_in(x)
+
+        # Add absolute positional encoding information
+        if self.pos_enc == "abs":
+            x = x + self.abs_enc[:, : x.shape[-2], :]  # Trimmed to seq len
+
+        # Add registers to the FRONT of the input
         if self.num_registers:
-            x, mask, attn_mask, attn_bias = add_registers(
-                x,
-                self.registers,
-                mask,
-                attn_mask,
-                attn_bias,
-                add_to_both=self.use_decoder,  # Changes the attn mask for the decoder
+            x, kwargs = add_registers(
+                x, self.registers, **kwargs, add_to_both=self.use_decoder
             )
+
+        # Add rotary positional encoding information (had to be after the registers)
+        if self.pos_enc == "rotary":
+            kwargs["rope_freqs"] = calc_rope_freqs(x, self.num_heads)
+            kv = kwargs.get("kv")
+            if kv is not None:
+                kwargs["kv_rope_freqs"] = calc_rope_freqs(kv, self.num_heads)
+
+        # Compress all inputs for the flash attention function
+        # This also adds the needed kwargs
         if self.pack_inputs and "culens" not in kwargs:
-            x, ctxt, culens, maxlen = pack(x, mask, ctxt)
-            kwargs["culens"] = culens  # Add to the kwargs for the forward pass
-            kwargs["maxlen"] = maxlen
+            x, culens, maxlen, ctxt = pack(x, kwargs.get("mask"), kwargs.get("ctxt"))
+            kwargs.update(culens=culens, maxlen=maxlen, ctxt=ctxt)
+            kv = kwargs.get("kv")
             if kv is not None and "kv_culens" not in kwargs:
-                kv, _, kv_culens, kv_maxlen = pack(kv, kv_mask, None)
-                kwargs["kv_culens"] = kv_culens
-                kwargs["kv_maxlen"] = kv_maxlen
+                kv, kv_culens, kv_maxlen, _ = pack(kv, kwargs.get("kv_mask"))
+                kwargs.update(kv_culens=kv_culens, kv_maxlen=kv_maxlen)
+
+        # Now we can actually pass through each layer
         for layer in self.layers:
-            x = layer(
-                x,
-                mask=mask,
-                ctxt=ctxt,
-                attn_mask=attn_mask,
-                attn_bias=attn_bias,
-                kv=kv,
-                kv_mask=kv_mask,
-                **kwargs,
-            )
-        if self.do_final_norm:
-            x = self.final_norm(x)
-        if self.do_output_linear:
-            x = self.linear_out(x)
+            x = layer(x, **kwargs)
+        x = self.final_norm(x)
+        x = self.linear_out(x)
+
+        # Decompress the output if it was packed
         if "culens" in kwargs:
             if self.unpack_output:
-                return unpack(x, mask)
-            return x, culens, maxlen
-        return x
+                return unpack(x, kwargs["mask"])
+            return x, kwargs["culens"], kwargs["maxlen"]
+        return x  # Otherwise just return x
 
-    def remove_registers(self, x: T.Tensor) -> T.Tensor:
+    def remove_registers(self, x: T.Tensor) -> tuple:
         """Remove the registers from the front of the input."""
         return x[:, : self.num_registers], x[:, self.num_registers :]
 
@@ -661,45 +579,26 @@ class CrossAttentionEncoder(nn.Module):
     """Lopsided transformer which upades two point clouds x1, x2.
 
     Only applied self-attention to the second point cloud.
+    Computationally efficient if N(x2) << N(x1).
     """
 
     def __init__(
         self,
         *,
         dim: int = 128,
-        x1_input_dim: int = 0,
-        x2_input_dim: int = 0,
-        x1_output_dim: int = 0,
-        x2_output_dim: int = 0,
         ctxt_dim: int = 0,
         num_layers: int = 2,
-        x1_max_seq_len: int = 0,
-        x2_max_seq_len: int = 0,
-        x1_absolute_enc: bool = False,
-        x2_absolute_enc: bool = False,
         enc_config: dict | None = None,
         dec_config: dict | None = None,
-        use_decoder: bool = False,
         pack_inputs: bool = False,
         unpack_output: bool = True,
     ) -> None:
         super().__init__()
-        assert not (x1_absolute_enc and x1_max_seq_len == 0), "Define x1 max_seq_len!"
-        assert not (x2_absolute_enc and x2_max_seq_len == 0), "Define x2 max_seq_len!"
         enc_config = enc_config or {}
         dec_config = dec_config or {}
         self.dim = dim
-        self.x1_input_dim = x1_input_dim or dim
-        self.x2_input_dim = x2_input_dim or dim
-        self.x1_output_dim = x1_output_dim or dim
-        self.x2_output_dim = x2_output_dim or dim
         self.ctxt_dim = ctxt_dim
         self.num_layers = num_layers
-        self.x1_max_seq_len = x1_max_seq_len
-        self.x2_max_seq_len = x2_max_seq_len
-        self.x1_absolute_enc = x1_absolute_enc
-        self.x2_absolute_enc = x2_absolute_enc
-        self.use_decoder = use_decoder
         self.pack_inputs = pack_inputs
         self.unpack_output = unpack_output
 
@@ -710,20 +609,8 @@ class CrossAttentionEncoder(nn.Module):
         self.enc_layers = nn.ModuleList([
             EncoderBlock(dim, ctxt_dim, **enc_config) for _ in range(num_layers)
         ])
-
-        # Input, output and final norm layers, always present
-        self.x1_linear_in = nn.Linear(self.x1_input_dim, dim)
-        self.x2_linear_in = nn.Linear(self.x2_input_dim, dim)
-        self.x1_linear_out = nn.Linear(dim, self.x1_output_dim)
-        self.x2_linear_out = nn.Linear(dim, self.x2_output_dim)
         self.x1_final_norm = nn.LayerNorm(dim)
         self.x2_final_norm = nn.LayerNorm(dim)
-
-        # Absolute encoding for the two point clouds is optional
-        if x1_absolute_enc:
-            self.x1_abs_enc = nn.Parameter(pos_embed(dim, x1_max_seq_len))
-        if x2_absolute_enc:
-            self.x2_abs_enc = nn.Parameter(pos_embed(dim, x2_max_seq_len))
 
     def forward(
         self,
@@ -737,19 +624,12 @@ class CrossAttentionEncoder(nn.Module):
         x2_causal: bool = False,
     ) -> T.Tensor:
         """Pass through all layers of the transformer."""
-        x1 = self.x1_linear_in(x1)
-        x2 = self.x2_linear_in(x2)
-        if self.x1_absolute_enc:
-            x1 = x1 + self.x1_abs_enc[:, : x1.shape[-2], :]
-        if self.x2_absolute_enc:
-            x2 = x2 + self.x2_abs_enc[:, : x2.shape[-2], :]
         if self.pack_inputs:
-            x1, x1_ctxt, x1_culens, x1_maxlen = pack(x1, x1_mask, ctxt)
-            x2, x2_ctxt, x2_culens, x2_maxlen = pack(x2, x2_mask, ctxt)
+            x1, x1_culens, x1_maxlen, x1_ctxt = pack(x1, x1_mask, ctxt)
+            x2, x2_culens, x2_maxlen, x2_ctxt = pack(x2, x2_mask, ctxt)
         else:
-            x1_ctxt, x2_ctxt = ctxt, ctxt
-            x1_culens, x2_culens = None, None
-            x1_maxlen, x2_maxlen = None, None
+            x1_culens = x1_maxlen = x2_culens = x2_maxlen = None
+            x1_ctxt = x2_ctxt = ctxt
 
         for dec_layer, enc_layer in zip(self.dec_layers, self.enc_layers, strict=True):
             x2 = dec_layer(
@@ -779,8 +659,6 @@ class CrossAttentionEncoder(nn.Module):
             )
         x1 = self.x1_final_norm(x1)
         x2 = self.x2_final_norm(x2)
-        x1 = self.x1_linear_out(x1)
-        x2 = self.x2_linear_out(x2)
         if self.pack_inputs:
             if self.unpack_output:
                 return unpack(x1, x1_mask), unpack(x2, x2_mask)

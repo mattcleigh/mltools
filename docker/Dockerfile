@@ -1,5 +1,8 @@
 # Base image
-FROM pytorch/pytorch:2.2.1-cuda12.1-cudnn8-devel
+FROM pytorch/pytorch:2.5.1-cuda12.4-cudnn9-devel
+
+# Make sure the location is set!
+WORKDIR /mltools
 
 # Local and environment variables
 ENV LANG C.UTF-8
@@ -7,7 +10,6 @@ ENV LC_ALL C.UTF-8
 ENV PIP_ROOT_USER_ACTION=ignore
 ENV PIP_NO_CACHE_DIR=false
 ARG DEBIAN_FRONTEND=noninteractive
-WORKDIR /mltools
 
 # Install system dependencies
 RUN apt-get -y update && apt-get -y upgrade
@@ -27,8 +29,8 @@ RUN python -m pip --version
 
 # Intall python dependencies
 COPY requirements.txt .
-RUN python -m pip install -r requirements.txt
+RUN python -m pip install --upgrade -r requirements.txt
 
-# Copy and install the project
+# Copy and install the project (allow the gitlab-runner to access the project)
 COPY . .
 RUN python -m pip install -e .
