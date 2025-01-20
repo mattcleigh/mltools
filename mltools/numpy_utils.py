@@ -39,7 +39,7 @@ def unison_shuffled_copies(*args) -> tuple:
 
 def onehot_encode(
     a: np.ndarray,
-    max_idx: None | int = None,
+    max_idx: int | None = None,
     dtype: np.dtype = np.float32,
     count_unique: bool = False,
 ) -> np.ndarray:

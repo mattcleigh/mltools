@@ -514,9 +514,9 @@ class Transformer(nn.Module):
 
     def forward(self, x: T.Tensor, **kwargs) -> T.Tensor:
         """Pass through all layers of the transformer."""
-        assert not (
-            self.num_registers and "culens" in kwargs
-        ), "Cannot add registers to inputs which are already packed!"
+        assert not (self.num_registers and "culens" in kwargs), (
+            "Cannot add registers to inputs which are already packed!"
+        )
 
         # Project the inputs if there is a size mismatch
         if self.inpt_dim != self.dim:

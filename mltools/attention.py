@@ -26,7 +26,7 @@ def merge_masks(
     attn_bias: T.Tensor | None,
     query: T.Tensor,
     causal: bool = False,
-) -> None | T.BoolTensor:
+) -> T.BoolTensor | None:
     """Create a full attention mask which uses the padding information and bias."""
     # Create the placeholder for the full mask, None is full attention
     merged_mask = None
