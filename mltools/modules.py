@@ -340,6 +340,18 @@ class IterativeNormLayer(nn.Module):
         self.frozen.fill_(False)
 
 
+class Fourier(nn.Module):
+    def __init__(self, outp_dim: int):
+        super().__init__()
+        self.outp_dim = outp_dim
+        self.register_buffer("freqs", 2 * math.pi * T.randn(outp_dim))
+        self.register_buffer("phases", 2 * math.pi * T.rand(outp_dim))
+
+    def forward(self, x: T.Tensor) -> T.Tensor:
+        y = x.float().ger(self.freqs) + self.phases  # Ger is outer product
+        return y.cos().to(x.dtype) * math.sqrt(2)  # Sqrt(2) ensures variance is 1
+
+
 class CosineEncoding(nn.Module):
     """Module for applying cosine encoding with increasing frequencies."""
 
@@ -347,7 +359,7 @@ class CosineEncoding(nn.Module):
         self,
         *,
         outp_dim: int,
-        scheme: str = "exp",
+        scheme: str = "lin",
         min_value: float = 0.0,
         max_value: float = 1.0,
         do_sin: bool = False,
@@ -389,7 +401,7 @@ class CosineEncoding(nn.Module):
             freqs = T.exp(freqs)
         elif scheme == "pow":
             freqs = 2**freqs
-        elif scheme == "linear":
+        elif scheme in {"lin", "linear"}:
             freqs += 1
         else:
             raise ValueError(f"Unrecognised frequency scaling: {scheme}")

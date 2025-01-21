@@ -27,6 +27,10 @@ RUN python -m pip install --upgrade pip
 RUN python --version
 RUN python -m pip --version
 
+# Need to install these before running requirements.txt
+RUN python -m pip install packaging
+RUN python -m pip install ninja
+
 # Intall python dependencies
 COPY requirements.txt .
 RUN python -m pip install --upgrade -r requirements.txt

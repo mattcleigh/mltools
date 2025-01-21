@@ -205,7 +205,7 @@ class MultiHeadedAttentionBlock(ConditionedModule):
         inpt_channels: int,
         inpt_shape: tuple,
         ctxt_dim: int = 0,
-        num_heads: int = 1,
+        num_heads: int = 4,
         nrm_groups: int = 1,
         do_pos_encoding: bool = True,
     ) -> None:

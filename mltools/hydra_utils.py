@@ -23,8 +23,8 @@ OmegaConf.register_new_resolver("int_div", lambda x, y: int(x) // int(y))
 OmegaConf.register_new_resolver("min", min)
 OmegaConf.register_new_resolver("max", max)
 OmegaConf.register_new_resolver("if", lambda c, x, y: x if c else y)
-OmegaConf.register_new_resolver("greater", operator.gt)
-OmegaConf.register_new_resolver("less", operator.lt)
+OmegaConf.register_new_resolver("gt", operator.gt)
+OmegaConf.register_new_resolver("lt", operator.lt)
 OmegaConf.register_new_resolver("in", lambda x, y: x in y)
 
 # Increase the wait time for wandb
@@ -64,8 +64,8 @@ def reload_original_config(
 
             if set_wandb_resume:
                 log.info("Attempting to set the same WandB ID to continue logging run")
-                if hasattr(orig_cfg, "loggers") and hasattr(orig_cfg.loggers, "wandb"):
-                    orig_cfg.loggers.wandb.resume = True
+                if hasattr(orig_cfg, "logger") and hasattr(orig_cfg.logger, "resume"):
+                    orig_cfg.logger.resume = True
 
         except IndexError:
             log.warning("No checkpoint found! Will not set the checkpoint path.")

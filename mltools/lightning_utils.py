@@ -3,7 +3,7 @@
 import logging
 import math
 
-from pytorch_lightning import Callback, LightningModule, Trainer
+from lightning import Callback, LightningModule, Trainer
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LambdaLR, OneCycleLR
 

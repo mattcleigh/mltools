@@ -262,9 +262,9 @@ class Attention(nn.Module):
     def __init__(
         self,
         dim: int,
-        num_heads: int = 1,
+        num_heads: int = 8,
         dropout: float = 0,
-        do_qknorm: bool = False,
+        do_qknorm: bool = True,
     ) -> None:
         """Initialise the attention block.
 
@@ -514,9 +514,9 @@ class Transformer(nn.Module):
 
     def forward(self, x: T.Tensor, **kwargs) -> T.Tensor:
         """Pass through all layers of the transformer."""
-        assert not (self.num_registers and "culens" in kwargs), (
-            "Cannot add registers to inputs which are already packed!"
-        )
+        assert not (
+            self.num_registers and "culens" in kwargs
+        ), "Cannot add registers to inputs which are already packed!"
 
         # Project the inputs if there is a size mismatch
         if self.inpt_dim != self.dim:

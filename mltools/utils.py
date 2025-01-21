@@ -297,13 +297,11 @@ def intersperse(*sequences):
 
 
 def save_declaration(path: str = "done.txt") -> None:
-    """Save a simple file which declares a job to be finished.
-
-    This is typically called at the end of training for pipelines managers such as
-    snakemake to be able to track the progress of the pipeline.
-    """
+    """Save a simple file which declares a job to be finished."""
     with open(Path(path).with_suffix(".txt"), "w") as f:
-        # Add some text describing the job
         f.write("This file was created to declare the job as finisehd!\n")
         f.write("This is often called at the end of training for workflow managers\n")
         f.write("like snakemake to be able to track the progress of the pipeline.\n")
+        f.write("This is because snakemake checks a job as finished if it has\n")
+        f.write("created a specific output file.\n")
+        f.write("So... if you see this file, the job is done!")
