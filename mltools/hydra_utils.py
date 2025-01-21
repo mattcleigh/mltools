@@ -80,7 +80,7 @@ def print_config(
         "datamodule",
         "model",
         "callbacks",
-        "loggers",
+        "logger",
         "trainer",
         "paths",
     ),
@@ -144,16 +144,16 @@ def save_config(cfg: OmegaConf) -> None:
     default config.yaml file on startup, so this backup is needed for resuming.
     """
     # In order to be able to resume the wandb logger session, save the run id
-    if wandb.run is not None and hasattr(cfg, "loggers"):
-        if hasattr(cfg.loggers, "wandb"):
-            cfg.loggers.wandb.id = wandb.run.id
+    if wandb.run is not None and hasattr(cfg, "logger"):
+        if "wandb" in cfg.logger.__name__:
+            cfg.logger.wandb.id = wandb.run.id
         else:
-            log.warning("WandB is running but cant find config/loggers/wandb!")
+            log.warning("WandB is running but cant find if in cfg/logger!")
             log.warning("This is required to save the ID for resuming jobs.")
-            log.warning("Is the name of the logger set correctly")
+            log.warning("Is the name of the logger set correctly?")
 
     # save config tree to file
-    OmegaConf.save(cfg, Path(cfg.paths.full_path, "full_config.yaml"), resolve=True)
+    OmegaConf.save(cfg, Path(cfg.full_path, "full_config.yaml"), resolve=True)
 
 
 @rank_zero_only
