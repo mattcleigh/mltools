@@ -10,7 +10,7 @@ Alternatively, install via pyproject.toml using pip, since it references the sam
 ## Usage
 
 There are no script in this project. Instead, import the modules and classes you need.
-
+```
 mltools/
 ├── docker                   # Docker-related files
 │   └── Dockerfile           # Docker configuration file
@@ -46,6 +46,7 @@ mltools/
     ├── test_modules.py      # Tests for custom modules
     ├── test_optimisers.py   # Tests for optimizers
     └── test_transformers.py # Tests for transformers
+```
 
 ## Docker
 
