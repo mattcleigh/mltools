@@ -11,31 +11,26 @@ from torch.optim import Optimizer
 
 log = logging.getLogger(__name__)
 
+WD_VETO = {"abs_enc", "registers", "null_tokens"}
+
 
 class AdamWS(T.optim.AdamW):
-    """AdamW optimizer where weight decay is only applied to matrices."""
+    """AdamW optimizer where weight decay is only applied to matrices.
 
-    def __init__(self, params: Iterable | dict, weight_decay: float = 1e-2, **kwargs):
-        params = list(params)
-        if isinstance(params[0], tuple):
-            params = [x for _, x in params]
-        decay_params = [p for p in params if p.dim() >= 2]
-        nodecay_params = [p for p in params if p.dim() < 2]
+    Currently the reccomended method for transformers.
+    See: https://github.com/karpathy/nanoGPT
+    """
 
-        # Hardcoded! Need to make this more general!
-        # We dont want weight decay to apply to positional encoding or registers!
-        # Right now we manually move them accross...
-        decay_params2 = []
-        for dp in decay_params:
-            if any(x in dp.name for x in ["registers", "abs_enc"]):
-                nodecay_params.append(dp)
-            else:
-                decay_params2.append(dp)
-        log.info(
-            "AdamWS: Manually deactivating weight decay for "
-            f"{len(decay_params) - len(decay_params2)} parameters."
-        )
-        decay_params = decay_params2
+    def __init__(self, params: dict | Iterable, weight_decay: float = 1e-2, **kwargs):
+        params = list(params)  # Ensures that checking wont delete elements
+
+        # A test to see if the parameter should be decayed
+        def check(p):
+            return (p[1].dim() >= 2) and not any(x in p[0] for x in WD_VETO)
+
+        # Apply the check to the parameters
+        decay_params = [p[1] for p in params if check(p)]
+        nodecay_params = [p[1] for p in params if not check(p)]
 
         num_decay_params = sum(p.numel() for p in decay_params)
         num_nodecay_params = sum(p.numel() for p in nodecay_params)

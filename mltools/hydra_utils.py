@@ -82,7 +82,6 @@ def print_config(
         "callbacks",
         "logger",
         "trainer",
-        "paths",
     ),
     resolve: bool = True,
 ) -> None:
@@ -145,8 +144,8 @@ def save_config(cfg: OmegaConf) -> None:
     """
     # In order to be able to resume the wandb logger session, save the run id
     if wandb.run is not None and hasattr(cfg, "logger"):
-        if "wandb" in cfg.logger.__name__:
-            cfg.logger.wandb.id = wandb.run.id
+        if "wandb" in cfg.logger._target_.lower():
+            cfg.logger.id = wandb.run.id
         else:
             log.warning("WandB is running but cant find if in cfg/logger!")
             log.warning("This is required to save the ID for resuming jobs.")
