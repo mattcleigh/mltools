@@ -18,6 +18,14 @@ from torch.utils.data.dataloader import default_collate
 from .schedulers import CyclicWithWarmup, LinearWarmupRootDecay, WarmupToConstant
 
 
+class ParameterNoWD(nn.Parameter):
+    """A parameter which does not have weight decay.
+
+    Must be used alongside the mltools.optimisers.AdamWS optimizer for this to take
+    effect. As this is a subclass of nn.Parameter, it can be used in the same way.
+    """
+
+
 def get_activations(
     model: nn.Module,
     activation_dict: dict,

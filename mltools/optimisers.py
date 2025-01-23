@@ -9,9 +9,9 @@ from typing import Any
 import torch as T
 from torch.optim import Optimizer
 
-log = logging.getLogger(__name__)
+from .torch_utils import ParameterNoWD
 
-WD_VETO = {"abs_enc", "registers", "null_tokens"}
+log = logging.getLogger(__name__)
 
 
 class AdamWS(T.optim.AdamW):
@@ -21,17 +21,16 @@ class AdamWS(T.optim.AdamW):
     See: https://github.com/karpathy/nanoGPT
     """
 
-    def __init__(self, params: dict | Iterable, weight_decay: float = 1e-2, **kwargs):
+    def __init__(self, params: Iterable | dict, weight_decay: float = 1e-2, **kwargs):
         params = list(params)  # Ensures that checking wont delete elements
+        if isinstance(params[0], tuple):  # Make it a list for generalisation
+            params = [x for _, x in params]
 
-        # A test to see if the parameter should be decayed
-        def check(p):
-            return (p[1].dim() >= 2) and not any(x in p[0] for x in WD_VETO)
+        def exempt(p):
+            return (p.dim() < 2) or isinstance(p, ParameterNoWD)
 
-        # Apply the check to the parameters
-        decay_params = [p[1] for p in params if check(p)]
-        nodecay_params = [p[1] for p in params if not check(p)]
-
+        nodecay_params = [p for p in params if exempt(p)]
+        decay_params = [p for p in params if not exempt(p)]
         num_decay_params = sum(p.numel() for p in decay_params)
         num_nodecay_params = sum(p.numel() for p in nodecay_params)
         log.info(

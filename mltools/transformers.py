@@ -13,7 +13,7 @@ from .attention import (
     flash_self_attention,
     standard_attention,
 )
-from .torch_utils import append_dims
+from .torch_utils import append_dims, ParameterNoWD
 
 log = logging.getLogger(__name__)
 
@@ -189,11 +189,7 @@ class Residual(nn.Module):
     Gating is always initialised as zero, so the module is initially bypassed.
     """
 
-    def __init__(
-        self,
-        fn: nn.Module,
-        ctxt_dim: int = 0,
-    ) -> None:
+    def __init__(self, fn: nn.Module, ctxt_dim: int = 0) -> None:
         """Parameters
         ----------
         fn : nn.Module
@@ -235,10 +231,8 @@ class Residual(nn.Module):
             ctxt_out = append_dims(self.ctxt_layer(F.silu(ctxt)), x.dim(), dim=1)
             scale, shift, gate = ctxt_out.chunk(3, dim=-1)
             tmp = self.norm(x) * (scale + 1) + shift
-        else:
-            gate = self.gate
-            tmp = self.norm(x)
-        return x + self.fn(tmp, *args, **kwargs) * gate
+            return x + self.fn(tmp, *args, **kwargs) * gate
+        return x + self.fn(self.norm(x), *args, **kwargs) * self.gate
 
 
 class SwiGLUNet(nn.Module):
@@ -292,13 +286,6 @@ class Attention(nn.Module):
         self.final_norm = nn.LayerNorm(dim)
         self.qk_norm = QKNorm(dim) if do_qknorm else None
         self.reset_parameters()
-
-    def reset_parameters(self) -> None:
-        """Initialize the parameters."""
-        nn.init.xavier_uniform_(self.attn_in.weight)
-        nn.init.xavier_uniform_(self.attn_out.weight)
-        nn.init.constant_(self.attn_in.bias, 0)
-        nn.init.constant_(self.attn_out.bias, 0)
 
     def _get_attn_fn(self, **kwargs) -> tuple:
         """Work out which attention function to use based on the inputs."""
@@ -508,9 +495,9 @@ class Transformer(nn.Module):
         if self.inpt_dim != self.dim:
             self.linear_in = nn.Linear(self.inpt_dim, self.dim)
         if self.num_registers:
-            self.registers = nn.Parameter(T.randn((self.num_registers, dim)) * 1e-3)
+            self.registers = ParameterNoWD(T.randn((self.num_registers, dim)) * 1e-3)
         if self.pos_enc == "abs":
-            self.abs_enc = nn.Parameter(T.randn((max_seq_len, dim)) * 1e-3)
+            self.abs_enc = ParameterNoWD(T.randn((max_seq_len, dim)) * 1e-3)
 
     def forward(self, x: T.Tensor, **kwargs) -> T.Tensor:
         """Pass through all layers of the transformer."""
