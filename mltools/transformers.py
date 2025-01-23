@@ -649,34 +649,19 @@ class ClassAttentionPooling(nn.Module):
         self,
         *,
         dim: int = 128,
+        inpt_dim: int = 0,
+        outp_dim: int = 0,
         ctxt_dim: int = 0,
         num_layers: int = 1,
-        outp_dim: int = 0,
-        inpt_dim: int = 0,
         layer_config: dict | None = None,
     ) -> None:
-        """Parameters
-        ----------
-        dim : int, optional
-            The dimension of the input and output embeddings. Default is 128.
-        ctxt_dim : int, optional
-            The dimension of the context embeddings. Default is 0.
-        num_layers : int, optional
-            The number of cross attention pooling layers. Default is 1.
-        outp_dim : int, optional
-            The dimension of the output embeddings. If not provided, defaults to `dim`.
-        inpt_dim : int, optional
-            The dimension of the input embeddings. If not provided, defaults to `dim`.
-        layer_config : dict or None, optional
-            Additional configuration for the layers. Default is None.
-        """
         super().__init__()
         layer_config = layer_config or {}
         self.dim = dim
+        self.inpt_dim = inpt_dim or dim
+        self.outp_dim = outp_dim or dim
         self.ctxt_dim = ctxt_dim
         self.num_layers = num_layers
-        self.outp_dim = outp_dim or dim
-        self.inpt_dim = inpt_dim or dim
 
         # The single learnable global token
         self.global_token = nn.Parameter(T.randn((1, 1, self.dim)))
