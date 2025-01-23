@@ -5,11 +5,11 @@ A collection of Python-based tools and utilities built on PyTorch to streamline 
 ## Installation
 
 Clone this repository and install dependencies from requirements.txt.
-Alternatively, install via pyproject.toml using pip, since it references the same requirements file.
+Alternatively, install via pyproject.toml using pip.
 
 ## Usage
 
-There are no script in this project. Instead, import the modules and classes you need.
+There are no scripts in this project. Instead, import the modules and classes as needed.
 ```
 mltools/
 ├── docker                   # Docker-related files

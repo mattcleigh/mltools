@@ -159,27 +159,16 @@ class Identity(nn.Module):
         return x
 
 
-class RMSNorm(nn.Module):
-    """Root Mean Square Normalisation layer."""
-
-    def __init__(self, dim: int, elementwise_affine: bool = False) -> None:
-        super().__init__()
-        self.weight = nn.Parameter(T.ones(dim)) if elementwise_affine else 1
-
-    def forward(self, x: T.Tensor) -> T.Tensor:
-        return rms_norm(x) * self.weight
-
-
 class QKNorm(nn.Module):
     """Wrap both the query and key normalisation layers."""
 
     def __init__(self, dim: int) -> None:
         super().__init__()
-        self.q_norm = RMSNorm(dim)
-        self.k_norm = RMSNorm(dim)
+        self.q_norm = nn.RMSNorm(dim, elementwise_affine=False)
+        self.k_norm = nn.RMSNorm(dim, elementwise_affine=False)
 
     def forward(self, q: T.Tensor, k: T.Tensor) -> tuple:
-        return self.q_norm(q), self.k_norm(k)
+        return self.q_norm(q).type(q.dtype), self.k_norm(k).type(q.dtype)
 
 
 class Residual(nn.Module):
@@ -284,8 +273,7 @@ class Attention(nn.Module):
         self.attn_in = nn.Linear(dim, 3 * dim)
         self.attn_out = nn.Linear(dim, dim)
         self.final_norm = nn.LayerNorm(dim)
-        self.qk_norm = QKNorm(dim) if do_qknorm else None
-        self.reset_parameters()
+        self.qk_norm = QKNorm(dim // num_heads) if do_qknorm else None
 
     def _get_attn_fn(self, **kwargs) -> tuple:
         """Work out which attention function to use based on the inputs."""
