@@ -1,6 +1,7 @@
 """Mix of utility functions specifically for pytorch."""
 
 import contextlib
+import math
 import os
 import re
 from collections.abc import Callable, Iterable
@@ -26,18 +27,32 @@ class ParameterNoWD(nn.Parameter):
     """
 
 
+def rms_norm(x, dim: int | tuple = -1, eps: float = 1e-6) -> T.Tensor:
+    """Normalise the vector to have unit variance."""
+    n = T.linalg.vector_norm(x.float(), dim=dim, keepdim=True, dtype=T.float32)
+    n = T.add(eps, n, alpha=math.sqrt(n.numel() / x.numel()))
+    return x / n.to(x.dtype)
+
+
+def rms(x, dim: int | tuple = -1, eps: float = 1e-6) -> T.Tensor:
+    """Calculate the RMS of the vector."""
+    n = T.linalg.vector_norm(x.float(), dim=dim, keepdim=True, dtype=T.float32)
+    return T.add(eps, n, alpha=math.sqrt(n.numel() / x.numel()))
+
+
 def get_activations(
     model: nn.Module,
     activation_dict: dict,
     regex: list | None = None,
     types: list | None = None,
 ) -> list:
-    """Create hooks for storing the output activations of layers in a model."""
+    """Create hooks for storing output activation magnitudes of layers in a model."""
     hooks = []
 
     def hook(name) -> callable:
         def forward_hook(_module: nn.Module, _input: T.Tensor, output: T.Tensor):
-            activation_dict[name] = output.detach().std().cpu().item()
+            norm = rms(output.detach()).mean().cpu().item()
+            activation_dict[name] = norm
 
         return forward_hook
 

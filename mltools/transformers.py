@@ -13,7 +13,7 @@ from .attention import (
     flash_self_attention,
     standard_attention,
 )
-from .torch_utils import append_dims, ParameterNoWD
+from .torch_utils import ParameterNoWD, append_dims
 
 log = logging.getLogger(__name__)
 
@@ -97,13 +97,6 @@ def unpack(x: T.Tensor, mask: T.BoolTensor) -> T.Tensor:
     out = T.zeros((*mask.shape, x.shape[-1]), dtype=x.dtype, device=x.device)
     out[mask] = x
     return out
-
-
-def rms_norm(x, dim: int | tuple = -1, eps: float = 1e-6) -> T.Tensor:
-    """Normalise the vector to have unit variance."""
-    n = T.linalg.vector_norm(x.float(), dim=dim, keepdim=True, dtype=T.float32)
-    n = T.add(eps, n, alpha=math.sqrt(n.numel() / x.numel()))
-    return x / n.to(x.dtype)
 
 
 def add_registers(
@@ -194,17 +187,23 @@ class Residual(nn.Module):
         self.ctxt_dim = ctxt_dim
         self.norm = nn.LayerNorm(self.dim, elementwise_affine=False)
         if ctxt_dim:
-            self.ctxt_layer = nn.Linear(ctxt_dim, 3 * self.dim)
+            self.scale = nn.Linear(ctxt_dim, self.dim)  # Seperate as its easier to log
+            self.shift = nn.Linear(ctxt_dim, self.dim)
+            self.gate = nn.Linear(ctxt_dim, self.dim)
         else:
             self.gate = nn.Parameter(T.ones(self.dim))
         self.reset_parameters()
 
     def reset_parameters(self) -> None:
         if self.ctxt_dim:
-            self.ctxt_layer.weight.data.zero_()
-            self.ctxt_layer.bias.data.zero_()
+            self.scale.weight.data.zero_()
+            self.scale.bias.data.zero_()
+            self.shift.weight.data.zero_()
+            self.shift.bias.data.zero_()
+            self.gate.weight.data.zero_()
+            self.gate.bias.data.zero_()
         else:
-            self.gate.data.fill_(0.05)
+            self.gate.data.zero_()
 
     def __repr__(self) -> str:
         return f"Res-{self.fn}"
@@ -217,8 +216,10 @@ class Residual(nn.Module):
         **kwargs,
     ) -> T.Tensor:
         if self.ctxt_dim:
-            ctxt_out = append_dims(self.ctxt_layer(F.silu(ctxt)), x.dim(), dim=1)
-            scale, shift, gate = ctxt_out.chunk(3, dim=-1)
+            ctxt = F.silu(ctxt)
+            scale = append_dims(self.scale(ctxt), x.dim(), dim=1)
+            shift = append_dims(self.shift(ctxt), x.dim(), dim=1)
+            gate = append_dims(self.gate(ctxt), x.dim(), dim=1)
             tmp = self.norm(x) * (scale + 1) + shift
             return x + self.fn(tmp, *args, **kwargs) * gate
         return x + self.fn(self.norm(x), *args, **kwargs) * self.gate
