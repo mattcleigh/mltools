@@ -246,7 +246,7 @@ class Attention(nn.Module):
     def __init__(
         self,
         dim: int,
-        num_heads: int = 4,
+        num_heads: int = 8,
         dropout: float = 0,
         do_qknorm: bool = True,
     ) -> None:
