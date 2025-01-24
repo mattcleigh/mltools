@@ -246,7 +246,7 @@ class Attention(nn.Module):
     def __init__(
         self,
         dim: int,
-        num_heads: int = 8,
+        num_heads: int = 4,
         dropout: float = 0,
         do_qknorm: bool = True,
     ) -> None:
@@ -500,7 +500,7 @@ class Transformer(nn.Module):
 
         # Add absolute positional encoding information
         if self.pos_enc == "abs":
-            x = x + self.abs_enc[:, : x.shape[-2], :]  # Trimmed to seq len
+            x = x + self.abs_enc[: x.shape[-2], :]  # Trimmed to seq len
 
         # Add registers to the FRONT of the input
         if self.num_registers:
