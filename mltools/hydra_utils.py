@@ -67,7 +67,7 @@ def reload_original_config(
                 if hasattr(orig_cfg, "logger") and hasattr(orig_cfg.logger, "resume"):
                     orig_cfg.logger.resume = True
 
-        except IndexError:
+        except Exception as _:
             log.warning("No checkpoint found! Will not set the checkpoint path.")
 
     return orig_cfg
