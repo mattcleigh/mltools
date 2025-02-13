@@ -679,8 +679,6 @@ class ClassAttentionPooling(nn.Module):
         self, x: T.Tensor, mask: T.BoolTensor | None = None, **kwargs
     ) -> T.Tensor:
         """Perform class attention pooling on a sequence."""
-
-        # Input projection
         x = self.linear_in(x)
         x = F.silu(x)
 

@@ -137,30 +137,30 @@ def linear_warmup_exp_decay(
 
 def linear_warmup_cosine_decay(
     optimizer: Optimizer,
-    model: LightningModule,
-    warmup_steps: int = 100,
-    total_steps: int = 1000,
-    final_factor: float = 1e-3,
-    init_factor: float = 1e-1,
-    warmup_ratio: float | None = None,
+    warmup_steps: int = 1000,
+    total_steps: int = 10000,
+    final_factor: float = 5e-2,
+    init_factor: float = 1e-5,
+    model: LightningModule | None = None,
 ) -> LambdaLR:
     """Return a scheduler with a linear warmup and a cosine decay."""
-    # Replace the total_steps with the model trainer's actual max_steps
-    total_steps = get_max_steps(model) or total_steps
+    # Attempt to get the max steps from the model trainer
+    if total_steps == -1 and model is not None:
+        total_steps = get_max_steps(model)
 
-    # Replace the wamup_steps with the ratio
-    if warmup_ratio is not None:
-        warmup_steps = int(warmup_ratio * total_steps)
+    warmup_steps = max(1, warmup_steps)  # Avoid division by zero
+    assert 0 < final_factor < 1, "Final factor must be less than 1"
+    assert 0 < init_factor < 1, "Initial factor must be less than 1"
+    assert 0 < warmup_steps < total_steps, "Total steps must be greater than warmup"
 
-    # Define the actual scheduler function
     def fn(x: int) -> float:
-        if x < warmup_steps:
-            return init_factor + x * (1 - init_factor) / max(1, warmup_steps)
-        progress = (x - warmup_steps) / max(1, total_steps - warmup_steps)
-        lr = 0.5 * (1.0 + math.cos(math.pi * progress))
-        return max(final_factor, lr)
+        if x <= warmup_steps:
+            return init_factor + x * (1 - init_factor) / warmup_steps
+        if x >= total_steps:
+            return final_factor
+        t = (x - warmup_steps) / (total_steps - warmup_steps) * math.pi
+        return (1 + math.cos(t)) * (1 - final_factor) / 2 + final_factor
 
-    # The lambda scheduler is the easiest way to define a custom scheduler
     return LambdaLR(optimizer, fn)
 
 
