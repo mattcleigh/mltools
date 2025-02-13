@@ -7,37 +7,45 @@ from torch import nn
 
 @T.compile
 def sigmoid_focal_loss(
-    inputs: T.Tensor,
-    targets: T.Tensor,
+    output: T.Tensor,
+    target: T.Tensor,
     gamma: float = 2,
     pos_weight: float = 1,
+    smoothing: float = 0.0,
     reduction: str = "mean",
 ) -> T.Tensor:
     """Focal loss for imbalanced binary classification.
 
     Parameters
     ----------
-    inputs : T.Tensor
-        The input tensor from the model
-    targets : T.Tensor
-        The target tensor for the model
+    output : T.Tensor
+        The output tensor from the model
+    target : T.Tensor
+        The target tensor
     gamma : float, optional
         The gamma value for the focal loss, by default 2
     pos_weight : float, optional
         The positive class weight, by default 1
+    smoothing : float, optional
+        The label smoothing value, by default 0.05
     reduction : str, optional
         The reduction method for the loss, by default "mean"
     """
-    inputs = inputs.float()
-    targets = targets.float()
+    output = output.float()
+    target = target.float()
 
-    ce_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
-    p = T.sigmoid(inputs)
-    p_t = p * targets + (1 - p) * (1 - targets)
+    if smoothing > 0:
+        target = target - (target - 0.5).sign() * T.rand_like(target) * smoothing
+
+    ce_loss = F.binary_cross_entropy_with_logits(
+        output, target.view_as(output), reduction="none"
+    )
+    p = T.sigmoid(output)
+    p_t = p * target + (1 - p) * (1 - target)
     loss = ce_loss * ((1 - p_t) ** gamma)
 
     if pos_weight != 1:
-        weight = 1 + (pos_weight - 1) * targets
+        weight = 1 + (pos_weight - 1) * target
         loss = weight * loss
 
     if reduction == "mean":

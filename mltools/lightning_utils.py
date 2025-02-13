@@ -3,15 +3,48 @@
 import logging
 import math
 import re
+from pathlib import Path
 from typing import Any
 
+import h5py
+import torch as T
 from lightning import Callback, LightningModule, Trainer
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LambdaLR, OneCycleLR
 
-from .torch_utils import get_activations, get_sched, get_submodules, gradient_norm
+from .torch_utils import (
+    get_activations,
+    get_sched,
+    get_submodules,
+    gradient_norm,
+    to_np,
+)
 
-logger = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
+
+
+def save_predictions(
+    model: LightningModule,
+    datamodule: LightningModule,
+    trainer: Trainer,
+    file_path: str,
+    ckpt_path: str | None = None,
+) -> None:
+    log.info("Running inference on test set")
+    outputs = trainer.predict(model=model, datamodule=datamodule, ckpt_path=ckpt_path)
+
+    log.info("Combining predictions across dataset")
+    keys = list(outputs[0].keys())
+    score_dict = {k: T.vstack([o[k] for o in outputs]) for k in keys}
+    score_dict = to_np(score_dict)
+
+    log.info("Saving outputs")
+    output_dir = Path(file_path, "outputs")
+    print(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    with h5py.File(output_dir / "test_set.h5", mode="w") as file:
+        for k in keys:
+            file.create_dataset(k, data=score_dict[k])
 
 
 class ActivationMonitor(Callback):
@@ -89,15 +122,15 @@ class LogGradNorm(Callback):
 def get_max_steps(model: LightningModule) -> int:
     """Get the maximum number of steps from the model trainer."""
     try:
-        logger.info("Attempting to get the max steps from the model trainer")
+        log.info("Attempting to get the max steps from the model trainer")
         max_steps = model.trainer.max_steps
         if max_steps < 1:
             steps_per_epoch = len(model.trainer.datamodule.train_dataloader())
             max_epochs = model.trainer.max_epochs
             max_steps = steps_per_epoch * max_epochs
-        logger.info(f"Success:  max_steps = {max_steps}")
+        log.info(f"Success:  max_steps = {max_steps}")
     except Exception as e:
-        logger.info(f"Failed to get max steps from the model trainer: {e}")
+        log.info(f"Failed to get max steps from the model trainer: {e}")
         max_steps = 0
     return max_steps
 
