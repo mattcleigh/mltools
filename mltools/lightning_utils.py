@@ -17,7 +17,7 @@ from .torch_utils import (
     get_sched,
     get_submodules,
     gradient_norm,
-    to_np,
+    to_numpy,
 )
 
 log = logging.getLogger(__name__)
@@ -36,7 +36,7 @@ def save_predictions(
     log.info("Combining predictions across dataset")
     keys = list(outputs[0].keys())
     score_dict = {k: T.vstack([o[k] for o in outputs]) for k in keys}
-    score_dict = to_np(score_dict)
+    score_dict = to_numpy(score_dict)
 
     log.info("Saving outputs")
     output_dir = Path(file_path, "outputs")

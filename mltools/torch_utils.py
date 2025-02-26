@@ -375,40 +375,43 @@ def k_fold_split(
     return train, valid, test
 
 
-def move_dev(
-    tensor: T.Tensor | tuple | list | dict, dev: str | T.device
+def to_device(
+    x: T.Tensor | tuple | list | dict | None,
+    device: str | T.device,
 ) -> T.Tensor | tuple | list | dict:
-    """Return a copy of a tensor on the targetted device.
+    """Return a copy of a tensor on the chosen device.
 
-    This function calls pytorch's .to() but allows for values to be:
-    - list of tensors
-    - tuple of tensors
-    - dict of tensors
+    - Calls pytorch's .to() but allows for values to be nested lists, tuples or dicts.
     """
-    if isinstance(tensor, tuple):
-        return tuple(t.to(dev) for t in tensor)
-    if isinstance(tensor, list):
-        return [t.to(dev) for t in tensor]
-    if isinstance(tensor, dict):
-        return {t: tensor[t].to(dev) for t in tensor}
-    return tensor.to(dev)
+    if x is None:
+        return x
+    if isinstance(x, T.Tensor):
+        return x.to(device)
+    if isinstance(x, dict):
+        return {k: to_device(v, device) for k, v in x.items()}
+    if isinstance(x, (tuple | list)):
+        return type(x)(to_device(v) for v in x)
+    raise TypeError(f"Unsupported input type: {type(x)}")
 
 
-def to_np(inpt: T.Tensor | tuple) -> np.ndarray:
-    """More consicse way of doing all the necc steps to convert a pytorch tensor to
-    numpy array.
+def to_numpy(
+    x: T.Tensor | np.ndarray | tuple | list | dict,
+) -> np.ndarray | dict | list | None:
+    """Convert a tensor to a numpy array.
 
-    - Includes gradient deletion, and device migration
+    - Includes gradient deletion, and device migration and supportes nested structures.
     """
-    if inpt is None:
-        return None
-    if isinstance(inpt, dict):
-        return {k: to_np(inpt[k]) for k in inpt}
-    if isinstance(inpt, (tuple | list)):
-        return type(inpt)(to_np(x) for x in inpt)
-    if inpt.dtype == T.bfloat16:  # Numpy conversions don't support bfloat16s
-        inpt = inpt.half()
-    return inpt.detach().cpu().numpy()
+    if x is None or isinstance(x, np.ndarray):
+        return x
+    if isinstance(x, T.Tensor):
+        if x.dtype == T.bfloat16:  # Numpy conversions don't support bfloat16s
+            x = x.half()
+        return x.detach().cpu().numpy()
+    if isinstance(x, dict):
+        return {k: to_numpy(v) for k, v in x.items()}
+    if isinstance(x, (tuple | list)):
+        return type(x)(to_numpy(v) for v in x)
+    raise TypeError(f"Unsupported input type: {type(x)}")
 
 
 def print_gpu_info(dev=0):
@@ -426,7 +429,7 @@ def count_parameters(model: nn.Module) -> int:
 
 def get_grad_norm(model: nn.Module, norm_type: float = 2.0):
     """Return the norm of the gradients of a given model."""
-    return to_np(
+    return to_numpy(
         T.norm(
             T.stack([T.norm(p.grad.detach(), norm_type) for p in model.parameters()]),
             norm_type,

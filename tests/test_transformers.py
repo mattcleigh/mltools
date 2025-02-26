@@ -4,7 +4,7 @@ from torch import nn
 from torch.nn.functional import layer_norm, scaled_dot_product_attention
 
 from mltools.attention import merge_masks, my_scaled_dot_product_attention
-from mltools.torch_utils import move_dev
+from mltools.torch_utils import to_device
 from mltools.transformers import (
     Attention,
     ClassAttentionPooling,
@@ -153,7 +153,7 @@ def test_flash_transformer() -> None:
     )
 
     transformer = transformer.to("cuda")
-    i = move_dev(i, "cuda")
+    i = to_device(i, "cuda")
 
     with T.autocast("cuda", enabled=True):
         out1 = transformer(**i)
@@ -218,8 +218,8 @@ def test_flash_cae() -> None:
         pytest.skip("CUDA not available")
     i1 = get_transformer_inputs(0)
     i2 = get_transformer_inputs(1)
-    i1 = move_dev(i1, "cuda")
-    i2 = move_dev(i2, "cuda")
+    i1 = to_device(i1, "cuda")
+    i2 = to_device(i2, "cuda")
     x1 = i1["x"]
     x2 = i2["x"]
     x1_mask = i1["mask"]
