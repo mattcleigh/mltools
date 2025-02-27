@@ -215,6 +215,7 @@ class Residual(nn.Module):
         **kwargs,
     ) -> T.Tensor:
         if self.ctxt_dim:
+            assert ctxt is not None, f"{self} initialised with ctxt_dim but none given!"
             ctxt = F.silu(ctxt)
             scale = append_dims(self.scale(ctxt), x.dim(), dim=1)
             shift = append_dims(self.shift(ctxt), x.dim(), dim=1)

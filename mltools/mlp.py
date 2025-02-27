@@ -105,6 +105,7 @@ class MLPBlock(nn.Module):
         if self.do_res:  # Double checked that this does copy
             orig = x
         if self.ctxt_dim:  # Concatenate context to input
+            assert ctxt is not None, f"{self} initialised with ctxt_dim but none given!"
             x = T.cat([x, ctxt], dim=-1)
         for layer in self.layers:  # Pass through each layer
             x = layer(x)
