@@ -184,7 +184,7 @@ class Residual(nn.Module):
         self.dim = fn.dim
         self.fn = fn
         self.ctxt_dim = ctxt_dim
-        self.norm = nn.LayerNorm(self.dim, elementwise_affine=False)
+        self.norm = nn.RMSNorm(self.dim, elementwise_affine=False)
         if ctxt_dim:
             self.scale = nn.Linear(ctxt_dim, self.dim)  # Seperate as its easier to log
             self.shift = nn.Linear(ctxt_dim, self.dim)
@@ -273,7 +273,7 @@ class Attention(nn.Module):
         self.do_qknorm = do_qknorm
         self.attn_in = nn.Linear(dim, 3 * dim)
         self.attn_out = nn.Linear(dim, dim)
-        self.final_norm = nn.LayerNorm(dim)
+        self.final_norm = nn.RMSNorm(dim)
         self.qk_norm = QKNorm(dim // num_heads) if do_qknorm else None
 
     def _get_attn_fn(self, **kwargs) -> tuple:
@@ -477,7 +477,7 @@ class Transformer(nn.Module):
         self.num_heads = self.layers[0].sa.fn.num_heads
 
         # Output norm and linear layer
-        self.final_norm = nn.LayerNorm(dim)
+        self.final_norm = nn.RMSNorm(dim)
         self.linear_out = nn.Linear(dim, self.outp_dim)
 
         # Optional features
@@ -585,8 +585,8 @@ class CrossAttentionEncoder(nn.Module):
         self.enc_layers = nn.ModuleList([
             EncoderBlock(dim, ctxt_dim, **enc_config) for _ in range(num_layers)
         ])
-        self.x1_final_norm = nn.LayerNorm(dim)
-        self.x2_final_norm = nn.LayerNorm(dim)
+        self.x1_final_norm = nn.RMSNorm(dim)
+        self.x2_final_norm = nn.RMSNorm(dim)
 
     def forward(
         self,
@@ -673,7 +673,7 @@ class ClassAttentionPooling(nn.Module):
 
         # Extra layers
         self.linear_in = nn.Linear(self.inpt_dim, dim)
-        self.final_norm = nn.LayerNorm(dim)
+        self.final_norm = nn.RMSNorm(dim)
         self.linear_out = nn.Linear(dim, self.outp_dim)
 
     def forward(

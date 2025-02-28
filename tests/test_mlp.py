@@ -6,7 +6,7 @@ from mltools.mlp import MLP
 
 @pytest.mark.parametrize("num_layers_per_block", [1, 2])
 @pytest.mark.parametrize("act_h", ["ReLU", "SiLU"])
-@pytest.mark.parametrize("norm", [None, "LayerNorm"])
+@pytest.mark.parametrize("norm", [None, "RMSNorm"])
 @pytest.mark.parametrize("do_bayesian", [False, True])
 @pytest.mark.parametrize("init_zeros", [False, True])
 def test_mlp_block(
